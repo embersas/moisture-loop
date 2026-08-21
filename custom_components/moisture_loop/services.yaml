@@ -1,0 +1,47 @@
+start_manual_watering:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          multiple: false
+          filter:
+            - integration: moisture_loop
+    duration:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 7200
+          unit_of_measurement: s
+          mode: box
+
+stop_watering:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          multiple: false
+          filter:
+            - integration: moisture_loop
+
+evaluate_zone:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          multiple: false
+          filter:
+            - integration: moisture_loop
+
+clear_fault:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          multiple: false
+          filter:
+            - integration: moisture_loop

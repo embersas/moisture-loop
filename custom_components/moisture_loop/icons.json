@@ -1,0 +1,29 @@
+{
+  "entity": {
+    "sensor": {
+      "status": { "default": "mdi:state-machine" },
+      "watering_runtime_today": { "default": "mdi:timer-outline" },
+      "last_session": { "default": "mdi:history" },
+      "next_eligible": { "default": "mdi:clock-start" }
+    },
+    "binary_sensor": {
+      "watering": { "default": "mdi:sprinkler-variant" },
+      "problem": { "default": "mdi:alert-circle-outline" },
+      "needs_water": { "default": "mdi:water-alert" }
+    },
+    "switch": {
+      "enabled": { "default": "mdi:power" }
+    },
+    "button": {
+      "stop": { "default": "mdi:stop-circle-outline" },
+      "evaluate_now": { "default": "mdi:refresh" },
+      "clear_fault": { "default": "mdi:check-circle-outline" }
+    }
+  },
+  "services": {
+    "start_manual_watering": { "service": "mdi:watering-can" },
+    "stop_watering": { "service": "mdi:stop-circle-outline" },
+    "evaluate_zone": { "service": "mdi:refresh" },
+    "clear_fault": { "service": "mdi:check-circle-outline" }
+  }
+}

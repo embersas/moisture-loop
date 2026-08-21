@@ -1,0 +1,13 @@
+# Pure-layer development/test/lint dependencies.
+#
+# This environment intentionally does NOT include homeassistant. The pure
+# domain layer (models.py, state_machine.py) and its tests must pass here,
+# proving the no-homeassistant-import boundary (SPECIFICATION.md §37).
+# Installable on any platform with Python >= 3.13.
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+coverage==7.15.4
+ruff==0.16.4
+# zoneinfo database for HA-local calendar/DST tests on Windows (§19.3)
+tzdata==2026.3

@@ -1,0 +1,13 @@
+{
+  "domain": "moisture_loop",
+  "name": "Moisture Loop",
+  "codeowners": ["@lukestanbury"],
+  "config_flow": true,
+  "documentation": "https://github.com/lukestanbury/moisture_loop",
+  "integration_type": "helper",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/lukestanbury/moisture_loop/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

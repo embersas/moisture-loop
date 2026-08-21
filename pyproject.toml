@@ -1,0 +1,52 @@
+# Moisture Loop — tooling configuration only.
+#
+# This repository ships a Home Assistant custom integration under
+# custom_components/moisture_loop/. It is distributed via HACS, not as a
+# Python package, so there is deliberately no [build-system] / packaging
+# metadata here. This file owns lint, format, test, and coverage settings.
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = [".venv", ".venv-ha"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "C4",     # flake8-comprehensions
+    "RUF",    # ruff-specific
+    "ASYNC",  # flake8-async
+    "T20",    # flake8-print (no stray prints in integration code)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["T20"]
+"scripts/*" = ["T20"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# The pure-layer suites (state machine, models) must pass with no
+# homeassistant package installed. HA-harness suites are added from Slice 6
+# and run only in environments provisioned from requirements_test_ha*.txt.
+
+[tool.coverage.run]
+branch = true
+source = ["custom_components/moisture_loop"]
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+# assert statements are internal-consistency checks on adapter contracts,
+# not decision logic; they are excluded so the 100% branch gate measures
+# every real guard/transition branch.
+exclude_also = ["^\\s*assert\\b", "^if TYPE_CHECKING:"]
+# Release gates (enforced by CI commands, see DEVELOPMENT.md):
+#   - custom_components/moisture_loop/state_machine.py: 100% branch coverage
+#   - overall suite: >= 90%

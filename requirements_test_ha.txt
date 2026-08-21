@@ -1,0 +1,8 @@
+# MANDATORY Home Assistant 2025.9.0 test environment (SPECIFICATION.md §39.1,
+# HA2). pytest-homeassistant-custom-component 0.13.277 pins exactly
+# homeassistant==2025.9.0 (verified against PyPI metadata on 2026-08-21) and
+# brings its own pinned pytest stack (pytest 8.4.1 etc.), which is why the
+# pure-layer requirements file is deliberately NOT included here.
+# Requires Python 3.13 on a HA-supported platform (CI: ubuntu-latest).
+# This job can never be dropped while the 2025.9.0 floor stands.
+pytest-homeassistant-custom-component==0.13.277

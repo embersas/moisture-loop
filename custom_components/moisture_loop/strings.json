@@ -1,0 +1,252 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Moisture Loop",
+        "description": "Create the Moisture Loop controller. Add irrigation zones afterwards with 'Add zone'."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Moisture Loop controller is supported."
+    }
+  },
+  "config_subentries": {
+    "zone": {
+      "initiate_flow": {
+        "user": "Add zone",
+        "reconfigure": "Reconfigure zone"
+      },
+      "entry_type": "Irrigation zone",
+      "step": {
+        "user": {
+          "title": "Zone identity",
+          "description": "Name the zone and select its soil-moisture sensor and irrigation actuator. {shared_sensor_warning}",
+          "data": {
+            "name": "Zone name",
+            "moisture_sensor": "Soil-moisture sensor",
+            "actuator": "Irrigation actuator (switch or valve)"
+          }
+        },
+        "thresholds": {
+          "title": "Thresholds and timing",
+          "description": "A new automatic session starts strictly below the start threshold and completes at or above the target. Every pulse is followed by the full soak before a new reading can decide. {shared_sensor_warning}",
+          "data": {
+            "start_threshold": "Start threshold (%)",
+            "target_threshold": "Target threshold (%)",
+            "pulse_duration": "Pulse duration (seconds)",
+            "soak_duration": "Soak duration (seconds)"
+          }
+        },
+        "limits": {
+          "title": "Safety limits",
+          "description": "Hard bounds for automatic and manual watering. {shared_sensor_warning}",
+          "data": {
+            "max_cycles": "Maximum cycles per session",
+            "max_session_runtime": "Maximum session runtime (seconds)",
+            "max_daily_runtime": "Maximum daily runtime (seconds)",
+            "min_session_interval": "Minimum automatic session interval (seconds)",
+            "sensor_max_age": "Sensor report maximum age (seconds)",
+            "actuator_confirm_timeout": "Actuator confirmation timeout (seconds)",
+            "manual_max_duration": "Manual watering maximum duration (seconds)"
+          }
+        },
+        "reconfigure": {
+          "title": "Zone identity",
+          "description": "Update the zone identity. Changing configuration safely terminates any active session first. {shared_sensor_warning}",
+          "data": {
+            "name": "Zone name",
+            "moisture_sensor": "Soil-moisture sensor",
+            "actuator": "Irrigation actuator (switch or valve)"
+          }
+        },
+        "reconfigure_thresholds": {
+          "title": "Thresholds and timing",
+          "description": "{shared_sensor_warning}",
+          "data": {
+            "start_threshold": "Start threshold (%)",
+            "target_threshold": "Target threshold (%)",
+            "pulse_duration": "Pulse duration (seconds)",
+            "soak_duration": "Soak duration (seconds)"
+          }
+        },
+        "reconfigure_limits": {
+          "title": "Safety limits",
+          "description": "{shared_sensor_warning}",
+          "data": {
+            "max_cycles": "Maximum cycles per session",
+            "max_session_runtime": "Maximum session runtime (seconds)",
+            "max_daily_runtime": "Maximum daily runtime (seconds)",
+            "min_session_interval": "Minimum automatic session interval (seconds)",
+            "sensor_max_age": "Sensor report maximum age (seconds)",
+            "actuator_confirm_timeout": "Actuator confirmation timeout (seconds)",
+            "manual_max_duration": "Manual watering maximum duration (seconds)"
+          }
+        }
+      },
+      "error": {
+        "invalid_name": "Zone names must be 1-64 characters.",
+        "duplicate_name": "Another zone already uses this name (names are compared case-insensitively).",
+        "entity_not_found": "This entity does not exist.",
+        "wrong_domain": "Unsupported entity type for this field.",
+        "valve_features_missing": "This valve does not support both open and close commands; position-only valves are not supported.",
+        "duplicate_actuator": "Another zone already controls this actuator.",
+        "target_not_above_start": "The target threshold must be strictly greater than the start threshold.",
+        "invalid_configuration": "One or more values are outside their allowed ranges."
+      },
+      "abort": {
+        "reconfigure_successful": "Zone updated. Any previously active session was safely terminated."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status"
+      },
+      "watering_runtime_today": {
+        "name": "Watering runtime today"
+      },
+      "last_session": {
+        "name": "Last session"
+      },
+      "next_eligible": {
+        "name": "Next eligible"
+      }
+    },
+    "binary_sensor": {
+      "watering": {
+        "name": "Watering"
+      },
+      "problem": {
+        "name": "Problem"
+      },
+      "needs_water": {
+        "name": "Needs water"
+      }
+    },
+    "switch": {
+      "enabled": {
+        "name": "Enabled"
+      }
+    },
+    "button": {
+      "stop": {
+        "name": "Stop"
+      },
+      "evaluate_now": {
+        "name": "Evaluate now"
+      },
+      "clear_fault": {
+        "name": "Clear fault"
+      }
+    }
+  },
+  "services": {
+    "start_manual_watering": {
+      "name": "Start manual watering",
+      "description": "Start an explicit, bounded manual watering session for one zone. The effective duration is clamped by the manual maximum, session maximum, and remaining daily budget.",
+      "fields": {
+        "device_id": {
+          "name": "Zone",
+          "description": "The Moisture Loop zone device."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Requested watering duration in seconds."
+        }
+      }
+    },
+    "stop_watering": {
+      "name": "Stop watering",
+      "description": "Cooperatively stop the zone's active session. A no-op in inactive states.",
+      "fields": {
+        "device_id": {
+          "name": "Zone",
+          "description": "The Moisture Loop zone device."
+        }
+      }
+    },
+    "evaluate_zone": {
+      "name": "Evaluate zone",
+      "description": "Run a normal guarded automatic evaluation. Bypasses nothing.",
+      "fields": {
+        "device_id": {
+          "name": "Zone",
+          "description": "The Moisture Loop zone device."
+        }
+      }
+    },
+    "clear_fault": {
+      "name": "Clear fault",
+      "description": "Acknowledge/clear the zone's fault when its safety condition is resolved.",
+      "fields": {
+        "device_id": {
+          "name": "Zone",
+          "description": "The Moisture Loop zone device."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "No device with this ID exists."
+    },
+    "not_a_zone_device": {
+      "message": "The selected device is not a Moisture Loop zone."
+    },
+    "zone_deleted": {
+      "message": "This zone has been deleted."
+    },
+    "entry_not_loaded": {
+      "message": "The Moisture Loop controller is not loaded."
+    },
+    "zone_not_ready": {
+      "message": "The zone runtime is not ready."
+    },
+    "zone_disabled": {
+      "message": "The zone is disabled."
+    },
+    "invalid_duration": {
+      "message": "The requested duration must be a positive number of seconds."
+    },
+    "session_active": {
+      "message": "A session is already active for this zone."
+    },
+    "fault_blocks_manual": {
+      "message": "The active fault does not permit manual watering."
+    },
+    "actuator_not_ready": {
+      "message": "The actuator is not available and proven off."
+    },
+    "daily_budget_exhausted": {
+      "message": "The daily watering budget is exhausted."
+    },
+    "water_resource_occupied": {
+      "message": "Another configured actuator is or may be flowing."
+    },
+    "fault_not_clearable": {
+      "message": "The fault condition is not resolved or requires reconfiguration."
+    },
+    "request_refused": {
+      "message": "The request was refused by the zone's safety guards."
+    }
+  },
+  "issues": {
+    "zone_sensor_missing": {
+      "title": "Moisture sensor missing for {zone_name}",
+      "description": "The configured soil-moisture sensor {entity_id} no longer exists. The zone is blocked until it is reconfigured with a valid sensor."
+    },
+    "zone_actuator_missing": {
+      "title": "Irrigation actuator missing for {zone_name}",
+      "description": "The configured irrigation actuator {entity_id} no longer exists. The zone is blocked until it is reconfigured, and any unresolved water-resource blocker is retained."
+    },
+    "actuator_off_unconfirmed": {
+      "title": "Water may still be flowing in {zone_name}",
+      "description": "The irrigation actuator could not be proven OFF after repeated commands. Water may be flowing uncontrolled: check the valve physically. The fault can be acknowledged only after the actuator is observed OFF."
+    },
+    "runtime_store_integrity_lost": {
+      "title": "Moisture Loop safety history lost",
+      "description": "The runtime safety store is missing, corrupt, or does not match this installation. All automatic and manual watering is blocked, today's budget is treated as exhausted, and acknowledgement is required after every actuator is proven OFF."
+    }
+  }
+}
