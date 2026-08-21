@@ -1347,7 +1347,7 @@ None.
 
 ### Blockers
 
-- hassfest and HACS Action must execute in GitHub CI, which requires the repository to be initialized and pushed to GitHub (not performed: version control operations are a user decision). The workflows are in place and no longer skip (manifest/hacs.json exist). Once pushed, a green run of both completes this slice.
+- hassfest and HACS Action still need to execute in CI. The code was committed and pushed to `main` on 2026-08-21 — but to the self-hosted remote `https://git.lukestanbury.com/luke/moisture-loop.git` (Gitea/Forgejo), not GitHub. The `.github/workflows/ci.yml` gates run there only if Gitea Actions is enabled (it consumes GitHub-compatible workflows); alternatively, mirror the repository to GitHub. Note also that HACS custom-repository installation requires a GitHub-hosted repository, so distribution per §41 ultimately needs a GitHub presence. A green hassfest + HACS Action run completes this slice.
 
 ## Slice 13 - Prototype validations
 
@@ -1475,7 +1475,7 @@ Tests run:
 
 Open issues:
 - `[?]` Slice 9: no core hook for UI subentry deletion on 2025.9.0 (specification review; intersects §46 item 1).
-- Slice 12: hassfest + HACS Action must run in GitHub CI once the repository is pushed (the directory is not yet a git repository; version-control initialization left to the user).
+- Slice 12: hassfest + HACS Action must run in CI. The repository was committed and pushed to main on the self-hosted remote (git.lukestanbury.com/luke/moisture-loop) on 2026-08-21; the workflows need Gitea Actions enabled there or a GitHub mirror, and HACS distribution itself requires GitHub hosting.
 - Slice 13: all seven §46 prototype validations remain — they require a real HA 2025.9+ deployment, physical valve hardware, ~10-zone scale, deployment sensors, and brand submission authority, none of which exist on this development machine.
 
 PROGRESS.md updated:
