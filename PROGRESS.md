@@ -1,47 +1,57 @@
 # Moisture Loop Implementation Progress
 
-This document tracks implementation work against `SPECIFICATION.md` version `0.1.0-spec.3`, whose architectural-review verdict is **READY WITH PROTOTYPE VALIDATIONS**.
+This document tracks implementation work against the approved `SPECIFICATION.md` version `0.1.0-spec.4`, whose architectural-review verdict is **READY WITH PROTOTYPE VALIDATIONS**.
 
 > **Source-of-truth boundary:** `SPECIFICATION.md` is authoritative for architecture, safety behaviour, state-machine behaviour, persistence behaviour, Home Assistant integration behaviour, lifecycle behaviour, terminology, acceptance criteria, and prototype validations. `PROGRESS.md` is authoritative only for implementation status, slice status, work completed, work remaining, tests actually run, implementation blockers, implementation notes, and deviations requiring review. `PROGRESS.md` must never override, weaken, reinterpret, or silently amend `SPECIFICATION.md`. If implementation appears to require contradicting the specification, record `[?] Requires specification review` under the affected slice and stop that work until the specification is explicitly reviewed.
 
 ## Current Position
 
-- Current authorized slice: `Sequential implementation authorized by user 2026-08-21 ("implement as per progress.md"); slices executed strictly in order`
-- Last completed slice: `11` (Slice 12 `[~]`: everything done except GitHub-hosted hassfest/HACS runs, which need the repo pushed)
-- Specification version: `0.1.0-spec.3`
-- Implementation phase: `Slices 0-11 complete; Slice 12 in progress (CI execution pending); Slice 13 not started (requires real HA 2025.9+ deployment, physical hardware, and scale/cadence environments)`
-- Overall status: `Full automated suite: 631 passed (HA 2025.9.0), 401 passed (pure); 100.00% branch coverage on all 17 modules; all locally runnable §45 gates pass. One item flagged [?] under Slice 9 (core 2025.9 offers no hook for UI subentry deletion).`
+- Current authorized slice: `None`
+- Specification version: `0.1.0-spec.4`
+- Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
+- Current spec.4 conformance: `Slices 2 and 6 remain fully conformant within their documented scopes. Slices 0, 1, 3, 4, 5, and 7-12 require spec.4 implementation changes and/or new test evidence. Historical spec.3 completion does not satisfy requirements added or changed by spec.4.`
+- Slice 9 specification status: `Resolved by approved spec.4. The former lack-of-pre-delete-hook specification question is closed by update-listener-driven tombstoned reconciliation and authoritative final ON gates. Slice 9 implementation remediation is not complete and has not been tested against the approved design.`
+- Next implementation work: `After explicit user authorization, begin Spec.4 Remediation Stage 1 (models and schema-1 -> schema-2 persistence migration). No implementation work is authorized by this tracking review.`
+- Release gates: `Spec.4 remediation and its full named-test evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
+- Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
+- Overall status: `Not release-ready. The last recorded HA 2025.9.0 result (631 passed) and pure result (401 passed) are historical spec.3 suite evidence, not spec.4 conformance. No spec.4 remediation stage is complete or authorized.`
 
-On 2026-08-21 the user instructed "implement as per progress.md". This is recorded as authorization to implement in strict slice order (0, 1, 2, ...); no slice is skipped or reordered.
+On 2026-08-21 the user instructed "implement as per progress.md". This remains recorded as the historical authorization under which implementation code was produced. There is currently no authorized slice; any further implementation or prototype work requires explicit user authorization after review.
 
 ## Status Legend
 
 - `[ ]` Not started
-- `[~]` In progress
+- `[~]` In progress / current-spec remediation required
 - `[x]` Complete
 - `[!]` Blocked
 - `[?]` Requires specification review
 
 A slice may be marked `[x]` only when all work in scope is complete, its acceptance criteria pass, its required automated tests pass, and no unresolved blockers remain. Prototype validations requiring real Home Assistant behaviour or physical hardware must never be marked complete based solely on mocks.
 
+For this reconciliation, `[~] Spec.4 remediation required` means the slice's historical spec.3 completion and test record are preserved, but its current spec.4 conformance is incomplete. It does not mean remediation has started or is authorized. Unless explicitly updated as current-spec text, the original per-slice objectives, references, scope, acceptance criteria, completed/remaining work, test records, decisions, deviations, and blockers below remain the historical spec.3 baseline. Current conformance and remaining work are controlled by each current Status plus the Spec.4 Remediation Assessment and Plan above; a historical `None` under Remaining work or Blockers is not a spec.4 completion claim. Dated session-log entries remain unchanged historical evidence.
+
 ## Progress Summary
 
 | Slice | Name | Status |
 |---:|---|:---:|
-| 0 | Repository and quality foundation | [x] |
-| 1 | Pure domain models | [x] |
+| 0 | Repository and quality foundation | [~] Spec.4 remediation required |
+| 1 | Pure domain models | [~] Spec.4 remediation required |
 | 2 | Pure state machine | [x] |
-| 3 | State-machine and invariant test suite | [x] |
-| 4 | Persistence and run-integrity layer | [x] |
-| 5 | Global SlotManager and resource blockers | [x] |
+| 3 | State-machine and invariant test suite | [~] Spec.4 remediation required |
+| 4 | Persistence and run-integrity layer | [~] Spec.4 remediation required |
+| 5 | Global SlotManager and resource blockers | [~] Spec.4 remediation required |
 | 6 | Home Assistant moisture sensor adapter | [x] |
-| 7 | Zone runtime controller | [x] |
-| 8 | Startup, reload, reconfiguration, and shutdown lifecycle | [x] |
-| 9 | Config flow and zone subentries | [x] |
-| 10 | Home Assistant entities and actions | [x] |
-| 11 | Repairs, diagnostics, events, and logging | [x] |
-| 12 | Distribution and documentation | [~] |
+| 7 | Zone runtime controller | [~] Spec.4 remediation required |
+| 8 | Startup, reload, reconfiguration, and shutdown lifecycle | [~] Spec.4 remediation required |
+| 9 | Config flow and zone subentries | [~] Spec.4 remediation required; specification blocker resolved |
+| 10 | Home Assistant entities and actions | [~] Spec.4 remediation required |
+| 11 | Repairs, diagnostics, events, and logging | [~] Spec.4 remediation required |
+| 12 | Distribution and documentation | [~] Spec.4 remediation and existing release gates required |
 | 13 | Prototype validations | [ ] |
+
+The `[x]` status for Slice 2 is retained because spec.4 explicitly preserves T1-T59 topology, guards, actions, destinations, and reasons; the broadened T21/T39 trigger source is a lifecycle-dispatch obligation outside the pure decision engine. Slice 6 remains `[x]` because spec.4 does not change its entity-filtered changed/unchanged-report normalization contract; persistent sensor identity and configuration handoff belong to the models/persistence/reconciliation work. Both slices still require regression execution in the eventual full spec.4 suite, but no new slice-scope behaviour has been identified.
+
+All other previously completed slices marked `[~]` retain their dated spec.3 implementation and passing-test records below. They are not currently conformant because spec.4 changes their scope or requires new evidence. Slice 9's specification blocker is resolved, but implementation remediation and native HA 2025.9 websocket deletion evidence remain incomplete. Slice 12 also requires a post-remediation documentation/distribution pass in addition to its existing release gates.
 
 ## Specification Traceability
 
@@ -50,16 +60,122 @@ These are implementation-wide targets. Their definitions remain authoritative in
 | Target | Authoritative location | Progress evidence required |
 |---|---|---|
 | 59 formal state transitions | §§14-15, T1-T59 | Table/diagram parity plus transition-test results; do not reproduce the transition set here. |
-| 31 safety invariants | §27, I1-I31; §39.3 | Every invariant mapped to passing named tests at the appropriate layer. |
+| 37 safety invariants | §27, I1-I37; §39.3 | Every invariant mapped to passing named tests at the appropriate layer, including the new configuration/deletion/identity obligations I32-I37. |
+| 134 unique normative named behavioural test IDs | §39.2 | Mechanically inventoried from the approved specification: SR1-SR13, PI1-PI27, MF1-MF5, AC1-AC4, ER1-ER12, LC1-LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, and HA1-HA2. This is a specification count, not an implementation/pass count. |
+| Runtime Store schema 2 | §§23.2-23.5, 25, 42 | Verified schema-1 -> schema-2 migration, canonical safety records, independent zone histories/`zone_runtime`, durable tombstones, and full-payload read-back before grants. |
+| Five controller states | §§12, 14-15 | `DISABLED`, `IDLE`, `WATERING`, `SOAKING`, and `FAULT`; runtime lifecycle remains orthogonal. |
 | Pure state-machine branch coverage | §§37, 39.3 | 100% branch coverage for `state_machine.py`; overall suite target at least 90%. |
 | Home Assistant minimum | metadata; §§5.1, 39.1-39.2 HA1-HA2, 41, 45.23-45.24 | Home Assistant >= 2025.9.0 source-contract verification and mandatory harness job; no 2025.7/2025.8 compatibility claim. |
 | Local-only operation | §§1, 3, 40; I28; §45.28 | Dependency/network audit confirms no cloud, telemetry, API key, or outbound runtime dependency. |
 | No Recorder safety dependency | §§3, 19.2, 23.1, 23.5; I28; §45.28 | Storage/recovery tests and dependency audit show safety decisions do not use Recorder. |
 | No WATERING resume | §§24-25; I13; §45.12 | Restart, crash, reload, and reconfigure tests prove interrupted WATERING never resumes. |
 | One idempotent OFF path | §§11.3, 22; I16; §45.9-45.10 | Race/lifecycle tests prove one shared OFF future and cooperative termination. |
-| Keyed global resource blockers | §§11.4, 21-22; I18-I19; §45.10-45.11 | ER1-ER12 and concurrency evidence prove independent `(zone_id, reason)` blockers. |
-| Atomic, read-back-verified runtime Store | §23; I15, I24, I29, I31; §45.15-45.19 | `atomic_writes=True`, monotonic revisions, fresh-Store read-back, injected-failure tests, and initialization/integrity matrix results. |
+| Keyed global resource blockers | §§6, 11.4, 21-22; I18-I19; §45.10-45.11 | ER1-ER12, TB1-TB12, AR1-AR17, and concurrency evidence prove independent `(safety_record_id, reason)` blockers across deletion, reactivation, and A -> B replacement. |
+| Atomic, read-back-verified runtime Store | §23; I15, I24, I29, I31, I33-I37; §45.15-45.19 and §45.32-45.39 | `atomic_writes=True`, schema-1 migration, monotonic revisions, fresh-Store read-back, injected-failure tests, and initialization/tombstone/identity results. |
 | Prototype validation separation | §§39.1, 46 and readiness verdict | Real HA/hardware evidence is recorded only in Slice 13; mocks alone never complete a prototype item. |
+
+### Current test-evidence boundary
+
+- **Normative named tests specified:** 134 unique IDs. A mechanical scan of §39.2 matched 134 entries, found 134 unique IDs, and found zero duplicates.
+- **Tests currently implemented:** the repository contains the historical spec.3 suite described in the dated slice records. This review did not establish a current spec.4 named-ID implementation count. In particular, no current record claims implementation of PI21-PI27, LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, or the I32-I37 traceability obligations.
+- **Tests actually run/passing:** the latest recorded 631-pass HA 2025.9.0 and 401-pass pure results were run against the spec.3 implementation on 2026-08-21. No tests were run in this documentation-only reconciliation, and those historical totals are not restated as spec.4 pass evidence.
+
+## Spec.4 Remediation Assessment
+
+This assessment compares the approved spec.4 requirements with the dated spec.3 implementation records and the current implementation seams. The current code still declares Store schema 1, persists one `ZoneRecord` keyed by zone, keys SlotManager blockers by `(zone_id, reason)`, builds startup only from current subentries, has no config-entry update listener/reconciliation coordinator, schedules add-owned reloads, uses `async_update_reload_and_abort`, and performs no authoritative current-subentry/snapshot/lifecycle gate around actuator ON. Repairs are zone-ID keyed and non-fixable, and diagnostics/entities expose the spec.3 zone model. These observations assign remediation; they are not implementation changes or test results.
+
+| Slice | Current assessment | Actual spec.4 impact |
+|---:|---|---|
+| 0 | `[~] Spec.4 remediation required` | The quality foundation remains useful, but HA1 currently checks the incompatible reload helper and lacks the approved listener/removal/`async_update_and_abort` contract. CI must later carry the new test inventory and current-HA evidence. |
+| 1 | `[~] Spec.4 remediation required` | Domain models lack `safety_record_id`, `safety_lineage_id`, `zone_history_id`, `zone_runtime`, immutable applied shadows, actuator identity, lifecycle, contribution identity, and canonical schema-2 ownership. |
+| 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
+| 3 | `[~] Spec.4 remediation required` | Historical T1-T59 proof remains valid, but traceability stops at I31 and does not supply LC13 or the new PI/ND/TB/AR/RC evidence for I32-I37. |
+| 4 | `[~] Spec.4 remediation required` | Persistence implements schema 1 only. It needs strict verified schema-1 -> schema-2 migration, canonical safety records, independent histories/`zone_runtime`, identity, shadows, tombstones, contribution merge/deduplication, and Store-only recovery. |
+| 5 | `[~] Spec.4 remediation required` | SlotManager keys are `(zone_id, reason)` and admission has only a broad startup enable flag. It needs `(safety_record_id, reason)`, exact retained-record ownership, and the entry reconciliation dirty/running/failed/superseded barrier. |
+| 6 | `[x]` | Entity-filtered changed/unchanged report delivery, normalization, timestamp, and freshness semantics remain normative. Persistent sensor identity and reconciliation handoff are assigned to Slices 1/4/8; real rename validation remains Slice 13. |
+| 7 | `[~] Spec.4 remediation required` | The controller has write-ahead intent and one OFF path, but lacks the complete final pre-ON membership/fingerprint/snapshot/generation/lifecycle gate, no-suspension dispatch boundary, in-flight possible-flow marker, post-call recheck, deletion compensation, and safety-record blocker identity. |
+| 8 | `[~] Spec.4 remediation required` | EntryRuntime has no listener-owned coordinator, immutable applied shadows, dirty/latest-snapshot barrier, add/change/remove classification, `DELETE_PENDING`/`RETIRED` handoff, startup config+Store union, exact same-record reactivation, or A -> B reconciliation. It currently skips Store-only hazardous records when configuration is absent. |
+| 9 | `[~] Spec.4 remediation required` | The specification question is resolved. The implementation still has add-owned reload scheduling, `async_update_reload_and_abort`, no update-listener ownership, no native post-removal reconciliation, and no actual HA 2025.9 websocket deletion evidence. |
+| 10 | `[~] Spec.4 remediation required` | Existing entities/actions remain useful, but actions do not yet reject non-`ACTIVE` or dirty/failed reconciliation and presentation lacks schema-2 safety/lineage/history/lifecycle/reconciliation ownership. |
+| 11 | `[~] Spec.4 remediation required` | Existing events/logs/diagnostics/Repairs remain a baseline, but spec.4 requires exact-record tombstone/identity/reconciliation issues, an entry-level fix flow, safety/lineage/history identities, lifecycle/barrier/merge diagnostics, and deleted-zone-safe event payloads. |
+| 12 | `[~] Spec.4 remediation and existing release gates required` | README/distribution metadata require a post-remediation accuracy pass; current traceability artifacts and HA1 contract must be updated. Supported-current HA, GitHub-hosted hassfest, and GitHub-hosted HACS Action evidence remain absent. |
+| 13 | `[ ] Not started` | All seven real §46 validations remain outstanding. Existing mocks and harness tests do not satisfy them. |
+
+## Spec.4 Implementation Remediation Plan
+
+No stage below is authorized or started. A stage may be marked complete only after its named evidence is implemented and actually run.
+
+### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
+
+- **Objective:** introduce the approved ownership model: one canonical safety record per durable actuator lineage, independent zone histories with `zone_runtime`, durable identities/applied shadows/lifecycles/contribution IDs, strict schema-1 parsing, and atomic verified schema-2 migration without dropping any schema-1 fact.
+- **Affected existing slices/files:** Slices 1 and 4; `const.py`, `models.py`, `storage.py`, `tests/test_models.py`, `tests/test_storage_pure.py`, and `tests/test_storage.py`.
+- **Specification sections:** §§6, 12.4, 19.3-19.5, 23, 25.2-25.5, 42; I20, I23-I24, I29, I31, I33-I35, I37.
+- **Required named tests:** PI21-PI23, PI27, TB7, and TB11; retain and rerun PI1-PI20.
+- **Prerequisite stages:** none.
+- **Completion evidence:** schema-1 preservation/migration and malformed/write/read-back failure cases pass; schema-2 round trips show correct single-authority field ownership; no grant or watering-capable runtime can use unverified migrated data. Full identity reactivation tests PI24-PI26 close in Stage 3.
+
+### Stage 2 - Safety-record blocker identity and zone-history continuity
+
+- **Objective:** re-key all hazards to `(safety_record_id, reason)`, add the reconciliation admission barrier to SlotManager, and implement deterministic contribution deduplication/conservative merge plus exact A/B hazard separation.
+- **Affected existing slices/files:** Slices 1, 4, and 5; `models.py`, `storage.py`, `slot_manager.py`, controller/runtime call sites, `sensor.py`, and their focused tests.
+- **Specification sections:** §§6, 11.4, 19.5, 21-22, 23.2, 24.4, 25.5; I18-I21, I23, I33, I35-I37.
+- **Required named tests:** ER1-ER12, TB1-TB4, AR2-AR10, and AR17; exact-key portions are repeated end-to-end in Stage 7.
+- **Prerequisite stages:** Stage 1.
+- **Completion evidence:** snapshots and tests expose only safety-record blocker keys; one record/reason cannot clear another; dirty/reconciling/failed admission prevents grants; A-owned hazards stay A-owned while zone budget/interval continuity is conservatively verified.
+
+### Stage 3 - Configuration reconciliation coordinator and runtime lifecycle
+
+- **Objective:** register the entry update listener before grants, normalize immutable applied shadows, serialize/coalesce latest-snapshot reconciliation, materialize `ACTIVE`/`DELETE_PENDING`/`RETIRED`, reconcile current-config + Store union at startup, safely reactivate the exact same record, execute A -> B handoff, and coordinate unload/reload/shutdown without stale publication.
+- **Affected existing slices/files:** Slices 4, 5, 8, and 9; `__init__.py`, `runtime.py`, the spec-aligned reconciliation component, `models.py`, `storage.py`, `slot_manager.py`, and lifecycle/reconciliation/storage tests.
+- **Specification sections:** §§5.1, 12.4, 22.4, 23.2-23.5, 24, 25, 30, 37; I18-I19, I26, I32-I37.
+- **Required named tests:** PI24-PI27, LC13, ND1-ND3, ND6, ND13-ND16, TB5-TB11, AR1-AR17, and RC5-RC12.
+- **Prerequisite stages:** Stages 1-2.
+- **Completion evidence:** actual add/change/remove snapshots are classified and published only at the latest verified generation; Store-only implicit tombstones block grants; exact UUID re-add mutates one record; A -> B preserves A hazards and logical-zone state/budget rules; listener/Store/reload/supersession failures remain fail closed.
+
+### Stage 4 - Final pre-ON gate and delete/in-flight compensation
+
+- **Objective:** place the complete authoritative live-configuration gate after all preparatory awaits, create the no-suspension dispatch boundary and in-memory possible-flow ownership, recheck immediately after ON returns/raises, and route every deletion race through one OFF/accounting operation with no resurrection.
+- **Affected existing slices/files:** Slices 7 and 8; `zone_controller.py`, `runtime.py`/reconciliation interfaces, `slot_manager.py`, `storage.py`, and controller/lifecycle/deletion race tests.
+- **Specification sections:** §§11.2-11.3, 13, 18.1, 22.1-22.3, 23.4, 24.4, 25; I15-I19, I22, I32-I34, I36-I37.
+- **Required named tests:** ND4-ND12, ND17, RC1-RC6, and AC1-AC4; rerun SR5-SR13 and MF1-MF5 to prove watchdog/manual behaviour is unchanged.
+- **Prerequisite stages:** Stages 1-3.
+- **Completion evidence:** deterministic future/event interleavings prove no post-mismatch ON, durable intent covers every crash window, in-flight calls compensate immediately, and each outcome has one terminal reason, one idempotent OFF, honest accounting, retained blockers, and no future pulse/session resurrection.
+
+### Stage 5 - Config flows and reconciler-owned reload application
+
+- **Objective:** retain pre-mutation quiescence where applicable, replace `async_update_reload_and_abort` with `async_update_and_abort`, remove add/flow-owned reload scheduling, validate durable identity/same-record/A -> B conflicts, and make the reconciler the sole zero-or-one reload owner.
+- **Affected existing slices/files:** Slices 0, 8, and 9; `config_flow.py`, `runtime.py`/reconciliation component, `scripts/check_ha_contract.py`, strings/translations, and `tests/test_config_flow.py`/lifecycle tests.
+- **Specification sections:** §§5.1, 9, 24.3-24.5, 29-30, 39.1; I26, I32-I36.
+- **Required named tests:** LC3, LC13, ND1-ND2, AR1, AR5-AR6, AR11-AR16, RC7-RC8, and HA1.
+- **Prerequisite stages:** Stages 1-4.
+- **Completion evidence:** source/runtime checks prove the approved helper/listener pairing; add/reconfigure/delete bursts have one application owner; actual native removal supplies the post-removal mapping; delete-only work does not reload; a stable mixed batch schedules at most one supported reload after durable safety handoff.
+
+### Stage 6 - Entities, actions, Repairs, diagnostics, events, and logging
+
+- **Objective:** reject actions/entities against deleted, non-`ACTIVE`, dirty, failed, or unavailable runtime; expose safety/lineage/history/lifecycle/barrier/merge facts; implement exact-record tombstone Repairs and fix flow; and keep deleted-zone events independent of removed device IDs.
+- **Affected existing slices/files:** Slices 10 and 11; `services.py`, `entity.py`, `sensor.py`, `binary_sensor.py`, `switch.py`, `button.py`, `repairs.py`, `diagnostics.py`, event/logging integration, strings/translations/icons, and surface tests.
+- **Specification sections:** §§5.3, 26.3, 28, 31-34, 37; I25, I27, I32-I37.
+- **Required named tests:** LC1-LC2, ND14, ND16-ND17, TB12, AR14, and RC9-RC11, plus the existing MF3-MF5 and AC4 event-order regressions.
+- **Prerequisite stages:** Stages 1-5.
+- **Completion evidence:** translated refusal tests cover non-ACTIVE/dirty runtime; exact-record fix flows reject stale/cross-record/unproven-OFF acknowledgement; diagnostics/events identify the owning safety record without inventing a device; registry cleanup cannot destroy safety ownership.
+
+### Stage 7 - Full HA 2025.9 behavioural suite and I1-I37 traceability
+
+- **Objective:** implement and run the complete approved named-test set against the integrated schema-2 architecture, including the real HA 2025.9 websocket removal route and registry cleanup, while retaining pure-state-machine and coverage guarantees.
+- **Affected existing slices/files:** Slices 0 and 3-11; all existing tests plus spec.4 reconciliation/deletion test modules and the HA contract checker.
+- **Specification sections:** §§14-15, 27, 39, 45; T1-T59 and I1-I37.
+- **Required named tests:** all 134 unique IDs: SR1-SR13, PI1-PI27, MF1-MF5, AC1-AC4, ER1-ER12, LC1-LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, and HA1-HA2.
+- **Prerequisite stages:** Stages 1-6.
+- **Completion evidence:** exact commands, environment/Core versions, counts, failures, coverage, T1-T59 parity, and I1-I37 mapping are recorded; native deletion uses `config_entries/subentries/delete`; no real sleeps; no mock result is claimed as §46 evidence.
+
+### Stage 8 - Post-remediation documentation, supported-current HA, and distribution CI
+
+- **Objective:** align user/developer documentation with safe native deletion and schema 2, then execute the separately pinned supported-current HA job and GitHub-hosted hassfest/HACS release gates without publishing.
+- **Affected existing slices/files:** Slices 0 and 12; `README.md`, `DEVELOPMENT.md`, manifest/HACS metadata if accuracy changes are required, `.github/workflows/ci.yml`, `scripts/check_ha_contract.py`, and tracking/release documentation.
+- **Specification sections:** §§39.1, 41-43, 45-46.
+- **Required named tests:** HA1-HA2 and the full 134-ID suite as the release regression; hassfest and HACS Action are additional distribution gates, not behavioural test IDs.
+- **Prerequisite stages:** Stage 7.
+- **Completion evidence:** supported-current HA version/command/count is recorded; mandatory 2025.9.0 remains green; GitHub-hosted hassfest and HACS Action results are recorded; docs no longer describe the spec.3 deletion limitation; Slice 13 remains separately unstarted until explicitly authorized.
 
 ## Rules for Codex
 
@@ -84,7 +200,7 @@ These are implementation-wide targets. Their definitions remain authoritative in
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -186,7 +302,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -282,7 +398,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[x] Complete (2026-08-21; spec.4 leaves the pure T1-T59 behaviour unchanged)`
 
 ### Objective
 
@@ -369,7 +485,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -467,7 +583,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -573,7 +689,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -668,7 +784,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[x] Complete (2026-08-21; adapter scope is unchanged by spec.4)`
 
 ### Objective
 
@@ -760,7 +876,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -864,7 +980,7 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -965,7 +1081,9 @@ None.
 
 ### Status
 
-`[x] Complete (2026-08-21)` — with one `[?] Requires specification review` item recorded under Blockers (UI subentry deletion hook).
+`[~] Spec.4 remediation required; specification blocker resolved`
+
+> **Current-spec note:** the original Objective, references, Scope/Out of scope, Dependencies, Acceptance criteria, Required tests, Completed work, Tests actually run, implementation notes, and Deviations below preserve the spec.3 implementation record. The spec.3 reload-helper/no-listener design is superseded by approved spec.4 and is not a current requirement or conformance claim; the updated Remaining work and Blockers are current.
 
 ### Objective
 
@@ -1032,7 +1150,7 @@ Implement the single-controller configuration flow and safe zone-subentry add, r
 
 ### Remaining work
 
-Entity/device/subentry attribution tests are Slice 10 (they need the entity platforms). UI deletion preparation: see Blockers.
+The specification issue is resolved by spec.4, but implementation conformance is incomplete. After explicit authorization, this slice must integrate with the entry-owned update listener/reconciler, use `async_update_and_abort`, remove add/flow-owned reload scheduling and incompatible reload-helper semantics, apply durable-identity/same-record/A -> B validation, and prove the actual HA 2025.9 native websocket deletion path plus safe reconciliation. Entity/device/subentry attribution tests implemented under Slice 10 remain historical spec.3 evidence.
 
 ### Tests actually run
 
@@ -1053,13 +1171,14 @@ None in implemented behaviour.
 
 ### Blockers
 
-- `[?] Requires specification review` — **UI subentry deletion has no integration hook on Home Assistant 2025.9.0.** §24.3 requires deletion to "first perform the same cooperative safety preparation" (CONFIG_CHANGED), but core's `async_remove_subentry` (used by the frontend's delete control) neither reloads the entry nor offers any integration callback, and a config-entry update listener is prohibited by the same spec section that the reload helper enforces (it raises if listeners exist). `EntryRuntime.async_prepare_delete` exists and is invocable, but nothing in the supported 2025.9.0 surface can trigger it from the core UI deletion path. Current conservative behaviour: a deleted zone's controller keeps operating under all safety guards until the next entry reload, and removal never clears an unproven-OFF blocker (§21 holds). This intersects §46 item 1 (subentry UI/UX validation). Options for the specification review: (a) accept reload-time cleanup with CONFIG_RELOAD semantics for UI deletions, (b) require a documented manual reload after deletion, or (c) revisit if a later HA release adds a subentry-removal hook. Work on other slices is not blocked.
+- **Specification blocker:** resolved by approved `0.1.0-spec.4`. Home Assistant still has no supported pre-delete hook, but spec.4 no longer requires one; the supported design is post-removal update-listener reconciliation plus the authoritative mapping/snapshot final-ON fence.
+- **Implementation status:** remediation has not started and is not authorized. Slice 9 cannot become `[x]` until the Stage 3-5 implementation dependencies are complete and the actual HA 2025.9 websocket deletion, reconciliation, and reload-ownership tests pass.
 
 ## Slice 10 - Home Assistant entities and actions
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -1155,13 +1274,13 @@ None.
 
 ### Blockers
 
-None (the Slice 9 deletion-hook `[?]` item stands).
+Spec.4 remediation is required for non-`ACTIVE`/dirty runtime refusal and schema-2 identity/lifecycle presentation. The former Slice 9 specification question is resolved; its implementation remediation remains a prerequisite.
 
 ## Slice 11 - Repairs, diagnostics, events, and logging
 
 ### Status
 
-`[x] Complete (2026-08-21)`
+`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
 
 ### Objective
 
@@ -1249,13 +1368,13 @@ None.
 
 ### Blockers
 
-None (the Slice 9 deletion-hook `[?]` item stands).
+Spec.4 remediation is required for exact-record tombstone/identity/reconciliation Repairs, fix flows, diagnostics, events, and logging. The former Slice 9 specification question is resolved; its implementation remediation remains a prerequisite.
 
 ## Slice 12 - Distribution and documentation
 
 ### Status
 
-`[~] In progress (2026-08-21)` — all artifacts and every locally runnable release gate complete; blocked only on GitHub-hosted CI executions (hassfest and HACS Action need the repository pushed).
+`[~] Spec.4 remediation and existing release gates required` — implementation artifacts produced under spec.3 remain, but a post-remediation documentation/distribution pass is required; the supported-current HA harness and GitHub-hosted hassfest/HACS executions remain outstanding.
 
 ### Objective
 
@@ -1283,7 +1402,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Dependencies
 
-- Slices 0-11 complete.
+- Implementations exist through Slice 11, and the dated Slice 10/11 spec.3 tests remain valid historical evidence. The current prerequisite chain is incomplete because Spec.4 Remediation Stages 1-7 have not been authorized, implemented, or tested.
 
 ### Expected files
 
@@ -1301,7 +1420,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 - Full automated suite passes with 100% branch coverage for `state_machine.py` and at least 90% overall.
 - Exact HA 2025.9.0 source-contract verification and harness job pass; supported-current job passes separately where required.
 - hassfest and current HACS validation pass without ignored failures.
-- All 59 transitions retain table/implementation/test parity and all 31 invariants have passing evidence at their applicable automated layers.
+- All 59 transitions retain table/implementation/test parity and all 37 invariants have passing evidence at their applicable automated layers.
 - Dependency/network audit confirms local-only operation and no Recorder safety dependency.
 - Remaining prototype items are still visibly incomplete and do not block an honest `READY WITH PROTOTYPE VALIDATIONS` implementation status.
 
@@ -1310,7 +1429,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 - Run and record the full pytest suite with branch/overall coverage.
 - Run and record lint, formatting, hassfest, HACS validation, HA1 contract checks, HA 2025.9.0 harness, and supported-current harness.
 - Validate manifest/HACS/version/translation/action metadata consistency.
-- Mechanically audit T1-T59 and I1-I31 traceability.
+- Mechanically audit T1-T59 and I1-I37 traceability, including all 134 unique normative named behavioural test IDs.
 - Audit packaged contents, local-only dependencies, Recorder independence, documentation links, and clean install instructions.
 - Render/check brand and documentation presentation locally where possible; real presentation/default-inclusion evidence remains Slice 13 item 7.
 
@@ -1323,7 +1442,11 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Remaining work
 
-Execution of hassfest and HACS Action in GitHub CI (see Blockers). Release publication and any HACS default-store submission remain separately authorized (§41).
+- Complete the post-remediation documentation/distribution pass after Spec.4 Remediation Stages 1-7, including removal of the documented spec.3 deletion limitation and current I1-I37/134-ID traceability.
+- Run and record the supported-current HA harness separately from the HA 2025.9.0 harness. The pinned intended environment is `pytest-homeassistant-custom-component==0.13.356` / `homeassistant==2026.8.2`, but no execution result or test count is currently recorded.
+- Execute hassfest and HACS Action in GitHub CI (see Blockers).
+- Complete Slice 9 implementation remediation and the full integrated spec.4 test evidence before treating the release/gating chain as ready.
+- Release publication and any HACS default-store submission remain separately authorized (§41).
 
 ### Tests actually run
 
@@ -1336,10 +1459,12 @@ All on 2026-08-21 (local machine):
 - Dependency/network audit -> PASS: `requirements: []`; grep over the integration source finds no aiohttp/requests/urllib/websocket usage, no recorder import, no cloud/telemetry/API-key references (the single textual hit is the diagnostics docstring stating Recorder is not used). Local-only (I28) and no-Recorder-safety-dependency confirmed.
 - Metadata consistency -> PASS: manifest/hacs/version/translations/icons all parse and agree; strings/en.json in sync.
 
+The supported-current HA harness was **not run**: no exact execution command, pass/fail result, or test count is recorded. The configured pinned environment alone is not test evidence.
+
 ### Decisions / implementation notes
 
 - The `venv-ha` local harness runs the exact 2025.9.0 release, so "release gates" here means every automated §45 gate except the two GitHub-hosted actions.
-- The README documents the Slice 9 known limitation (UI zone deletion applies at the next reload) pending the `[?]` specification review.
+- Historical note: the current README documents the spec.3 Slice 9 limitation (UI zone deletion applies at the next reload). Approved spec.4 resolves the architecture; the README must be corrected only after implementation remediation makes that behaviour true.
 
 ### Deviations from specification
 
@@ -1348,6 +1473,8 @@ None.
 ### Blockers
 
 - hassfest and HACS Action still need to execute in CI. The code was committed and pushed to `main` on 2026-08-21 — but to the self-hosted remote `https://git.lukestanbury.com/luke/moisture-loop.git` (Gitea/Forgejo), not GitHub. The `.github/workflows/ci.yml` gates run there only if Gitea Actions is enabled (it consumes GitHub-compatible workflows); alternatively, mirror the repository to GitHub. Note also that HACS custom-repository installation requires a GitHub-hosted repository, so distribution per §41 ultimately needs a GitHub presence. A green hassfest + HACS Action run completes this slice.
+- The separately required supported-current HA harness has not been run. Until an exact environment/version, exact command, pass/fail result, and test count are recorded, this Slice 12 gate remains incomplete.
+- Spec.4 implementation remediation and its full test/traceability evidence are incomplete. Slice 9's specification question is resolved, but its implementation and dependent Slice 12 documentation/distribution remediation remain release blockers.
 
 ## Slice 13 - Prototype validations
 
@@ -1369,7 +1496,7 @@ Gather the real Home Assistant, deployment, timing, hardware, queue-scale, senso
 
 The exact current §46 validation list is:
 
-1. **HA 2025.9+ subentry UI/UX:** practically validate create-controller-then-Add-zone, add/reconfigure/delete, per-subentry device attribution, and zone-device selection in actions. The 2025.9.0 API floor is already source-resolved; this item may refine presentation, not lower safety or reopen API compatibility.
+1. **HA 2025.9+ native subentry lifecycle and UI/UX:** practically validate create-controller-then-Add-zone, add/reconfigure, and the actual native UI/websocket Delete path; per-subentry device attribution/action selection; active AUTO deletion; active MANUAL deletion where practical; SOAKING deletion; a real actuator ON dispatch racing deletion; real entity/device registry cleanup while the runtime safety object survives; tombstone persistence/diagnostic/Repair visibility; restart after deletion; exact same-record delete/re-add; and A -> B replacement with retained A hazard plus zone-history continuity. This item may refine presentation/timing only, not weaken the fixed final-gate/tombstone architecture.
 2. **Valve hardware matrix:** test at least one physical valve and templates for `opening`, `closing`, `open`, `closed`, availability, and position semantics; the conservative contract remains fixed.
 3. **Entity rename tracking:** validate `async_track_entity_registry_updated_event` auto-fixup. If unreliable, ship Repair-and-reconfigure rather than guessing.
 4. **Shutdown OFF budget:** measure cooperative OFF completion within HA's real stop window and tune the bounded fallback interval; never weaken startup reconciliation.
@@ -1477,6 +1604,57 @@ Open issues:
 - `[?]` Slice 9: no core hook for UI subentry deletion on 2025.9.0 (specification review; intersects §46 item 1).
 - Slice 12: hassfest + HACS Action must run in CI. The repository was committed and pushed to main on the self-hosted remote (git.lukestanbury.com/luke/moisture-loop) on 2026-08-21; the workflows need Gitea Actions enabled there or a GitHub mirror, and HACS distribution itself requires GitHub hosting.
 - Slice 13: all seven §46 prototype validations remain — they require a real HA 2025.9+ deployment, physical valve hardware, ~10-zone scale, deployment sensors, and brand submission authority, none of which exist on this development machine.
+
+PROGRESS.md updated:
+- yes
+
+### 2026-08-22 - Progress-status review
+
+Authorized work:
+- Review and correct `PROGRESS.md` only; no implementation, specification, or prototype work authorized.
+
+Completed:
+- Changed Slice 9 from `[x] Complete` to `[?] Requires specification review` and recorded its deletion acceptance criteria as incomplete.
+- Updated Current Position and Progress Summary to preserve the completed Slice 10/11 implementation records while making the Slice 9 release/gating blocker explicit.
+- Recorded that the required supported-current HA harness has not been run and added it to Slice 12 Remaining Work and Blockers.
+- Set the current authorized slice to `None`; further implementation or prototype work requires explicit user authorization after review.
+
+Files changed:
+- `PROGRESS.md` only.
+
+Tests run:
+- None (documentation-only status correction).
+
+Open issues:
+- Slice 9 UI subentry deletion requires specification review.
+- Slice 12 lacks a supported-current HA harness result and GitHub-hosted hassfest/HACS results.
+
+PROGRESS.md updated:
+- yes
+
+### 2026-08-22 - Spec.4 progress reconciliation
+
+Authorized work:
+- Documentation/tracking reconciliation only after approval of `0.1.0-spec.4`; one editorial acceptance-criterion correction was authorized. No implementation, remediation, prototype validation, publication, architecture change, or spec.5 work was authorized.
+
+Completed:
+- Corrected only §45.27's stale test-range reference from AR1-AR10 to AR1-AR17 while retaining spec.4, 59 transitions, 37 invariants, Store schema 2, five controller states, and the Home Assistant 2025.9.0 minimum.
+- Reconciled current metadata and traceability to spec.4, I1-I37, T1-T59, `(safety_record_id, reason)`, Store schema 2, and the 134-ID normative test inventory.
+- Preserved dated spec.3 implementation/test records while marking Slices 0, 1, 3, 4, 5, and 7-12 as requiring spec.4 remediation; retained Slices 2 and 6 as unaffected within their documented scopes.
+- Recorded that Slice 9's specification blocker is resolved but its listener/reconciliation/config-flow/native-deletion implementation remediation is incomplete.
+- Added the ordered eight-stage spec.4 implementation remediation plan and kept Current authorized slice `None`.
+- Preserved Slice 12's supported-current HA and GitHub-hosted hassfest/HACS gates, and left Slice 13 not started with every real §46 validation outstanding.
+
+Files changed:
+- `SPECIFICATION.md`
+- `PROGRESS.md`
+
+Tests run:
+- None (documentation-only reconciliation). A mechanical §39.2 inventory scan found 134 matched IDs, 134 unique IDs, and zero duplicates; this is not behavioural test execution.
+
+Open issues:
+- No spec.4 remediation stage is authorized, implemented, or tested.
+- Supported-current Home Assistant, GitHub-hosted hassfest/HACS, and every §46 prototype validation remain outstanding.
 
 PROGRESS.md updated:
 - yes
