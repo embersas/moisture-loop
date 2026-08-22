@@ -9,6 +9,8 @@ timezone-aware UTC; all durations are seconds.
 from __future__ import annotations
 
 import math
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import StrEnum
@@ -19,6 +21,8 @@ from .const import (
     ACTUATOR_CONFIRM_TIMEOUT_MIN_S,
     ACTUATOR_DOMAIN_SWITCH,
     ACTUATOR_DOMAIN_VALVE,
+    DOMAIN,
+    LEGACY_STORE_SCHEMA_VERSION,
     MANUAL_MAX_DURATION_MAX_S,
     MANUAL_MAX_DURATION_MIN_S,
     MAX_CYCLES_MAX,
@@ -40,6 +44,7 @@ from .const import (
     SOAK_DURATION_MIN_S,
     START_THRESHOLD_MAX,
     START_THRESHOLD_MIN,
+    STORE_SCHEMA_VERSION,
     TARGET_THRESHOLD_MAX,
     TARGET_THRESHOLD_MIN,
 )
@@ -191,11 +196,43 @@ class RuntimeEstimationReason(StrEnum):
 
 
 class BlockerReason(StrEnum):
-    """Water-resource blocker reasons, keyed as (zone_id, reason) (§6, §21)."""
+    """Approved water-resource blocker reasons (§6, §21)."""
 
     EXTERNAL_FLOW = "external_flow"
     INTEGRATION_OFF_UNCONFIRMED = "integration_off_unconfirmed"
     ACTUATOR_NOT_PROVEN_OFF = "actuator_not_proven_off"
+
+
+class RuntimeLifecycle(StrEnum):
+    """Safety-object lifecycle, orthogonal to ControllerState (§12.4)."""
+
+    ACTIVE = "active"
+    DELETE_PENDING = "delete_pending"
+    RETIRED = "retired"
+
+
+class IdentityStatus(StrEnum):
+    """Durable actuator identity resolution status (§23.2)."""
+
+    REGISTRY_CONFIRMED = "registry_confirmed"
+    REGISTRY_UNAVAILABLE = "registry_unavailable"
+    MISSING = "missing"
+    CONFLICT = "conflict"
+
+
+class PossibleFlowOwner(StrEnum):
+    """Known ownership of possible actuator flow (§23.2)."""
+
+    INTEGRATION = "integration"
+    EXTERNAL = "external"
+
+
+class IdentityIncidentKind(StrEnum):
+    """Persisted identity incidents requiring later reconciliation/Repair."""
+
+    MIGRATION_UNRESOLVED = "migration_unresolved"
+    IDENTITY_MISSING = "identity_missing"
+    IDENTITY_CONFLICT = "identity_conflict"
 
 
 class ManualClampReason(StrEnum):
@@ -885,9 +922,9 @@ def _require_utc(value: datetime, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime Store schema 1 (§23.2): pure data structures and strict
-# serialization. Storage I/O lives in storage.py; the shapes live here so
-# round-trip behaviour is provable without Home Assistant.
+# Historical runtime Store schema 1 (§23.2.1). ZoneRecord remains only as a
+# temporary compatibility projection for untouched spec.3 runtime callers;
+# it is not the canonical schema-2 persistence model.
 # ---------------------------------------------------------------------------
 
 
@@ -896,7 +933,7 @@ class StoreDataError(ValueError):
 
 
 class MalformedStoreData(StoreDataError):
-    """Payload does not match schema 1; follows the §23.5 integrity policy."""
+    """Payload does not match its declared schema (§23.5)."""
 
 
 class FutureStoreVersion(StoreDataError):
@@ -920,7 +957,7 @@ class RunIds:
 
 @dataclass(frozen=True, slots=True)
 class ZoneRecord:
-    """Per-zone persisted safety state (§23.2)."""
+    """Historical schema-1 record / temporary runtime projection only."""
 
     state: ControllerState
     enabled: bool
@@ -937,16 +974,16 @@ class ZoneRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class StoreData:
-    """Complete runtime Store snapshot (§23.2 schema version 1)."""
+class Schema1StoreData:
+    """Strictly parsed historical schema-1 Store snapshot (§23.2.1)."""
 
     generation_id: str
     store_revision: int
     run: RunIds
     zones: dict[str, ZoneRecord]
-    version: int = 1
+    version: int = LEGACY_STORE_SCHEMA_VERSION
 
-    def evolve(self, **changes: object) -> StoreData:
+    def evolve(self, **changes: object) -> Schema1StoreData:
         return replace(self, **changes)  # type: ignore[arg-type]
 
 
@@ -985,6 +1022,46 @@ def _require(mapping: object, key: str, context: str) -> object:
     return mapping[key]
 
 
+def _require_exact_keys(mapping: object, expected: set[str], context: str) -> dict:
+    if not isinstance(mapping, dict):
+        raise MalformedStoreData(f"{context} must be an object")
+    keys = set(mapping)
+    if keys != expected:
+        missing = sorted(expected - keys)
+        extra = sorted(str(key) for key in keys - expected)
+        raise MalformedStoreData(f"{context} keys invalid; missing={missing}, extra={extra}")
+    return mapping
+
+
+def _strict_string(value: object, name: str, *, nullable: bool = False) -> str | None:
+    if value is None and nullable:
+        return None
+    if not isinstance(value, str) or not value:
+        raise MalformedStoreData(f"{name} must be a non-empty string")
+    return value
+
+
+def _strict_bool(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise MalformedStoreData(f"{name} must be a boolean")
+    return value
+
+
+def _strict_int(value: object, name: str, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise MalformedStoreData(f"{name} must be an integer >= {minimum}")
+    return value
+
+
+def _strict_float(value: object, name: str, *, minimum: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MalformedStoreData(f"{name} must be a finite number >= {minimum}")
+    result = float(value)
+    if not math.isfinite(result) or result < minimum:
+        raise MalformedStoreData(f"{name} must be a finite number >= {minimum}")
+    return result
+
+
 def session_to_dict(session: SessionContext) -> dict:
     """Serialize the §23.2 persisted session fields.
 
@@ -1021,6 +1098,34 @@ def session_to_dict(session: SessionContext) -> dict:
 
 
 def session_from_dict(data: object) -> SessionContext:
+    data = _require_exact_keys(
+        data,
+        {
+            "session_id",
+            "owner_run_id",
+            "config_fingerprint",
+            "mode",
+            "started_at_utc",
+            "cycle",
+            "session_runtime_s",
+            "runtime_estimated",
+            "runtime_estimation_reason",
+            "pulse_intent_at_utc",
+            "pulse_commanded_at_utc",
+            "pulse_confirmed_at_utc",
+            "pulse_ends_at_utc",
+            "off_confirmed_at_utc",
+            "soak_ends_at_utc",
+            "recheck_not_before_utc",
+            "recheck_grace_deadline_at_utc",
+            "manual_requested_duration_s",
+            "manual_effective_duration_s",
+            "manual_clamp_reasons",
+            "retained_sensor_fault",
+            "moisture_at_start",
+        },
+        "session",
+    )
     started = _iso_to_dt(_require(data, "started_at_utc", "session"), "started_at_utc")
     if started is None:
         raise MalformedStoreData("session.started_at_utc must not be null")
@@ -1030,14 +1135,20 @@ def session_from_dict(data: object) -> SessionContext:
         raise MalformedStoreData("session.manual_clamp_reasons must be a list")
     try:
         return SessionContext(
-            session_id=str(_require(data, "session_id", "session")),
-            owner_run_id=str(_require(data, "owner_run_id", "session")),
-            config_fingerprint=str(_require(data, "config_fingerprint", "session")),
+            session_id=_strict_string(_require(data, "session_id", "session"), "session_id"),
+            owner_run_id=_strict_string(_require(data, "owner_run_id", "session"), "owner_run_id"),
+            config_fingerprint=_strict_string(
+                _require(data, "config_fingerprint", "session"), "config_fingerprint"
+            ),
             mode=SessionMode(_require(data, "mode", "session")),
             started_at_utc=started,
-            cycle=int(_require(data, "cycle", "session")),
-            session_runtime_s=float(_require(data, "session_runtime_s", "session")),
-            runtime_estimated=bool(_require(data, "runtime_estimated", "session")),
+            cycle=_strict_int(_require(data, "cycle", "session"), "session.cycle"),
+            session_runtime_s=_strict_float(
+                _require(data, "session_runtime_s", "session"), "session.session_runtime_s"
+            ),
+            runtime_estimated=_strict_bool(
+                _require(data, "runtime_estimated", "session"), "session.runtime_estimated"
+            ),
             runtime_estimation_reason=RuntimeEstimationReason(
                 _require(data, "runtime_estimation_reason", "session")
             ),
@@ -1078,7 +1189,10 @@ def _float_or_none(value: object) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise MalformedStoreData(f"expected number, got {value!r}")
-    return float(value)
+    result = float(value)
+    if not math.isfinite(result):
+        raise MalformedStoreData(f"expected finite number, got {value!r}")
+    return result
 
 
 def summary_to_dict(summary: SessionSummary) -> dict:
@@ -1100,6 +1214,25 @@ def summary_to_dict(summary: SessionSummary) -> dict:
 
 
 def summary_from_dict(data: object) -> SessionSummary:
+    data = _require_exact_keys(
+        data,
+        {
+            "mode",
+            "reason",
+            "runtime_s",
+            "runtime_estimated",
+            "runtime_estimation_reason",
+            "requested_duration_s",
+            "effective_duration_s",
+            "clamp_reasons",
+            "cycles",
+            "moisture_before",
+            "moisture_after",
+            "started_at_utc",
+            "ended_at_utc",
+        },
+        "summary",
+    )
     started = _iso_to_dt(_require(data, "started_at_utc", "summary"), "started_at_utc")
     ended = _iso_to_dt(_require(data, "ended_at_utc", "summary"), "ended_at_utc")
     if started is None or ended is None:
@@ -1112,15 +1245,17 @@ def summary_from_dict(data: object) -> SessionSummary:
         return SessionSummary(
             mode=SessionMode(_require(data, "mode", "summary")),
             reason=CompletionReason(_require(data, "reason", "summary")),
-            runtime_s=float(_require(data, "runtime_s", "summary")),
-            runtime_estimated=bool(_require(data, "runtime_estimated", "summary")),
+            runtime_s=_strict_float(_require(data, "runtime_s", "summary"), "summary.runtime_s"),
+            runtime_estimated=_strict_bool(
+                _require(data, "runtime_estimated", "summary"), "summary.runtime_estimated"
+            ),
             runtime_estimation_reason=RuntimeEstimationReason(
                 _require(data, "runtime_estimation_reason", "summary")
             ),
             requested_duration_s=_float_or_none(data.get("requested_duration_s")),
             effective_duration_s=_float_or_none(data.get("effective_duration_s")),
             clamp_reasons=tuple(ManualClampReason(r) for r in clamp_raw),
-            cycles=int(_require(data, "cycles", "summary")),
+            cycles=_strict_int(_require(data, "cycles", "summary"), "summary.cycles"),
             moisture_before=_float_or_none(data.get("moisture_before")),
             moisture_after=_float_or_none(data.get("moisture_after")),
             started_at_utc=started,
@@ -1153,6 +1288,21 @@ def zone_record_to_dict(record: ZoneRecord) -> dict:
 
 
 def zone_record_from_dict(data: object) -> ZoneRecord:
+    data = _require_exact_keys(
+        data,
+        {
+            "state",
+            "enabled",
+            "active_fault",
+            "secondary_fault",
+            "last_session_end_utc",
+            "last_auto_session_start_utc",
+            "daily",
+            "last_session_summary",
+            "session",
+        },
+        "zone",
+    )
     state_raw = _require(data, "state", "zone")
     assert isinstance(data, dict)
     try:
@@ -1168,9 +1318,12 @@ def zone_record_from_dict(data: object) -> ZoneRecord:
         date_raw = _require(daily_raw, "date_local", "zone.daily")
         runtime_raw = _require(daily_raw, "runtime_s", "zone.daily")
         try:
+            daily_raw = _require_exact_keys(daily_raw, {"date_local", "runtime_s"}, "zone.daily")
+            if not isinstance(date_raw, str):
+                raise ValueError("date_local must be a string")
             daily = DailyRuntime(
-                date_local=date.fromisoformat(str(date_raw)),
-                runtime_s=float(runtime_raw),  # type: ignore[arg-type]
+                date_local=date.fromisoformat(date_raw),
+                runtime_s=_strict_float(runtime_raw, "zone.daily.runtime_s"),
             )
         except (TypeError, ValueError) as err:
             raise MalformedStoreData(f"zone.daily invalid: {err}") from err
@@ -1195,7 +1348,7 @@ def zone_record_from_dict(data: object) -> ZoneRecord:
     )
 
 
-def store_data_to_dict(data: StoreData) -> dict:
+def schema1_store_data_to_dict(data: Schema1StoreData) -> dict:
     return {
         "version": data.version,
         "generation_id": data.generation_id,
@@ -1208,18 +1361,23 @@ def store_data_to_dict(data: StoreData) -> dict:
     }
 
 
-def store_data_from_dict(raw: object) -> StoreData:
+def schema1_store_data_from_dict(raw: object) -> Schema1StoreData:
     """Strictly parse a schema-1 payload (§23.2, §23.5).
 
     Raises FutureStoreVersion for a newer schema (never downgraded or
     defaulted) and MalformedStoreData for any structural violation.
     """
+    raw = _require_exact_keys(
+        raw, {"version", "generation_id", "store_revision", "run", "zones"}, "store"
+    )
     version_raw = _require(raw, "version", "store")
     if not isinstance(version_raw, int) or isinstance(version_raw, bool):
         raise MalformedStoreData("store.version must be an integer")
-    if version_raw > 1:
-        raise FutureStoreVersion(f"store schema {version_raw} is newer than 1")
-    if version_raw < 1:
+    if version_raw > LEGACY_STORE_SCHEMA_VERSION:
+        raise FutureStoreVersion(
+            f"store schema {version_raw} is newer than {LEGACY_STORE_SCHEMA_VERSION}"
+        )
+    if version_raw < LEGACY_STORE_SCHEMA_VERSION:
         raise MalformedStoreData(f"store schema {version_raw} is invalid")
     assert isinstance(raw, dict)
     generation = _require(raw, "generation_id", "store")
@@ -1228,22 +1386,1289 @@ def store_data_from_dict(raw: object) -> StoreData:
     revision = _require(raw, "store_revision", "store")
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
         raise MalformedStoreData("store.store_revision must be a positive integer")
-    run_raw = _require(raw, "run", "store")
+    run_raw = _require_exact_keys(
+        _require(raw, "run", "store"),
+        {"active_run_id", "last_clean_shutdown_run_id"},
+        "store.run",
+    )
     active = _require(run_raw, "active_run_id", "store.run")
     last_clean = _require(run_raw, "last_clean_shutdown_run_id", "store.run")
     for name, value in (("active_run_id", active), ("last_clean_shutdown_run_id", last_clean)):
-        if value is not None and not isinstance(value, str):
-            raise MalformedStoreData(f"store.run.{name} must be a string or null")
+        if value is not None and (not isinstance(value, str) or not value):
+            raise MalformedStoreData(f"store.run.{name} must be a non-empty string or null")
     zones_raw = _require(raw, "zones", "store")
     if not isinstance(zones_raw, dict):
         raise MalformedStoreData("store.zones must be an object")
-    zones = {str(zone_id): zone_record_from_dict(record) for zone_id, record in zones_raw.items()}
-    return StoreData(
+    zones: dict[str, ZoneRecord] = {}
+    for zone_id, record in zones_raw.items():
+        if not isinstance(zone_id, str) or not zone_id:
+            raise MalformedStoreData("store.zones keys must be non-empty strings")
+        zones[zone_id] = zone_record_from_dict(record)
+    return Schema1StoreData(
         version=version_raw,
         generation_id=generation,
         store_revision=revision,
         run=RunIds(active_run_id=active, last_clean_shutdown_run_id=last_clean),
         zones=zones,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Canonical runtime Store schema 2 (§23.2)
+# ---------------------------------------------------------------------------
+
+
+_ACTUATOR_FAULTS = frozenset(
+    {
+        FaultCode.ACTUATOR_UNAVAILABLE,
+        FaultCode.ACTUATOR_ON_TIMEOUT,
+        FaultCode.ACTUATOR_OFF_TIMEOUT,
+        FaultCode.RESTORED_FROM_UNSAFE_STATE,
+    }
+)
+_ZONE_FAULTS = frozenset(
+    {
+        FaultCode.SENSOR_UNAVAILABLE,
+        FaultCode.SENSOR_STALE,
+        FaultCode.SENSOR_INVALID,
+        FaultCode.CONFIGURATION_INVALID,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SensorIdentity:
+    """Current logical-zone sensor identity; never actuator authority."""
+
+    registry_entry_id: str | None
+    last_known_entity_id: str | None
+
+    def __post_init__(self) -> None:
+        if self.registry_entry_id == "" or self.last_known_entity_id == "":
+            raise ValueError("sensor identity values must be non-empty or null")
+        if (
+            self.last_known_entity_id is not None
+            and _entity_domain(self.last_known_entity_id) != SENSOR_DOMAIN
+        ):
+            raise ValueError("sensor last_known_entity_id must use the sensor domain")
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedEntityIdentity:
+    """Immutable normalized identity captured in an applied shadow."""
+
+    registry_entry_id: str | None
+    last_known_entity_id: str
+    domain: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.last_known_entity_id
+            or _entity_domain(self.last_known_entity_id) != self.domain
+        ):
+            raise ValueError("applied entity identity/domain mismatch")
+        if self.registry_entry_id == "":
+            raise ValueError("registry_entry_id must be non-empty or null")
+
+
+@dataclass(frozen=True, slots=True)
+class ActuatorIdentity:
+    """Durable actuator safety identity and retained OFF metadata (§23.2)."""
+
+    registry_entry_id: str | None
+    last_known_entity_id: str | None
+    domain: str | None
+    identity_status: IdentityStatus
+    off_service: str | None
+    confirm_timeout_s: int | None
+
+    def __post_init__(self) -> None:
+        if self.registry_entry_id == "" or self.last_known_entity_id == "":
+            raise ValueError("actuator identity strings must be non-empty or null")
+        if self.domain not in (None, ACTUATOR_DOMAIN_SWITCH, ACTUATOR_DOMAIN_VALVE):
+            raise ValueError("actuator identity domain must be switch, valve, or null")
+        if self.last_known_entity_id is not None and (
+            self.domain is None or _entity_domain(self.last_known_entity_id) != self.domain
+        ):
+            raise ValueError("actuator entity ID/domain mismatch")
+        expected_service = {
+            ACTUATOR_DOMAIN_SWITCH: "switch.turn_off",
+            ACTUATOR_DOMAIN_VALVE: "valve.close_valve",
+        }.get(self.domain)
+        if self.off_service != expected_service:
+            raise ValueError("actuator OFF service/domain mismatch")
+        if self.confirm_timeout_s is not None and (
+            isinstance(self.confirm_timeout_s, bool) or self.confirm_timeout_s <= 0
+        ):
+            raise ValueError("confirm_timeout_s must be positive or null")
+        unresolved = self.identity_status in (IdentityStatus.MISSING, IdentityStatus.CONFLICT)
+        if not unresolved and (
+            self.last_known_entity_id is None
+            or self.domain is None
+            or self.confirm_timeout_s is None
+        ):
+            raise ValueError("resolved actuator identity requires entity/domain/timeout metadata")
+        if (
+            self.identity_status is IdentityStatus.REGISTRY_CONFIRMED
+            and self.registry_entry_id is None
+        ):
+            raise ValueError("registry_confirmed identity requires registry_entry_id")
+        if (
+            self.identity_status is IdentityStatus.REGISTRY_UNAVAILABLE
+            and self.registry_entry_id is not None
+        ):
+            raise ValueError("registry_unavailable identity cannot carry registry_entry_id")
+
+
+@dataclass(frozen=True, slots=True)
+class NormalizedZoneSettings:
+    """Serialization-friendly immutable §9 settings in an applied shadow."""
+
+    name: str
+    start_threshold: float
+    target_threshold: float
+    pulse_duration_s: int
+    soak_duration_s: int
+    max_cycles: int
+    max_session_runtime_s: int
+    max_daily_runtime_s: int
+    min_session_interval_s: int
+    sensor_max_age_s: int
+    actuator_confirm_timeout_s: int
+    manual_max_duration_s: int
+
+    @classmethod
+    def from_config(cls, config: ZoneConfig) -> NormalizedZoneSettings:
+        config.validate()
+        return cls(
+            name=config.name,
+            start_threshold=config.start_threshold,
+            target_threshold=config.target_threshold,
+            pulse_duration_s=config.pulse_duration_s,
+            soak_duration_s=config.soak_duration_s,
+            max_cycles=config.max_cycles,
+            max_session_runtime_s=config.max_session_runtime_s,
+            max_daily_runtime_s=config.max_daily_runtime_s,
+            min_session_interval_s=config.min_session_interval_s,
+            sensor_max_age_s=config.sensor_max_age_s,
+            actuator_confirm_timeout_s=config.actuator_confirm_timeout_s,
+            manual_max_duration_s=config.manual_max_duration_s,
+        )
+
+    def validate(self, sensor_entity_id: str, actuator_entity_id: str) -> None:
+        ZoneConfig(
+            name=self.name,
+            moisture_sensor=sensor_entity_id,
+            actuator=actuator_entity_id,
+            start_threshold=self.start_threshold,
+            target_threshold=self.target_threshold,
+            pulse_duration_s=self.pulse_duration_s,
+            soak_duration_s=self.soak_duration_s,
+            max_cycles=self.max_cycles,
+            max_session_runtime_s=self.max_session_runtime_s,
+            max_daily_runtime_s=self.max_daily_runtime_s,
+            min_session_interval_s=self.min_session_interval_s,
+            sensor_max_age_s=self.sensor_max_age_s,
+            actuator_confirm_timeout_s=self.actuator_confirm_timeout_s,
+            manual_max_duration_s=self.manual_max_duration_s,
+        ).validate()
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedConfigurationShadow:
+    """Immutable normalized copy of the configuration actually applied."""
+
+    subentry_id: str
+    config_fingerprint: str
+    entry_snapshot_fingerprint: str
+    applied_generation: int
+    normalized_settings: NormalizedZoneSettings
+    sensor_identity: AppliedEntityIdentity
+    actuator_identity: AppliedEntityIdentity
+
+    def __post_init__(self) -> None:
+        if (
+            not self.subentry_id
+            or not self.config_fingerprint
+            or not self.entry_snapshot_fingerprint
+        ):
+            raise ValueError("applied shadow identifiers/fingerprints must be non-empty")
+        if isinstance(self.applied_generation, bool) or self.applied_generation < 0:
+            raise ValueError("applied_generation must be a non-negative integer")
+        if self.sensor_identity.domain != SENSOR_DOMAIN:
+            raise ValueError("applied sensor identity must use sensor domain")
+        if self.actuator_identity.domain not in (ACTUATOR_DOMAIN_SWITCH, ACTUATOR_DOMAIN_VALVE):
+            raise ValueError("applied actuator identity must use switch or valve domain")
+        self.normalized_settings.validate(
+            self.sensor_identity.last_known_entity_id,
+            self.actuator_identity.last_known_entity_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityIncident:
+    """Durable identity evidence for later exact-record reconciliation."""
+
+    kind: IdentityIncidentKind
+    detail: str
+
+    def __post_init__(self) -> None:
+        if not self.detail:
+            raise ValueError("identity incident detail must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedSession:
+    """Schema-2 session under zone_runtime with exact safety-record owner."""
+
+    owner_safety_record_id: str
+    context: SessionContext
+
+    def __post_init__(self) -> None:
+        if not self.owner_safety_record_id:
+            raise ValueError("owner_safety_record_id must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class AccountingContribution:
+    """Stable zone-history accounting contribution identity (§19.5)."""
+
+    accounting_contribution_id: str
+    source_safety_record_id: str
+    start_utc: datetime | None
+    end_utc: datetime | None
+    runtime_s: float
+    runtime_estimated: bool
+    local_date: date | None = None
+
+    def __post_init__(self) -> None:
+        if not self.accounting_contribution_id or not self.source_safety_record_id:
+            raise ValueError("contribution IDs must be non-empty")
+        if not math.isfinite(self.runtime_s) or self.runtime_s < 0:
+            raise ValueError("contribution runtime_s must be finite and non-negative")
+        if (self.start_utc is None) != (self.end_utc is None):
+            raise ValueError("contribution interval anchors must both be known or both null")
+        if self.start_utc is not None and self.end_utc is not None:
+            _require_utc(self.start_utc, "contribution.start_utc")
+            _require_utc(self.end_utc, "contribution.end_utc")
+            if self.end_utc < self.start_utc:
+                raise ValueError("contribution end precedes start")
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneDailyRuntime:
+    """Current-day budget plus contribution/audit provenance (§19.3-§19.5)."""
+
+    date_local: date
+    runtime_s: float
+    conservative_unattributed_runtime_s: float = 0.0
+    contributions: tuple[AccountingContribution, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("runtime_s", self.runtime_s),
+            ("conservative_unattributed_runtime_s", self.conservative_unattributed_runtime_s),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if self.conservative_unattributed_runtime_s > self.runtime_s:
+            raise ValueError("unattributed runtime cannot exceed total runtime")
+        deduplicated = deduplicate_accounting_contributions(self.contributions)
+        if len(deduplicated) != len(self.contributions):
+            raise ValueError("persisted daily contributions must have unique IDs")
+        if sum(contribution.runtime_s for contribution in self.contributions) > self.runtime_s:
+            raise ValueError("daily runtime cannot be less than its known contributions")
+        if any(
+            contribution.local_date not in (None, self.date_local)
+            for contribution in self.contributions
+        ):
+            raise ValueError("contribution local_date disagrees with daily date")
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneRuntime:
+    """Sole logical-zone operational persistence authority (§23.2)."""
+
+    enabled: bool
+    state: ControllerState
+    zone_fault: FaultCode | None
+    secondary_fault: FaultCode | None
+    sensor_identity: SensorIdentity
+    last_session_summary: SessionSummary | None
+    session: PersistedSession | None
+
+    def __post_init__(self) -> None:
+        if self.zone_fault is not None and self.zone_fault not in _ZONE_FAULTS:
+            raise ValueError("zone_fault must be sensor/configuration scoped")
+        if self.secondary_fault is not None and self.secondary_fault not in _ZONE_FAULTS:
+            raise ValueError("zone secondary_fault must be sensor/configuration scoped")
+        if self.zone_fault is not None and self.zone_fault == self.secondary_fault:
+            raise ValueError("zone primary and secondary fault must not duplicate")
+
+    def to_legacy_record(
+        self,
+        *,
+        actuator_fault: FaultCode | None,
+        last_session_end_utc: datetime | None,
+        last_auto_session_start_utc: datetime | None,
+        daily: ZoneDailyRuntime | None,
+    ) -> ZoneRecord:
+        """Temporary spec.3 runtime projection; never serialized as authority."""
+        active = actuator_fault or self.zone_fault
+        secondary = self.zone_fault if actuator_fault is not None else self.secondary_fault
+        if actuator_fault is not None and self.secondary_fault is not None:
+            secondary = self.secondary_fault
+        return ZoneRecord(
+            state=self.state,
+            enabled=self.enabled,
+            active_fault=active,
+            secondary_fault=secondary,
+            last_session_end_utc=last_session_end_utc,
+            last_auto_session_start_utc=last_auto_session_start_utc,
+            daily=(DailyRuntime(daily.date_local, daily.runtime_s) if daily else None),
+            last_session_summary=self.last_session_summary,
+            session=self.session.context if self.session else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ZoneHistory:
+    """Independent logical-zone history and operational authority (§23.2)."""
+
+    zone_history_id: str
+    active_subentry_id: str | None
+    previous_subentry_ids: tuple[str, ...]
+    last_session_end_utc: datetime | None
+    last_auto_session_start_utc: datetime | None
+    zone_runtime: ZoneRuntime
+    daily: ZoneDailyRuntime | None
+
+    def __post_init__(self) -> None:
+        _validate_id_history(
+            self.zone_history_id,
+            self.active_subentry_id,
+            self.previous_subentry_ids,
+            "zone_history",
+        )
+        for name, value in (
+            ("last_session_end_utc", self.last_session_end_utc),
+            ("last_auto_session_start_utc", self.last_auto_session_start_utc),
+        ):
+            if value is not None:
+                _require_utc(value, name)
+
+    def evolve(self, **changes: object) -> ZoneHistory:
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True, slots=True)
+class SafetyRecord:
+    """One canonical mutable actuator-safety record per durable lineage."""
+
+    safety_record_id: str
+    zone_id: str
+    active_subentry_id: str | None
+    previous_subentry_ids: tuple[str, ...]
+    safety_lineage_id: str
+    zone_history_id: str
+    historical_zone_history_ids: tuple[str, ...]
+    runtime_lifecycle: RuntimeLifecycle
+    applied_config: AppliedConfigurationShadow | None
+    actuator_identity: ActuatorIdentity
+    blocker_reasons: tuple[BlockerReason, ...]
+    possible_flow_owner: PossibleFlowOwner | None
+    identity_incident: IdentityIncident | None
+    actuator_fault: FaultCode | None
+    acknowledgement_required: bool
+
+    def __post_init__(self) -> None:
+        _validate_id_history(
+            self.safety_record_id,
+            self.active_subentry_id,
+            self.previous_subentry_ids,
+            "safety_record",
+        )
+        if not self.zone_id or not self.safety_lineage_id or not self.zone_history_id:
+            raise ValueError("safety record identities must be non-empty")
+        if len(set(self.historical_zone_history_ids)) != len(self.historical_zone_history_ids):
+            raise ValueError("historical_zone_history_ids must be unique")
+        if self.zone_history_id in self.historical_zone_history_ids:
+            raise ValueError("current zone_history_id cannot also be historical")
+        if len(set(self.blocker_reasons)) != len(self.blocker_reasons):
+            raise ValueError("blocker reasons must be unique")
+        if self.actuator_fault is not None and self.actuator_fault not in _ACTUATOR_FAULTS:
+            raise ValueError("actuator_fault must be actuator/integrity scoped")
+        if self.acknowledgement_required and (
+            self.actuator_fault is None or not self.actuator_fault.requires_user_ack
+        ):
+            raise ValueError("acknowledgement requires an acknowledgement-capable actuator fault")
+        if self.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+            if self.active_subentry_id is None or self.applied_config is None:
+                raise ValueError("ACTIVE record requires current subentry and applied shadow")
+            if self.applied_config.subentry_id != self.active_subentry_id:
+                raise ValueError("applied shadow/current subentry mismatch")
+            if self.actuator_identity.identity_status not in (
+                IdentityStatus.REGISTRY_CONFIRMED,
+                IdentityStatus.REGISTRY_UNAVAILABLE,
+            ):
+                raise ValueError("ACTIVE record requires a resolved actuator identity")
+        elif self.active_subentry_id is not None:
+            raise ValueError("non-ACTIVE record cannot own a current subentry")
+
+    def evolve(self, **changes: object) -> SafetyRecord:
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+
+def _validate_id_history(
+    stable_id: str,
+    active_subentry_id: str | None,
+    previous_subentry_ids: tuple[str, ...],
+    context: str,
+) -> None:
+    if not stable_id:
+        raise ValueError(f"{context} stable ID must be non-empty")
+    if active_subentry_id == "" or any(not value for value in previous_subentry_ids):
+        raise ValueError(f"{context} subentry IDs must be non-empty or null")
+    if len(set(previous_subentry_ids)) != len(previous_subentry_ids):
+        raise ValueError(f"{context} previous_subentry_ids must be unique")
+    if active_subentry_id in previous_subentry_ids:
+        raise ValueError(f"{context} active subentry cannot also be previous")
+
+
+@dataclass(frozen=True, slots=True)
+class StoreData:
+    """Canonical complete schema-2 runtime safety snapshot."""
+
+    generation_id: str
+    store_revision: int
+    run: RunIds
+    zone_histories: dict[str, ZoneHistory]
+    safety_records: dict[str, SafetyRecord]
+    version: int = STORE_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        validate_store_data(self)
+
+    def evolve(self, **changes: object) -> StoreData:
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+    @property
+    def zones(self) -> dict[str, ZoneRecord]:
+        """Temporary read-only spec.3 projection for later remediation stages."""
+        projected: dict[str, ZoneRecord] = {}
+        for record_id in sorted(self.safety_records):
+            record = self.safety_records[record_id]
+            history = self.zone_histories[record.zone_history_id]
+            projected[record.zone_id] = history.zone_runtime.to_legacy_record(
+                actuator_fault=record.actuator_fault,
+                last_session_end_utc=history.last_session_end_utc,
+                last_auto_session_start_utc=history.last_auto_session_start_utc,
+                daily=history.daily,
+            )
+        return projected
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationRecordContext:
+    """Caller-supplied normalized current-config facts for schema-1 migration."""
+
+    active_subentry_id: str
+    applied_config: AppliedConfigurationShadow
+    actuator_identity: ActuatorIdentity
+    sensor_identity: SensorIdentity
+
+    def __post_init__(self) -> None:
+        if (
+            not self.active_subentry_id
+            or self.applied_config.subentry_id != self.active_subentry_id
+        ):
+            raise ValueError("migration context subentry/shadow mismatch")
+        if self.sensor_identity.last_known_entity_id != (
+            self.applied_config.sensor_identity.last_known_entity_id
+        ):
+            raise ValueError("migration context sensor identity/shadow mismatch")
+        if self.actuator_identity.last_known_entity_id != (
+            self.applied_config.actuator_identity.last_known_entity_id
+        ):
+            raise ValueError("migration context actuator identity/shadow mismatch")
+
+
+def validate_store_data(data: StoreData) -> None:
+    """Reject all schema-2 structural/cross-reference contradictions."""
+    if data.version != STORE_SCHEMA_VERSION:
+        raise ValueError(f"StoreData version must be {STORE_SCHEMA_VERSION}")
+    if not data.generation_id:
+        raise ValueError("generation_id must be non-empty")
+    if isinstance(data.store_revision, bool) or data.store_revision < 1:
+        raise ValueError("store_revision must be a positive integer")
+    if set(data.zone_histories) != {
+        history.zone_history_id for history in data.zone_histories.values()
+    }:
+        raise ValueError("zone-history map keys must equal stable IDs")
+    if set(data.safety_records) != {
+        record.safety_record_id for record in data.safety_records.values()
+    }:
+        raise ValueError("safety-record map keys must equal stable IDs")
+    lineages = [record.safety_lineage_id for record in data.safety_records.values()]
+    if len(lineages) != len(set(lineages)):
+        raise ValueError("safety_lineage_id must be globally unique")
+    active_record_subentries = [
+        record.active_subentry_id
+        for record in data.safety_records.values()
+        if record.active_subentry_id is not None
+    ]
+    if len(active_record_subentries) != len(set(active_record_subentries)):
+        raise ValueError("current subentry cannot own multiple safety records")
+    active_history_subentries = [
+        history.active_subentry_id
+        for history in data.zone_histories.values()
+        if history.active_subentry_id is not None
+    ]
+    if len(active_history_subentries) != len(set(active_history_subentries)):
+        raise ValueError("current subentry cannot own multiple zone histories")
+    for record in data.safety_records.values():
+        history = data.zone_histories.get(record.zone_history_id)
+        if history is None:
+            raise ValueError("safety record references missing zone_history_id")
+        if record.runtime_lifecycle is RuntimeLifecycle.ACTIVE and (
+            history.active_subentry_id != record.active_subentry_id
+        ):
+            raise ValueError("ACTIVE safety/history current ownership mismatch")
+    for history in data.zone_histories.values():
+        persisted = history.zone_runtime.session
+        if persisted is None:
+            continue
+        owner = data.safety_records.get(persisted.owner_safety_record_id)
+        if owner is None:
+            raise ValueError("persisted session owner_safety_record_id does not exist")
+        if owner.zone_history_id != history.zone_history_id:
+            raise ValueError("persisted session owner references a different zone history")
+    contribution_ids: dict[str, AccountingContribution] = {}
+    for history in data.zone_histories.values():
+        if history.daily is None:
+            continue
+        for contribution in history.daily.contributions:
+            if contribution.source_safety_record_id not in data.safety_records:
+                raise ValueError("accounting contribution source safety record does not exist")
+            prior = contribution_ids.get(contribution.accounting_contribution_id)
+            if prior is not None:
+                if prior != contribution:
+                    raise ValueError("conflicting duplicate accounting contribution ID")
+                raise ValueError("duplicate accounting contribution ID in Store")
+            contribution_ids[contribution.accounting_contribution_id] = contribution
+
+
+def deduplicate_accounting_contributions(
+    contributions: tuple[AccountingContribution, ...] | list[AccountingContribution],
+) -> tuple[AccountingContribution, ...]:
+    """Deduplicate byte-identical IDs; reject contradictory reuse (§19.5.1)."""
+    by_id: dict[str, AccountingContribution] = {}
+    for contribution in contributions:
+        existing = by_id.get(contribution.accounting_contribution_id)
+        if existing is not None and existing != contribution:
+            raise ValueError("accounting contribution ID reused with different payload")
+        by_id[contribution.accounting_contribution_id] = contribution
+    return tuple(by_id[key] for key in sorted(by_id))
+
+
+def conservative_merge_daily_runtime(
+    left: ZoneDailyRuntime, right: ZoneDailyRuntime
+) -> ZoneDailyRuntime:
+    """Pure Stage-1 conservative aggregate primitive for later A -> B use.
+
+    Identical contribution IDs count once. Every distinct known contribution
+    remains. Aggregate runtime not proven to be represented by stable IDs is
+    added from both sides and explicitly retained as unattributed evidence.
+    Interval-overlap orchestration remains Stage 2/3 work.
+    """
+    if left.date_local != right.date_local:
+        raise ValueError("daily runtime dates must match")
+    contributions = deduplicate_accounting_contributions(
+        (*left.contributions, *right.contributions)
+    )
+    left_known = sum(contribution.runtime_s for contribution in left.contributions)
+    right_known = sum(contribution.runtime_s for contribution in right.contributions)
+    left_unresolved = max(left.conservative_unattributed_runtime_s, left.runtime_s - left_known)
+    right_unresolved = max(right.conservative_unattributed_runtime_s, right.runtime_s - right_known)
+    unresolved = left_unresolved + right_unresolved
+    return ZoneDailyRuntime(
+        date_local=left.date_local,
+        runtime_s=sum(contribution.runtime_s for contribution in contributions) + unresolved,
+        conservative_unattributed_runtime_s=unresolved,
+        contributions=contributions,
+    )
+
+
+def _stable_migration_id(generation_id: str, record_id: str, kind: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{generation_id}:{record_id}:{kind}"))
+
+
+def migrate_schema1_to_schema2(
+    legacy: Schema1StoreData,
+    current_records: Mapping[str, MigrationRecordContext] | None = None,
+) -> StoreData:
+    """Strict pure §23.2.1 migration with deterministic identity creation."""
+    contexts = dict(current_records or {})
+    unknown = set(contexts) - set(legacy.zones)
+    if unknown:
+        raise MalformedStoreData(
+            f"migration context has unknown schema-1 records: {sorted(unknown)}"
+        )
+    safety_records: dict[str, SafetyRecord] = {}
+    zone_histories: dict[str, ZoneHistory] = {}
+    for safety_record_id in sorted(legacy.zones):
+        old = legacy.zones[safety_record_id]
+        context = contexts.get(safety_record_id)
+        lineage_id = _stable_migration_id(legacy.generation_id, safety_record_id, "safety-lineage")
+        history_id = _stable_migration_id(legacy.generation_id, safety_record_id, "zone-history")
+        actuator_fault, zone_fault, secondary_zone_fault = _split_schema1_faults(
+            old.active_fault, old.secondary_fault
+        )
+        persisted_session = (
+            PersistedSession(safety_record_id, old.session) if old.session is not None else None
+        )
+        contributions: tuple[AccountingContribution, ...] = ()
+        daily: ZoneDailyRuntime | None = None
+        if old.daily is not None:
+            contribution = AccountingContribution(
+                accounting_contribution_id=_stable_migration_id(
+                    legacy.generation_id,
+                    safety_record_id,
+                    f"schema1-daily:{old.daily.date_local.isoformat()}",
+                ),
+                source_safety_record_id=safety_record_id,
+                start_utc=None,
+                end_utc=None,
+                runtime_s=old.daily.runtime_s,
+                runtime_estimated=True,
+                local_date=old.daily.date_local,
+            )
+            contributions = (contribution,)
+            daily = ZoneDailyRuntime(
+                date_local=old.daily.date_local,
+                runtime_s=old.daily.runtime_s,
+                conservative_unattributed_runtime_s=0.0,
+                contributions=contributions,
+            )
+        if context is None:
+            active_subentry_id = None
+            previous_subentry_ids = (safety_record_id,)
+            lifecycle = RuntimeLifecycle.DELETE_PENDING
+            applied_config = None
+            actuator_identity = ActuatorIdentity(
+                registry_entry_id=None,
+                last_known_entity_id=None,
+                domain=None,
+                identity_status=IdentityStatus.MISSING,
+                off_service=None,
+                confirm_timeout_s=None,
+            )
+            sensor_identity = SensorIdentity(None, None)
+            blockers = {BlockerReason.ACTUATOR_NOT_PROVEN_OFF}
+            if _legacy_has_possible_integration_flow(old):
+                blockers.add(BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+            possible_flow_owner = (
+                PossibleFlowOwner.INTEGRATION
+                if _legacy_has_possible_integration_flow(old)
+                else None
+            )
+            incident = IdentityIncident(
+                IdentityIncidentKind.MIGRATION_UNRESOLVED,
+                "schema-1 record absent from supplied current configuration; "
+                "durable actuator identity unavailable",
+            )
+        else:
+            active_subentry_id = context.active_subentry_id
+            previous_subentry_ids = (
+                (safety_record_id,) if context.active_subentry_id != safety_record_id else ()
+            )
+            lifecycle = RuntimeLifecycle.ACTIVE
+            applied_config = context.applied_config
+            actuator_identity = context.actuator_identity
+            sensor_identity = context.sensor_identity
+            blockers = set()
+            if _legacy_has_possible_integration_flow(old):
+                blockers.add(BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+            possible_flow_owner = (
+                PossibleFlowOwner.INTEGRATION
+                if _legacy_has_possible_integration_flow(old)
+                else None
+            )
+            incident = None
+        zone_runtime = ZoneRuntime(
+            enabled=old.enabled,
+            state=old.state,
+            zone_fault=zone_fault,
+            secondary_fault=secondary_zone_fault,
+            sensor_identity=sensor_identity,
+            last_session_summary=old.last_session_summary,
+            session=persisted_session,
+        )
+        zone_histories[history_id] = ZoneHistory(
+            zone_history_id=history_id,
+            active_subentry_id=active_subentry_id,
+            previous_subentry_ids=previous_subentry_ids,
+            last_session_end_utc=old.last_session_end_utc,
+            last_auto_session_start_utc=old.last_auto_session_start_utc,
+            zone_runtime=zone_runtime,
+            daily=daily,
+        )
+        safety_records[safety_record_id] = SafetyRecord(
+            safety_record_id=safety_record_id,
+            zone_id=safety_record_id,
+            active_subentry_id=active_subentry_id,
+            previous_subentry_ids=previous_subentry_ids,
+            safety_lineage_id=lineage_id,
+            zone_history_id=history_id,
+            historical_zone_history_ids=(),
+            runtime_lifecycle=lifecycle,
+            applied_config=applied_config,
+            actuator_identity=actuator_identity,
+            blocker_reasons=tuple(sorted(blockers, key=str)),
+            possible_flow_owner=possible_flow_owner,
+            identity_incident=incident,
+            actuator_fault=actuator_fault,
+            acknowledgement_required=(
+                actuator_fault.requires_user_ack if actuator_fault is not None else False
+            ),
+        )
+    try:
+        return StoreData(
+            generation_id=legacy.generation_id,
+            store_revision=legacy.store_revision + 1,
+            run=legacy.run,
+            zone_histories=zone_histories,
+            safety_records=safety_records,
+        )
+    except ValueError as err:
+        raise MalformedStoreData(f"migrated schema-2 payload invalid: {err}") from err
+
+
+def _legacy_has_possible_integration_flow(record: ZoneRecord) -> bool:
+    session = record.session
+    return session is not None and (
+        session.pulse_intent_at_utc is not None and session.off_confirmed_at_utc is None
+    )
+
+
+def _split_schema1_faults(
+    primary: FaultCode | None, secondary: FaultCode | None
+) -> tuple[FaultCode | None, FaultCode | None, FaultCode | None]:
+    actuator_faults = [fault for fault in (primary, secondary) if fault in _ACTUATOR_FAULTS]
+    if len(actuator_faults) > 1:
+        raise MalformedStoreData(
+            "schema-1 primary/secondary actuator faults cannot be represented unambiguously"
+        )
+    zone_primary = primary if primary in _ZONE_FAULTS else None
+    zone_secondary = secondary if secondary in _ZONE_FAULTS else None
+    return (actuator_faults[0] if actuator_faults else None, zone_primary, zone_secondary)
+
+
+# -- Schema-2 deterministic serialization ---------------------------------
+
+
+def _identity_to_dict(identity: SensorIdentity | AppliedEntityIdentity | ActuatorIdentity) -> dict:
+    if isinstance(identity, ActuatorIdentity):
+        return {
+            "registry_entry_id": identity.registry_entry_id,
+            "last_known_entity_id": identity.last_known_entity_id,
+            "domain": identity.domain,
+            "identity_status": identity.identity_status.value,
+            "off_service": identity.off_service,
+            "confirm_timeout_s": identity.confirm_timeout_s,
+        }
+    result = {
+        "registry_entry_id": identity.registry_entry_id,
+        "last_known_entity_id": identity.last_known_entity_id,
+    }
+    if isinstance(identity, AppliedEntityIdentity):
+        result["domain"] = identity.domain
+    return result
+
+
+def _settings_to_dict(settings: NormalizedZoneSettings) -> dict:
+    return {field: getattr(settings, field) for field in settings.__dataclass_fields__}
+
+
+def _shadow_to_dict(shadow: AppliedConfigurationShadow) -> dict:
+    return {
+        "subentry_id": shadow.subentry_id,
+        "config_fingerprint": shadow.config_fingerprint,
+        "entry_snapshot_fingerprint": shadow.entry_snapshot_fingerprint,
+        "applied_generation": shadow.applied_generation,
+        "normalized_settings": _settings_to_dict(shadow.normalized_settings),
+        "sensor_identity": _identity_to_dict(shadow.sensor_identity),
+        "actuator_identity": _identity_to_dict(shadow.actuator_identity),
+    }
+
+
+def persisted_session_to_dict(session: PersistedSession) -> dict:
+    payload = session_to_dict(session.context)
+    payload["owner_safety_record_id"] = session.owner_safety_record_id
+    return payload
+
+
+def _contribution_to_dict(contribution: AccountingContribution) -> dict:
+    return {
+        "accounting_contribution_id": contribution.accounting_contribution_id,
+        "source_safety_record_id": contribution.source_safety_record_id,
+        "start_utc": _dt_to_iso(contribution.start_utc),
+        "end_utc": _dt_to_iso(contribution.end_utc),
+        "runtime_s": contribution.runtime_s,
+        "runtime_estimated": contribution.runtime_estimated,
+        "local_date": contribution.local_date.isoformat() if contribution.local_date else None,
+    }
+
+
+def store_data_to_dict(data: StoreData) -> dict:
+    """Deterministically serialize the canonical schema-2 Store."""
+    validate_store_data(data)
+    return {
+        "version": STORE_SCHEMA_VERSION,
+        "generation_id": data.generation_id,
+        "store_revision": data.store_revision,
+        "run": {
+            "active_run_id": data.run.active_run_id,
+            "last_clean_shutdown_run_id": data.run.last_clean_shutdown_run_id,
+        },
+        "zone_histories": {
+            history_id: {
+                "active_subentry_id": history.active_subentry_id,
+                "previous_subentry_ids": list(history.previous_subentry_ids),
+                "last_session_end_utc": _dt_to_iso(history.last_session_end_utc),
+                "last_auto_session_start_utc": _dt_to_iso(history.last_auto_session_start_utc),
+                "zone_runtime": {
+                    "enabled": history.zone_runtime.enabled,
+                    "state": history.zone_runtime.state.value,
+                    "zone_fault": (
+                        history.zone_runtime.zone_fault.value
+                        if history.zone_runtime.zone_fault
+                        else None
+                    ),
+                    "secondary_fault": (
+                        history.zone_runtime.secondary_fault.value
+                        if history.zone_runtime.secondary_fault
+                        else None
+                    ),
+                    "sensor_identity": _identity_to_dict(history.zone_runtime.sensor_identity),
+                    "last_session_summary": (
+                        summary_to_dict(history.zone_runtime.last_session_summary)
+                        if history.zone_runtime.last_session_summary
+                        else None
+                    ),
+                    "session": (
+                        persisted_session_to_dict(history.zone_runtime.session)
+                        if history.zone_runtime.session
+                        else None
+                    ),
+                },
+                "daily": (
+                    {
+                        "date_local": history.daily.date_local.isoformat(),
+                        "runtime_s": history.daily.runtime_s,
+                        "conservative_unattributed_runtime_s": (
+                            history.daily.conservative_unattributed_runtime_s
+                        ),
+                        "contributions": [
+                            _contribution_to_dict(contribution)
+                            for contribution in history.daily.contributions
+                        ],
+                    }
+                    if history.daily
+                    else None
+                ),
+            }
+            for history_id, history in sorted(data.zone_histories.items())
+        },
+        "safety_records": {
+            record_id: {
+                "zone_id": record.zone_id,
+                "active_subentry_id": record.active_subentry_id,
+                "previous_subentry_ids": list(record.previous_subentry_ids),
+                "safety_lineage_id": record.safety_lineage_id,
+                "zone_history_id": record.zone_history_id,
+                "historical_zone_history_ids": list(record.historical_zone_history_ids),
+                "runtime_lifecycle": record.runtime_lifecycle.value,
+                "applied_config": (
+                    _shadow_to_dict(record.applied_config) if record.applied_config else None
+                ),
+                "actuator_identity": _identity_to_dict(record.actuator_identity),
+                "blocker_reasons": [reason.value for reason in record.blocker_reasons],
+                "possible_flow_owner": (
+                    record.possible_flow_owner.value if record.possible_flow_owner else None
+                ),
+                "identity_incident": (
+                    {
+                        "kind": record.identity_incident.kind.value,
+                        "detail": record.identity_incident.detail,
+                    }
+                    if record.identity_incident
+                    else None
+                ),
+                "actuator_fault": record.actuator_fault.value if record.actuator_fault else None,
+                "acknowledgement_required": record.acknowledgement_required,
+            }
+            for record_id, record in sorted(data.safety_records.items())
+        },
+    }
+
+
+def store_data_from_dict(raw: object) -> StoreData:
+    """Strictly parse schema 2; schema 1 requires the migration parser."""
+    if not isinstance(raw, dict):
+        raise MalformedStoreData("store must be an object")
+    version = raw.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise MalformedStoreData("store.version must be an integer")
+    if version > STORE_SCHEMA_VERSION:
+        raise FutureStoreVersion(f"store schema {version} is newer than {STORE_SCHEMA_VERSION}")
+    if version != STORE_SCHEMA_VERSION:
+        raise MalformedStoreData(f"store schema {version} is not schema {STORE_SCHEMA_VERSION}")
+    raw = _require_exact_keys(
+        raw,
+        {"version", "generation_id", "store_revision", "run", "zone_histories", "safety_records"},
+        "store",
+    )
+    generation = _strict_string(raw["generation_id"], "store.generation_id")
+    revision = _strict_int(raw["store_revision"], "store.store_revision", minimum=1)
+    run_raw = _require_exact_keys(
+        raw["run"], {"active_run_id", "last_clean_shutdown_run_id"}, "store.run"
+    )
+    active = _strict_string(run_raw["active_run_id"], "store.run.active_run_id", nullable=True)
+    clean = _strict_string(
+        run_raw["last_clean_shutdown_run_id"],
+        "store.run.last_clean_shutdown_run_id",
+        nullable=True,
+    )
+    histories_raw = raw["zone_histories"]
+    records_raw = raw["safety_records"]
+    if not isinstance(histories_raw, dict) or not isinstance(records_raw, dict):
+        raise MalformedStoreData("store zone_histories/safety_records must be objects")
+    try:
+        histories = {
+            _map_id(key, "zone_history"): _zone_history_from_dict(key, value)
+            for key, value in histories_raw.items()
+        }
+        records = {
+            _map_id(key, "safety_record"): _safety_record_from_dict(key, value)
+            for key, value in records_raw.items()
+        }
+        return StoreData(
+            generation_id=generation,  # type: ignore[arg-type]
+            store_revision=revision,
+            run=RunIds(active, clean),
+            zone_histories=histories,
+            safety_records=records,
+        )
+    except StoreDataError:
+        raise
+    except (TypeError, ValueError) as err:
+        raise MalformedStoreData(f"schema-2 payload invalid: {err}") from err
+
+
+def _map_id(value: object, context: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise MalformedStoreData(f"{context} map key must be a non-empty string")
+    return value
+
+
+def _string_tuple(value: object, name: str, enum_cls: type[StrEnum] | None = None) -> tuple:
+    if not isinstance(value, list):
+        raise MalformedStoreData(f"{name} must be a list")
+    try:
+        result = tuple(enum_cls(item) if enum_cls else _strict_string(item, name) for item in value)
+    except ValueError as err:
+        raise MalformedStoreData(f"{name} contains an unknown value") from err
+    if len(set(result)) != len(result):
+        raise MalformedStoreData(f"{name} must not contain duplicates")
+    return result
+
+
+def _sensor_identity_from_dict(raw: object) -> SensorIdentity:
+    raw = _require_exact_keys(raw, {"registry_entry_id", "last_known_entity_id"}, "sensor_identity")
+    return SensorIdentity(
+        _strict_string(raw["registry_entry_id"], "registry_entry_id", nullable=True),
+        _strict_string(raw["last_known_entity_id"], "last_known_entity_id", nullable=True),
+    )
+
+
+def _applied_identity_from_dict(raw: object, context: str) -> AppliedEntityIdentity:
+    raw = _require_exact_keys(raw, {"registry_entry_id", "last_known_entity_id", "domain"}, context)
+    return AppliedEntityIdentity(
+        _strict_string(raw["registry_entry_id"], f"{context}.registry_entry_id", nullable=True),
+        _strict_string(raw["last_known_entity_id"], f"{context}.last_known_entity_id"),  # type: ignore[arg-type]
+        _strict_string(raw["domain"], f"{context}.domain"),  # type: ignore[arg-type]
+    )
+
+
+def _actuator_identity_from_dict(raw: object) -> ActuatorIdentity:
+    raw = _require_exact_keys(
+        raw,
+        {
+            "registry_entry_id",
+            "last_known_entity_id",
+            "domain",
+            "identity_status",
+            "off_service",
+            "confirm_timeout_s",
+        },
+        "actuator_identity",
+    )
+    timeout = raw["confirm_timeout_s"]
+    return ActuatorIdentity(
+        _strict_string(raw["registry_entry_id"], "registry_entry_id", nullable=True),
+        _strict_string(raw["last_known_entity_id"], "last_known_entity_id", nullable=True),
+        _strict_string(raw["domain"], "domain", nullable=True),
+        IdentityStatus(raw["identity_status"]),
+        _strict_string(raw["off_service"], "off_service", nullable=True),
+        None if timeout is None else _strict_int(timeout, "confirm_timeout_s", minimum=1),
+    )
+
+
+_SETTING_FIELDS = tuple(NormalizedZoneSettings.__dataclass_fields__)
+
+
+def _settings_from_dict(raw: object) -> NormalizedZoneSettings:
+    raw = _require_exact_keys(raw, set(_SETTING_FIELDS), "normalized_settings")
+    return NormalizedZoneSettings(
+        name=_strict_string(raw["name"], "settings.name"),  # type: ignore[arg-type]
+        start_threshold=_strict_float(raw["start_threshold"], "settings.start_threshold"),
+        target_threshold=_strict_float(raw["target_threshold"], "settings.target_threshold"),
+        pulse_duration_s=_strict_int(raw["pulse_duration_s"], "settings.pulse_duration_s"),
+        soak_duration_s=_strict_int(raw["soak_duration_s"], "settings.soak_duration_s"),
+        max_cycles=_strict_int(raw["max_cycles"], "settings.max_cycles"),
+        max_session_runtime_s=_strict_int(
+            raw["max_session_runtime_s"], "settings.max_session_runtime_s"
+        ),
+        max_daily_runtime_s=_strict_int(raw["max_daily_runtime_s"], "settings.max_daily_runtime_s"),
+        min_session_interval_s=_strict_int(
+            raw["min_session_interval_s"], "settings.min_session_interval_s"
+        ),
+        sensor_max_age_s=_strict_int(raw["sensor_max_age_s"], "settings.sensor_max_age_s"),
+        actuator_confirm_timeout_s=_strict_int(
+            raw["actuator_confirm_timeout_s"], "settings.actuator_confirm_timeout_s"
+        ),
+        manual_max_duration_s=_strict_int(
+            raw["manual_max_duration_s"], "settings.manual_max_duration_s"
+        ),
+    )
+
+
+def _shadow_from_dict(raw: object) -> AppliedConfigurationShadow:
+    raw = _require_exact_keys(
+        raw,
+        {
+            "subentry_id",
+            "config_fingerprint",
+            "entry_snapshot_fingerprint",
+            "applied_generation",
+            "normalized_settings",
+            "sensor_identity",
+            "actuator_identity",
+        },
+        "applied_config",
+    )
+    return AppliedConfigurationShadow(
+        subentry_id=_strict_string(raw["subentry_id"], "applied_config.subentry_id"),  # type: ignore[arg-type]
+        config_fingerprint=_strict_string(
+            raw["config_fingerprint"], "applied_config.config_fingerprint"
+        ),  # type: ignore[arg-type]
+        entry_snapshot_fingerprint=_strict_string(
+            raw["entry_snapshot_fingerprint"], "applied_config.entry_snapshot_fingerprint"
+        ),  # type: ignore[arg-type]
+        applied_generation=_strict_int(
+            raw["applied_generation"], "applied_config.applied_generation"
+        ),
+        normalized_settings=_settings_from_dict(raw["normalized_settings"]),
+        sensor_identity=_applied_identity_from_dict(raw["sensor_identity"], "applied sensor"),
+        actuator_identity=_applied_identity_from_dict(raw["actuator_identity"], "applied actuator"),
+    )
+
+
+def persisted_session_from_dict(raw: object) -> PersistedSession:
+    if not isinstance(raw, dict):
+        raise MalformedStoreData("persisted session must be an object")
+    owner = _strict_string(raw.get("owner_safety_record_id"), "owner_safety_record_id")
+    context_raw = dict(raw)
+    context_raw.pop("owner_safety_record_id", None)
+    return PersistedSession(owner, session_from_dict(context_raw))  # type: ignore[arg-type]
+
+
+def _contribution_from_dict(raw: object) -> AccountingContribution:
+    raw = _require_exact_keys(
+        raw,
+        {
+            "accounting_contribution_id",
+            "source_safety_record_id",
+            "start_utc",
+            "end_utc",
+            "runtime_s",
+            "runtime_estimated",
+            "local_date",
+        },
+        "accounting contribution",
+    )
+    local_date_raw = raw["local_date"]
+    if local_date_raw is not None and not isinstance(local_date_raw, str):
+        raise MalformedStoreData("contribution.local_date must be an ISO date or null")
+    return AccountingContribution(
+        accounting_contribution_id=_strict_string(
+            raw["accounting_contribution_id"], "accounting_contribution_id"
+        ),  # type: ignore[arg-type]
+        source_safety_record_id=_strict_string(
+            raw["source_safety_record_id"], "source_safety_record_id"
+        ),  # type: ignore[arg-type]
+        start_utc=_iso_to_dt(raw["start_utc"], "contribution.start_utc"),
+        end_utc=_iso_to_dt(raw["end_utc"], "contribution.end_utc"),
+        runtime_s=_strict_float(raw["runtime_s"], "contribution.runtime_s"),
+        runtime_estimated=_strict_bool(raw["runtime_estimated"], "contribution.runtime_estimated"),
+        local_date=(date.fromisoformat(local_date_raw) if local_date_raw is not None else None),
+    )
+
+
+def _zone_history_from_dict(history_id: object, raw: object) -> ZoneHistory:
+    history_id = _map_id(history_id, "zone_history")
+    raw = _require_exact_keys(
+        raw,
+        {
+            "active_subentry_id",
+            "previous_subentry_ids",
+            "last_session_end_utc",
+            "last_auto_session_start_utc",
+            "zone_runtime",
+            "daily",
+        },
+        "zone_history",
+    )
+    runtime_raw = _require_exact_keys(
+        raw["zone_runtime"],
+        {
+            "enabled",
+            "state",
+            "zone_fault",
+            "secondary_fault",
+            "sensor_identity",
+            "last_session_summary",
+            "session",
+        },
+        "zone_runtime",
+    )
+    daily_raw = raw["daily"]
+    daily = None
+    if daily_raw is not None:
+        daily_raw = _require_exact_keys(
+            daily_raw,
+            {"date_local", "runtime_s", "conservative_unattributed_runtime_s", "contributions"},
+            "zone_history.daily",
+        )
+        if not isinstance(daily_raw["date_local"], str):
+            raise MalformedStoreData("daily.date_local must be an ISO date string")
+        contributions_raw = daily_raw["contributions"]
+        if not isinstance(contributions_raw, list):
+            raise MalformedStoreData("daily.contributions must be a list")
+        daily = ZoneDailyRuntime(
+            date_local=date.fromisoformat(daily_raw["date_local"]),
+            runtime_s=_strict_float(daily_raw["runtime_s"], "daily.runtime_s"),
+            conservative_unattributed_runtime_s=_strict_float(
+                daily_raw["conservative_unattributed_runtime_s"],
+                "daily.conservative_unattributed_runtime_s",
+            ),
+            contributions=tuple(_contribution_from_dict(item) for item in contributions_raw),
+        )
+    summary_raw = runtime_raw["last_session_summary"]
+    session_raw = runtime_raw["session"]
+    return ZoneHistory(
+        zone_history_id=history_id,
+        active_subentry_id=_strict_string(
+            raw["active_subentry_id"], "zone_history.active_subentry_id", nullable=True
+        ),
+        previous_subentry_ids=_string_tuple(
+            raw["previous_subentry_ids"], "zone_history.previous_subentry_ids"
+        ),
+        last_session_end_utc=_iso_to_dt(
+            raw["last_session_end_utc"], "zone_history.last_session_end_utc"
+        ),
+        last_auto_session_start_utc=_iso_to_dt(
+            raw["last_auto_session_start_utc"], "zone_history.last_auto_session_start_utc"
+        ),
+        zone_runtime=ZoneRuntime(
+            enabled=_strict_bool(runtime_raw["enabled"], "zone_runtime.enabled"),
+            state=ControllerState(runtime_raw["state"]),
+            zone_fault=_enum_or_none(FaultCode, runtime_raw["zone_fault"], "zone_fault"),
+            secondary_fault=_enum_or_none(
+                FaultCode, runtime_raw["secondary_fault"], "secondary_fault"
+            ),
+            sensor_identity=_sensor_identity_from_dict(runtime_raw["sensor_identity"]),
+            last_session_summary=(
+                summary_from_dict(summary_raw) if summary_raw is not None else None
+            ),
+            session=(persisted_session_from_dict(session_raw) if session_raw is not None else None),
+        ),
+        daily=daily,
+    )
+
+
+def _safety_record_from_dict(record_id: object, raw: object) -> SafetyRecord:
+    record_id = _map_id(record_id, "safety_record")
+    raw = _require_exact_keys(
+        raw,
+        {
+            "zone_id",
+            "active_subentry_id",
+            "previous_subentry_ids",
+            "safety_lineage_id",
+            "zone_history_id",
+            "historical_zone_history_ids",
+            "runtime_lifecycle",
+            "applied_config",
+            "actuator_identity",
+            "blocker_reasons",
+            "possible_flow_owner",
+            "identity_incident",
+            "actuator_fault",
+            "acknowledgement_required",
+        },
+        "safety_record",
+    )
+    incident_raw = raw["identity_incident"]
+    incident = None
+    if incident_raw is not None:
+        incident_raw = _require_exact_keys(incident_raw, {"kind", "detail"}, "identity_incident")
+        incident = IdentityIncident(
+            IdentityIncidentKind(incident_raw["kind"]),
+            _strict_string(incident_raw["detail"], "identity_incident.detail"),  # type: ignore[arg-type]
+        )
+    shadow_raw = raw["applied_config"]
+    return SafetyRecord(
+        safety_record_id=record_id,
+        zone_id=_strict_string(raw["zone_id"], "safety_record.zone_id"),  # type: ignore[arg-type]
+        active_subentry_id=_strict_string(
+            raw["active_subentry_id"], "safety_record.active_subentry_id", nullable=True
+        ),
+        previous_subentry_ids=_string_tuple(
+            raw["previous_subentry_ids"], "safety_record.previous_subentry_ids"
+        ),
+        safety_lineage_id=_strict_string(
+            raw["safety_lineage_id"], "safety_record.safety_lineage_id"
+        ),  # type: ignore[arg-type]
+        zone_history_id=_strict_string(raw["zone_history_id"], "safety_record.zone_history_id"),  # type: ignore[arg-type]
+        historical_zone_history_ids=_string_tuple(
+            raw["historical_zone_history_ids"], "safety_record.historical_zone_history_ids"
+        ),
+        runtime_lifecycle=RuntimeLifecycle(raw["runtime_lifecycle"]),
+        applied_config=_shadow_from_dict(shadow_raw) if shadow_raw is not None else None,
+        actuator_identity=_actuator_identity_from_dict(raw["actuator_identity"]),
+        blocker_reasons=_string_tuple(
+            raw["blocker_reasons"], "safety_record.blocker_reasons", BlockerReason
+        ),
+        possible_flow_owner=_enum_or_none(
+            PossibleFlowOwner, raw["possible_flow_owner"], "possible_flow_owner"
+        ),
+        identity_incident=incident,
+        actuator_fault=_enum_or_none(FaultCode, raw["actuator_fault"], "actuator_fault"),
+        acknowledgement_required=_strict_bool(
+            raw["acknowledgement_required"], "acknowledgement_required"
+        ),
     )
 
 

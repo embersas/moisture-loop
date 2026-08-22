@@ -15,6 +15,9 @@ from custom_components.moisture_loop import const
 from custom_components.moisture_loop.models import (
     ActuatorAssessment,
     ActuatorFinding,
+    ActuatorIdentity,
+    AppliedConfigurationShadow,
+    AppliedEntityIdentity,
     AutoEvaluate,
     BlockerReason,
     CompletionReason,
@@ -24,17 +27,23 @@ from custom_components.moisture_loop.models import (
     ExecuteOff,
     FaultCode,
     GuardResult,
+    IdentityStatus,
     ManualClampReason,
     MoistureClassification,
     MoistureObservation,
+    NormalizedZoneSettings,
     ReasonClass,
     ResourceAssessment,
     RuntimeEstimationReason,
+    RuntimeLifecycle,
+    SafetyRecord,
+    SensorIdentity,
     SessionContext,
     SessionMode,
     TransitionInput,
     WatchdogToken,
     ZoneConfig,
+    ZoneRuntime,
 )
 
 NOW = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
@@ -579,3 +588,76 @@ class TestRemainingBranches:
                 armed_watchdog=None,
                 event=AutoEvaluate(),
             )
+
+
+class TestSpec4CanonicalModels:
+    def test_store_schema_and_lifecycle_are_exact(self) -> None:
+        assert const.STORE_SCHEMA_VERSION == 2
+        assert {value.value for value in RuntimeLifecycle} == {
+            "active",
+            "delete_pending",
+            "retired",
+        }
+        assert {value.value for value in ControllerState} == {
+            "disabled",
+            "idle",
+            "watering",
+            "soaking",
+            "fault",
+        }
+
+    def test_actuator_identity_is_durable_and_domain_coherent(self) -> None:
+        identity = ActuatorIdentity(
+            "registry-uuid",
+            "switch.front_bed_valve",
+            "switch",
+            IdentityStatus.REGISTRY_CONFIRMED,
+            "switch.turn_off",
+            30,
+        )
+        assert identity.registry_entry_id == "registry-uuid"
+        with pytest.raises(ValueError, match="OFF service"):
+            ActuatorIdentity(
+                "registry-uuid",
+                "switch.front_bed_valve",
+                "switch",
+                IdentityStatus.REGISTRY_CONFIRMED,
+                "valve.close_valve",
+                30,
+            )
+
+    def test_unresolved_identity_does_not_invent_schema1_values(self) -> None:
+        identity = ActuatorIdentity(None, None, None, IdentityStatus.MISSING, None, None)
+        assert identity.registry_entry_id is None
+        assert identity.last_known_entity_id is None
+        assert identity.domain is None
+
+    def test_applied_shadow_is_frozen_normalized_data(self) -> None:
+        config = make_config()
+        shadow = AppliedConfigurationShadow(
+            subentry_id="zone-a",
+            config_fingerprint="config-fp",
+            entry_snapshot_fingerprint="snapshot-fp",
+            applied_generation=1,
+            normalized_settings=NormalizedZoneSettings.from_config(config),
+            sensor_identity=AppliedEntityIdentity(None, config.moisture_sensor, "sensor"),
+            actuator_identity=AppliedEntityIdentity(None, config.actuator, "switch"),
+        )
+        with pytest.raises(FrozenInstanceError):
+            shadow.applied_generation = 2  # type: ignore[misc]
+
+    def test_zone_runtime_rejects_actuator_fault_ownership(self) -> None:
+        with pytest.raises(ValueError, match="zone_fault"):
+            ZoneRuntime(
+                enabled=True,
+                state=ControllerState.FAULT,
+                zone_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                secondary_fault=None,
+                sensor_identity=SensorIdentity(None, "sensor.front_bed_moisture"),
+                last_session_summary=None,
+                session=None,
+            )
+
+    def test_safety_record_has_no_logical_zone_authority_fields(self) -> None:
+        fields = set(SafetyRecord.__dataclass_fields__)
+        assert fields.isdisjoint({"enabled", "state", "sensor_identity", "zone_fault", "session"})

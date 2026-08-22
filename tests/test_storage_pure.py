@@ -12,21 +12,40 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from custom_components.moisture_loop.models import (
+    AccountingContribution,
+    ActuatorIdentity,
+    AppliedConfigurationShadow,
+    AppliedEntityIdentity,
+    BlockerReason,
     CompletionReason,
     ControllerState,
     DailyRuntime,
     FaultCode,
     FutureStoreVersion,
+    IdentityIncidentKind,
+    IdentityStatus,
     MalformedStoreData,
     ManualClampReason,
+    MigrationRecordContext,
+    NormalizedZoneSettings,
     RunIds,
     RuntimeEstimationReason,
+    RuntimeLifecycle,
+    Schema1StoreData,
+    SensorIdentity,
     SessionContext,
     SessionMode,
     SessionSummary,
     StoreData,
+    ZoneConfig,
+    ZoneDailyRuntime,
     ZoneRecord,
+    conservative_merge_daily_runtime,
     current_day_charge,
+    deduplicate_accounting_contributions,
+    migrate_schema1_to_schema2,
+    schema1_store_data_from_dict,
+    schema1_store_data_to_dict,
     session_from_dict,
     session_to_dict,
     split_interval_by_local_days,
@@ -106,13 +125,79 @@ def full_record() -> ZoneRecord:
     )
 
 
-def full_store() -> StoreData:
-    return StoreData(
+def legacy_store() -> Schema1StoreData:
+    return Schema1StoreData(
         generation_id="gen-1",
         store_revision=42,
         run=RunIds(active_run_id="run-1", last_clean_shutdown_run_id="run-0"),
         zones={"zone-a": full_record(), "zone-b": ZoneRecord(ControllerState.IDLE, True)},
     )
+
+
+def zone_config() -> ZoneConfig:
+    return ZoneConfig(
+        name="Bed A",
+        moisture_sensor="sensor.bed_a",
+        actuator="valve.bed_a",
+        start_threshold=30.0,
+        target_threshold=40.0,
+        pulse_duration_s=300,
+        soak_duration_s=1200,
+        max_cycles=4,
+        max_session_runtime_s=1800,
+        max_daily_runtime_s=3600,
+        min_session_interval_s=21600,
+        sensor_max_age_s=7200,
+        actuator_confirm_timeout_s=30,
+        manual_max_duration_s=1800,
+    )
+
+
+def migration_context(subentry_id: str = "zone-a") -> MigrationRecordContext:
+    config = zone_config()
+    sensor = AppliedEntityIdentity("sensor-registry-uuid", config.moisture_sensor, "sensor")
+    actuator = AppliedEntityIdentity("actuator-registry-uuid", config.actuator, "valve")
+    return MigrationRecordContext(
+        active_subentry_id=subentry_id,
+        applied_config=AppliedConfigurationShadow(
+            subentry_id=subentry_id,
+            config_fingerprint="config-fingerprint",
+            entry_snapshot_fingerprint="entry-snapshot-fingerprint",
+            applied_generation=7,
+            normalized_settings=NormalizedZoneSettings.from_config(config),
+            sensor_identity=sensor,
+            actuator_identity=actuator,
+        ),
+        actuator_identity=ActuatorIdentity(
+            registry_entry_id="actuator-registry-uuid",
+            last_known_entity_id=config.actuator,
+            domain="valve",
+            identity_status=IdentityStatus.REGISTRY_CONFIRMED,
+            off_service="valve.close_valve",
+            confirm_timeout_s=30,
+        ),
+        sensor_identity=SensorIdentity("sensor-registry-uuid", config.moisture_sensor),
+    )
+
+
+def full_store(lifecycle: RuntimeLifecycle = RuntimeLifecycle.ACTIVE) -> StoreData:
+    old = legacy_store()
+    migrated = migrate_schema1_to_schema2(old, {"zone-a": migration_context()})
+    if lifecycle is RuntimeLifecycle.ACTIVE:
+        return migrated
+    record = migrated.safety_records["zone-a"]
+    history = migrated.zone_histories[record.zone_history_id]
+    records = dict(migrated.safety_records)
+    histories = dict(migrated.zone_histories)
+    records["zone-a"] = record.evolve(
+        active_subentry_id=None,
+        previous_subentry_ids=("zone-a",),
+        runtime_lifecycle=lifecycle,
+    )
+    histories[history.zone_history_id] = history.evolve(
+        active_subentry_id=None, previous_subentry_ids=("zone-a",)
+    )
+    return migrated.evolve(safety_records=records, zone_histories=histories)
 
 
 class TestSchemaRoundTrip:
@@ -147,7 +232,7 @@ class TestSchemaRoundTrip:
         original = full_summary()
         assert summary_from_dict(summary_to_dict(original)) == original
 
-    def test_zone_record_round_trip(self) -> None:
+    def test_schema1_zone_record_round_trip(self) -> None:
         original = full_record()
         assert zone_record_from_dict(zone_record_to_dict(original)) == original
 
@@ -157,24 +242,34 @@ class TestSchemaRoundTrip:
 
     def test_store_dict_shape_matches_spec(self) -> None:
         payload = store_data_to_dict(full_store())
-        assert payload["version"] == 1
+        assert payload["version"] == 2
         assert payload["generation_id"] == "gen-1"
-        assert payload["store_revision"] == 42
+        assert payload["store_revision"] == 43
         assert payload["run"] == {
             "active_run_id": "run-1",
             "last_clean_shutdown_run_id": "run-0",
         }
-        zone = payload["zones"]["zone-a"]
-        assert zone["state"] == "soaking"
-        assert zone["daily"] == {"date_local": "2026-08-21", "runtime_s": 312.5}
-        assert zone["session"]["mode"] == "auto"
-        assert zone["last_session_summary"]["reason"] == "manual_complete"
+        record = payload["safety_records"]["zone-a"]
+        history = payload["zone_histories"][record["zone_history_id"]]
+        assert "state" not in record
+        assert "enabled" not in record
+        assert "session" not in record
+        assert history["zone_runtime"]["state"] == "soaking"
+        assert history["zone_runtime"]["session"]["owner_safety_record_id"] == "zone-a"
+        assert history["daily"]["runtime_s"] == 312.5
+
+    @pytest.mark.parametrize(
+        "lifecycle", [RuntimeLifecycle.DELETE_PENDING, RuntimeLifecycle.RETIRED]
+    )
+    def test_tombstone_lifecycle_round_trip(self, lifecycle) -> None:
+        original = full_store(lifecycle)
+        assert store_data_from_dict(store_data_to_dict(original)) == original
 
 
 class TestSchemaStrictness:
     def test_future_version_raises_distinct_error(self) -> None:
         payload = store_data_to_dict(full_store())
-        payload["version"] = 2
+        payload["version"] = 3
         with pytest.raises(FutureStoreVersion):
             store_data_from_dict(payload)
 
@@ -184,14 +279,15 @@ class TestSchemaStrictness:
             lambda p: p.pop("generation_id"),
             lambda p: p.pop("store_revision"),
             lambda p: p.pop("run"),
-            lambda p: p.pop("zones"),
+            lambda p: p.pop("safety_records"),
+            lambda p: p.pop("zone_histories"),
             lambda p: p.pop("version"),
             lambda p: p.__setitem__("version", "1"),
-            lambda p: p.__setitem__("version", 0),
+            lambda p: p.__setitem__("version", 1),
             lambda p: p.__setitem__("generation_id", ""),
             lambda p: p.__setitem__("store_revision", 0),
             lambda p: p.__setitem__("store_revision", True),
-            lambda p: p.__setitem__("zones", []),
+            lambda p: p.__setitem__("safety_records", []),
             lambda p: p["run"].pop("active_run_id"),
             lambda p: p["run"].__setitem__("active_run_id", 5),
         ],
@@ -205,38 +301,51 @@ class TestSchemaStrictness:
     @pytest.mark.parametrize(
         "corrupt",
         [
-            lambda z: z.__setitem__("state", "flooding"),
-            lambda z: z.__setitem__("enabled", "yes"),
-            lambda z: z.__setitem__("active_fault", "bogus"),
-            lambda z: z.__setitem__("last_session_end_utc", 12345),
-            lambda z: z.__setitem__("last_session_end_utc", "not-a-date"),
-            lambda z: z["daily"].__setitem__("date_local", "nope"),
-            lambda z: z["daily"].pop("runtime_s"),
-            lambda z: z["session"].__setitem__("mode", "turbo"),
-            lambda z: z["session"].__setitem__("started_at_utc", None),
-            lambda z: z["session"].__setitem__("manual_clamp_reasons", "all"),
-            lambda z: z["session"].__setitem__("cycle", "two"),
-            lambda z: z["last_session_summary"].__setitem__("reason", "??"),
-            lambda z: z["last_session_summary"].__setitem__("ended_at_utc", None),
-            lambda z: z["last_session_summary"].__setitem__("clamp_reasons", 3),
-            lambda z: z["last_session_summary"].__setitem__("runtime_s", "lots"),
+            lambda p: p["safety_records"]["zone-a"].__setitem__("runtime_lifecycle", "gone"),
+            lambda p: p["safety_records"]["zone-a"].__setitem__("blocker_reasons", ["bogus"]),
+            lambda p: p["safety_records"]["zone-a"].__setitem__("acknowledgement_required", "yes"),
+            lambda p: p["safety_records"]["zone-a"].pop("zone_history_id"),
         ],
     )
-    def test_malformed_zone_raises(self, corrupt) -> None:
+    def test_malformed_schema2_record_raises(self, corrupt) -> None:
         payload = store_data_to_dict(full_store())
-        corrupt(payload["zones"]["zone-a"])
+        corrupt(payload)
         with pytest.raises(MalformedStoreData):
             store_data_from_dict(payload)
 
     def test_naive_datetime_rejected(self) -> None:
         payload = store_data_to_dict(full_store())
-        payload["zones"]["zone-a"]["last_session_end_utc"] = "2026-08-21T12:00:00"
+        history = next(iter(payload["zone_histories"].values()))
+        history["last_session_end_utc"] = "2026-08-21T12:00:00"
+        with pytest.raises(MalformedStoreData):
+            store_data_from_dict(payload)
+
+    def test_missing_zone_history_cross_reference_rejected(self) -> None:
+        payload = store_data_to_dict(full_store())
+        payload["safety_records"]["zone-a"]["zone_history_id"] = "missing-history"
+        with pytest.raises(MalformedStoreData):
+            store_data_from_dict(payload)
+
+    def test_missing_session_owner_cross_reference_rejected(self) -> None:
+        payload = store_data_to_dict(full_store())
+        history_id = payload["safety_records"]["zone-a"]["zone_history_id"]
+        history = payload["zone_histories"][history_id]
+        history["zone_runtime"]["session"]["owner_safety_record_id"] = "missing-owner"
+        with pytest.raises(MalformedStoreData):
+            store_data_from_dict(payload)
+
+    def test_duplicate_persisted_contribution_id_rejected(self) -> None:
+        payload = store_data_to_dict(full_store())
+        history_id = payload["safety_records"]["zone-a"]["zone_history_id"]
+        contributions = payload["zone_histories"][history_id]["daily"]["contributions"]
+        contributions.append(dict(contributions[0]))
         with pytest.raises(MalformedStoreData):
             store_data_from_dict(payload)
 
     def test_non_utc_offset_rejected(self) -> None:
         payload = store_data_to_dict(full_store())
-        payload["zones"]["zone-a"]["last_session_end_utc"] = "2026-08-21T12:00:00+10:00"
+        history = next(iter(payload["zone_histories"].values()))
+        history["last_session_end_utc"] = "2026-08-21T12:00:00+10:00"
         with pytest.raises(MalformedStoreData):
             store_data_from_dict(payload)
 
@@ -286,6 +395,135 @@ class TestSchemaStrictness:
         assert not RunIds(None, None).previous_run_was_clean
         assert not RunIds("a", None).previous_run_was_clean
         assert not RunIds(None, "a").previous_run_was_clean
+
+
+class TestSchema1Migration:
+    def test_configured_record_preserves_history_and_ownership(self) -> None:
+        legacy = legacy_store()
+        migrated = migrate_schema1_to_schema2(legacy, {"zone-a": migration_context()})
+        record = migrated.safety_records["zone-a"]
+        history = migrated.zone_histories[record.zone_history_id]
+        assert record.safety_record_id == "zone-a"
+        assert record.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+        assert history.zone_runtime.enabled is legacy.zones["zone-a"].enabled
+        assert history.zone_runtime.state is legacy.zones["zone-a"].state
+        assert history.last_session_end_utc == legacy.zones["zone-a"].last_session_end_utc
+        assert history.daily.runtime_s == legacy.zones["zone-a"].daily.runtime_s
+        assert (
+            history.zone_runtime.last_session_summary == legacy.zones["zone-a"].last_session_summary
+        )
+        assert history.zone_runtime.session.context == legacy.zones["zone-a"].session
+        assert history.zone_runtime.session.owner_safety_record_id == "zone-a"
+
+    def test_store_only_record_is_unresolved_delete_pending(self) -> None:
+        migrated = migrate_schema1_to_schema2(legacy_store(), {"zone-a": migration_context()})
+        record = migrated.safety_records["zone-b"]
+        assert record.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert record.actuator_identity.identity_status is IdentityStatus.MISSING
+        assert record.actuator_identity.registry_entry_id is None
+        assert BlockerReason.ACTUATOR_NOT_PROVEN_OFF in record.blocker_reasons
+        assert record.identity_incident.kind is IdentityIncidentKind.MIGRATION_UNRESOLVED
+
+    @pytest.mark.parametrize(
+        ("primary", "secondary", "actuator", "zone_primary", "zone_secondary"),
+        [
+            (
+                FaultCode.ACTUATOR_OFF_TIMEOUT,
+                FaultCode.SENSOR_STALE,
+                FaultCode.ACTUATOR_OFF_TIMEOUT,
+                None,
+                FaultCode.SENSOR_STALE,
+            ),
+            (
+                FaultCode.SENSOR_INVALID,
+                FaultCode.ACTUATOR_ON_TIMEOUT,
+                FaultCode.ACTUATOR_ON_TIMEOUT,
+                FaultCode.SENSOR_INVALID,
+                None,
+            ),
+            (
+                FaultCode.SENSOR_UNAVAILABLE,
+                FaultCode.CONFIGURATION_INVALID,
+                None,
+                FaultCode.SENSOR_UNAVAILABLE,
+                FaultCode.CONFIGURATION_INVALID,
+            ),
+        ],
+    )
+    def test_primary_secondary_fault_split(
+        self, primary, secondary, actuator, zone_primary, zone_secondary
+    ) -> None:
+        old = legacy_store()
+        old = old.evolve(
+            zones={"zone-a": full_record().evolve(active_fault=primary, secondary_fault=secondary)}
+        )
+        migrated = migrate_schema1_to_schema2(old, {"zone-a": migration_context()})
+        record = migrated.safety_records["zone-a"]
+        runtime = migrated.zone_histories[record.zone_history_id].zone_runtime
+        assert record.actuator_fault is actuator
+        assert runtime.zone_fault is zone_primary
+        assert runtime.secondary_fault is zone_secondary
+
+    def test_two_actuator_faults_fail_closed(self) -> None:
+        old = legacy_store().evolve(
+            zones={
+                "zone-a": full_record().evolve(
+                    active_fault=FaultCode.ACTUATOR_ON_TIMEOUT,
+                    secondary_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                )
+            }
+        )
+        with pytest.raises(MalformedStoreData):
+            migrate_schema1_to_schema2(old, {"zone-a": migration_context()})
+
+    def test_stable_migration_ids(self) -> None:
+        a = migrate_schema1_to_schema2(legacy_store(), {"zone-a": migration_context()})
+        b = migrate_schema1_to_schema2(legacy_store(), {"zone-a": migration_context()})
+        assert a == b
+        assert (
+            a.safety_records["zone-a"].safety_lineage_id
+            == b.safety_records["zone-a"].safety_lineage_id
+        )
+        assert (
+            a.safety_records["zone-a"].zone_history_id == b.safety_records["zone-a"].zone_history_id
+        )
+
+    def test_schema1_parser_rejects_missing_and_coercions(self) -> None:
+        payload = schema1_store_data_to_dict(legacy_store())
+        payload["zones"]["zone-a"]["enabled"] = "true"
+        with pytest.raises(MalformedStoreData):
+            schema1_store_data_from_dict(payload)
+        payload = schema1_store_data_to_dict(legacy_store())
+        payload["zones"]["zone-a"]["session"].pop("pulse_intent_at_utc")
+        with pytest.raises(MalformedStoreData):
+            schema1_store_data_from_dict(payload)
+
+
+class TestContributionIdentity:
+    def contribution(self, contribution_id: str, runtime: float = 10.0):
+        return AccountingContribution(
+            contribution_id,
+            "zone-a",
+            NOW,
+            NOW + timedelta(seconds=runtime),
+            runtime,
+            False,
+            date(2026, 8, 21),
+        )
+
+    def test_identical_ids_deduplicate_and_conflicts_reject(self) -> None:
+        contribution = self.contribution("c1")
+        assert deduplicate_accounting_contributions((contribution, contribution)) == (contribution,)
+        with pytest.raises(ValueError):
+            deduplicate_accounting_contributions((contribution, self.contribution("c1", 11.0)))
+
+    def test_conservative_merge_preserves_known_and_adds_unresolved(self) -> None:
+        left = ZoneDailyRuntime(date(2026, 8, 21), 15.0, 5.0, (self.contribution("c1"),))
+        right = ZoneDailyRuntime(date(2026, 8, 21), 17.0, 7.0, (self.contribution("c1"),))
+        merged = conservative_merge_daily_runtime(left, right)
+        assert merged.contributions == (self.contribution("c1"),)
+        assert merged.conservative_unattributed_runtime_s == 12.0
+        assert merged.runtime_s == 22.0
 
 
 class TestDailySplitting:

@@ -19,22 +19,29 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, STORE_SCHEMA_VERSION
+from .const import DOMAIN, LEGACY_STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION
 from .models import (
     ControllerState,
     DailyRuntime,
     FaultCode,
     FutureStoreVersion,
+    MigrationRecordContext,
+    PersistedSession,
     RunIds,
+    Schema1StoreData,
     StoreData,
     StoreDataError,
+    ZoneDailyRuntime,
     ZoneRecord,
+    migrate_schema1_to_schema2,
+    schema1_store_data_from_dict,
     store_data_from_dict,
     store_data_to_dict,
 )
@@ -68,6 +75,11 @@ def _new_store(hass: HomeAssistant, key: str) -> Store:
     return Store(hass, STORE_SCHEMA_VERSION, key, atomic_writes=True)
 
 
+def _new_schema1_reader(hass: HomeAssistant, key: str) -> Store:
+    """Construct the historical Store wrapper only for strict migration read."""
+    return Store(hass, LEGACY_STORE_SCHEMA_VERSION, key, atomic_writes=True, read_only=True)
+
+
 class SafetyStore:
     """Entry-scoped runtime safety Store (§23.1-§23.5)."""
 
@@ -97,7 +109,9 @@ class SafetyStore:
     # -- §23.5 setup decision matrix ---------------------------------------
 
     async def async_classify_setup(
-        self, runtime_store_initialized: bool
+        self,
+        runtime_store_initialized: bool,
+        migration_records: dict[str, MigrationRecordContext] | None = None,
     ) -> tuple[SetupClassification, StoreData | None]:
         """Classify startup per the §23.5 matrix. Adopts data on success.
 
@@ -110,19 +124,36 @@ class SafetyStore:
         """
         async with self._lock:
             try:
-                raw = await self._store.async_load()
+                raw = await self._load_current_or_schema1_locked()
             except Exception:
                 return SetupClassification.INTEGRITY_LOSS, None
             if raw is None:
                 if runtime_store_initialized:
                     return SetupClassification.INTEGRITY_LOSS, None
                 return SetupClassification.FIRST_INSTALL, None
-            try:
-                parsed = store_data_from_dict(raw)
-            except FutureStoreVersion:
+            if not isinstance(raw, dict):
                 return SetupClassification.INTEGRITY_LOSS, None
-            except StoreDataError:
-                return SetupClassification.INTEGRITY_LOSS, None
+            version = raw.get("version")
+            if version == LEGACY_STORE_SCHEMA_VERSION:
+                try:
+                    legacy = schema1_store_data_from_dict(raw)
+                except StoreDataError:
+                    return SetupClassification.INTEGRITY_LOSS, None
+                if legacy.generation_id != self._generation_id:
+                    return SetupClassification.INTEGRITY_LOSS, None
+                try:
+                    migrated = migrate_schema1_to_schema2(legacy, migration_records)
+                except (StoreDataError, ValueError):
+                    return SetupClassification.INTEGRITY_LOSS, None
+                await self._save_and_verify_locked(migrated)
+                parsed = migrated
+            else:
+                try:
+                    parsed = store_data_from_dict(raw)
+                except FutureStoreVersion:
+                    return SetupClassification.INTEGRITY_LOSS, None
+                except StoreDataError:
+                    return SetupClassification.INTEGRITY_LOSS, None
             if parsed.generation_id != self._generation_id:
                 return SetupClassification.INTEGRITY_LOSS, None
             self._data = parsed
@@ -133,8 +164,8 @@ class SafetyStore:
     async def async_first_initialize(self) -> StoreData:
         """§23.5 first-install transaction steps 3-4.
 
-        Creates schema-1 initial safe state (matching generation, no
-        sessions, zero current-day runtime, null run IDs, revision 1), saves
+        Creates schema-2 initial safe state (matching generation, no records,
+        histories, sessions, or blockers; null run IDs; revision 1), saves
         atomically, and read-back verifies. The caller sets the config-entry
         ``runtime_store_initialized=true`` only after this returns (step 5).
         """
@@ -143,7 +174,8 @@ class SafetyStore:
                 generation_id=self._generation_id,
                 store_revision=1,
                 run=RunIds(active_run_id=None, last_clean_shutdown_run_id=None),
-                zones={},
+                zone_histories={},
+                safety_records={},
             )
             await self._save_and_verify_locked(data)
             return data
@@ -162,7 +194,7 @@ class SafetyStore:
         Actuator reconciliation and the Repair are the lifecycle's part.
         """
         async with self._lock:
-            zones = {
+            legacy_zones = {
                 zone_id: ZoneRecord(
                     state=ControllerState.FAULT,
                     enabled=True,
@@ -171,12 +203,13 @@ class SafetyStore:
                 )
                 for zone_id, max_daily in zone_budgets.items()
             }
-            data = StoreData(
+            legacy = Schema1StoreData(
                 generation_id=self._generation_id,
-                store_revision=1,
+                store_revision=0,
                 run=RunIds(active_run_id=None, last_clean_shutdown_run_id=None),
-                zones=zones,
+                zones=legacy_zones,
             )
+            data = migrate_schema1_to_schema2(legacy).evolve(store_revision=1)
             await self._save_and_verify_locked(data)
             return data
 
@@ -218,17 +251,66 @@ class SafetyStore:
     async def async_update_zone(
         self, zone_id: str, mutator: Callable[[ZoneRecord | None], ZoneRecord]
     ) -> StoreData:
-        """Apply one zone mutation as a verified safety write.
+        """Temporary spec.3 projection seam for untouched runtime callers.
 
-        The mutator receives the current record (or None) and returns the
-        replacement. The complete merged snapshot is written with the next
-        revision under the entry-wide lock, so concurrent zone writes
-        serialize without lost updates (PI20).
+        It may mutate only an already canonical schema-2 record/history. It
+        cannot create a clean record because the legacy call lacks durable
+        identity and an applied shadow. Stage 3 replaces this seam.
         """
         async with self._lock:
-            zones = dict(self.data.zones)
-            zones[zone_id] = mutator(zones.get(zone_id))
-            new_data = self.data.evolve(store_revision=self.data.store_revision + 1, zones=zones)
+            match = next(
+                (
+                    record
+                    for record in self.data.safety_records.values()
+                    if record.zone_id == zone_id
+                ),
+                None,
+            )
+            if match is None:
+                raise StoreWriteVerificationError(
+                    "legacy zone projection cannot create a canonical schema-2 safety record"
+                )
+            history = self.data.zone_histories[match.zone_history_id]
+            current = self.data.zones[zone_id]
+            replacement = mutator(current)
+            actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
+                replacement.active_fault, replacement.secondary_fault
+            )
+            old_daily = history.daily
+            new_daily = _project_daily_runtime(old_daily, replacement.daily, match.safety_record_id)
+            zone_runtime = history.zone_runtime
+            zone_runtime = replace(
+                zone_runtime,
+                enabled=replacement.enabled,
+                state=replacement.state,
+                zone_fault=zone_fault,
+                secondary_fault=secondary_zone_fault,
+                last_session_summary=replacement.last_session_summary,
+                session=(
+                    PersistedSession(match.safety_record_id, replacement.session)
+                    if replacement.session
+                    else None
+                ),
+            )
+            histories = dict(self.data.zone_histories)
+            histories[history.zone_history_id] = history.evolve(
+                last_session_end_utc=replacement.last_session_end_utc,
+                last_auto_session_start_utc=replacement.last_auto_session_start_utc,
+                zone_runtime=zone_runtime,
+                daily=new_daily,
+            )
+            records = dict(self.data.safety_records)
+            records[match.safety_record_id] = match.evolve(
+                actuator_fault=actuator_fault,
+                acknowledgement_required=(
+                    actuator_fault.requires_user_ack if actuator_fault is not None else False
+                ),
+            )
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
+                zone_histories=histories,
+                safety_records=records,
+            )
             await self._save_and_verify_locked(new_data)
             return new_data
 
@@ -240,15 +322,43 @@ class SafetyStore:
         before any controller activation may proceed.
         """
         async with self._lock:
-            record = self.data.zones.get(zone_id)
-            if record is None or record.session is None:
+            record = next(
+                (item for item in self.data.safety_records.values() if item.zone_id == zone_id),
+                None,
+            )
+            if record is None:
                 raise StoreNotLoadedError(f"zone {zone_id} has no persisted session")
-            rebased = record.evolve(session=record.session.evolve(owner_run_id=new_run_id))
-            zones = dict(self.data.zones)
-            zones[zone_id] = rebased
-            new_data = self.data.evolve(store_revision=self.data.store_revision + 1, zones=zones)
+            history = self.data.zone_histories[record.zone_history_id]
+            persisted = history.zone_runtime.session
+            if persisted is None:
+                raise StoreNotLoadedError(f"zone {zone_id} has no persisted session")
+            runtime = replace(
+                history.zone_runtime,
+                session=PersistedSession(
+                    persisted.owner_safety_record_id,
+                    persisted.context.evolve(owner_run_id=new_run_id),
+                ),
+            )
+            histories = dict(self.data.zone_histories)
+            histories[history.zone_history_id] = history.evolve(zone_runtime=runtime)
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1, zone_histories=histories
+            )
             await self._save_and_verify_locked(new_data)
             return new_data
+
+    async def _load_current_or_schema1_locked(self) -> object | None:
+        """Load schema 2 normally, falling back to the historical Store wrapper.
+
+        The fallback Store is read-only. It never invokes Home Assistant's
+        automatic migration/save path; only SafetyStore's strict parser and
+        verified complete schema-2 transaction may rewrite schema 1.
+        """
+        try:
+            return await self._store.async_load()
+        except NotImplementedError:
+            legacy_reader = _new_schema1_reader(self._hass, self._key)
+            return await legacy_reader.async_load()
 
     # -- verified write core ----------------------------------------------
 
@@ -277,8 +387,8 @@ class SafetyStore:
             loaded = store_data_from_dict(raw)
         except StoreDataError as err:
             raise StoreWriteVerificationError(f"read-back malformed: {err}") from err
-        # The strict parser only accepts schema 1, so schema equality is
-        # already guaranteed here; compare generation, revision, payload.
+        if loaded.version != STORE_SCHEMA_VERSION:
+            raise StoreWriteVerificationError("read-back schema mismatch")
         if loaded.generation_id != data.generation_id:
             raise StoreWriteVerificationError("read-back generation mismatch")
         if loaded.store_revision != data.store_revision:
@@ -289,3 +399,54 @@ class SafetyStore:
         if store_data_to_dict(loaded) != payload:
             raise StoreWriteVerificationError("read-back payload mismatch")
         self._data = data
+
+
+_ACTUATOR_FAULTS = {
+    FaultCode.ACTUATOR_UNAVAILABLE,
+    FaultCode.ACTUATOR_ON_TIMEOUT,
+    FaultCode.ACTUATOR_OFF_TIMEOUT,
+    FaultCode.RESTORED_FROM_UNSAFE_STATE,
+}
+_ZONE_FAULTS = {
+    FaultCode.SENSOR_UNAVAILABLE,
+    FaultCode.SENSOR_STALE,
+    FaultCode.SENSOR_INVALID,
+    FaultCode.CONFIGURATION_INVALID,
+}
+
+
+def _split_projection_faults(
+    primary: FaultCode | None, secondary: FaultCode | None
+) -> tuple[FaultCode | None, FaultCode | None, FaultCode | None]:
+    actuator_faults = [fault for fault in (primary, secondary) if fault in _ACTUATOR_FAULTS]
+    if len(actuator_faults) > 1:
+        raise StoreWriteVerificationError(
+            "legacy projection contains two actuator faults and cannot be represented safely"
+        )
+    return (
+        actuator_faults[0] if actuator_faults else None,
+        primary if primary in _ZONE_FAULTS else None,
+        secondary if secondary in _ZONE_FAULTS else None,
+    )
+
+
+def _project_daily_runtime(
+    current: ZoneDailyRuntime | None,
+    replacement: DailyRuntime | None,
+    _safety_record_id: str,
+) -> ZoneDailyRuntime | None:
+    if replacement is None:
+        return None
+    if current is None or current.date_local != replacement.date_local:
+        return ZoneDailyRuntime(
+            replacement.date_local,
+            replacement.runtime_s,
+            conservative_unattributed_runtime_s=replacement.runtime_s,
+        )
+    known = sum(contribution.runtime_s for contribution in current.contributions)
+    return ZoneDailyRuntime(
+        replacement.date_local,
+        replacement.runtime_s,
+        conservative_unattributed_runtime_s=max(0.0, replacement.runtime_s - known),
+        contributions=current.contributions,
+    )

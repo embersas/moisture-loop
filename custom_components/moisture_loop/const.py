@@ -10,7 +10,11 @@ from __future__ import annotations
 DOMAIN = "moisture_loop"
 
 # --- Runtime store (SPECIFICATION.md §23.2) -------------------------------
-STORE_SCHEMA_VERSION = 1
+# The payload schema is authoritative. SafetyStore uses a schema-1 Store
+# reader only while performing the one verified schema-1 -> schema-2
+# transaction; every newly written payload and normal Store instance is 2.
+STORE_SCHEMA_VERSION = 2
+LEGACY_STORE_SCHEMA_VERSION = 1
 
 # --- Zone configuration keys (SPECIFICATION.md §9) -------------------------
 CONF_NAME = "name"

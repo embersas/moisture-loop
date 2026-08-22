@@ -9,14 +9,14 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Slices 2 and 6 remain fully conformant within their documented scopes. Slices 0, 1, 3, 4, 5, and 7-12 require spec.4 implementation changes and/or new test evidence. Historical spec.3 completion does not satisfy requirements added or changed by spec.4.`
+- Current spec.4 conformance: `Spec.4 Remediation Stage 1 is complete. Its canonical schema-2 models, strict schema-1 migration, and focused persistence evidence are current; Slices 1 and 4 remain [~] because Stages 2/3 still own blocker/resource identity, zone-history handoff, reconciliation, and runtime consumption. Slices 2 and 6 remain fully conformant within their documented scopes. Slices 0, 3, 5, and 7-12 still require spec.4 implementation changes and/or new evidence.`
 - Slice 9 specification status: `Resolved by approved spec.4. The former lack-of-pre-delete-hook specification question is closed by update-listener-driven tombstoned reconciliation and authoritative final ON gates. Slice 9 implementation remediation is not complete and has not been tested against the approved design.`
-- Next implementation work: `After explicit user authorization, begin Spec.4 Remediation Stage 1 (models and schema-1 -> schema-2 persistence migration). No implementation work is authorized by this tracking review.`
-- Release gates: `Spec.4 remediation and its full named-test evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
+- Next implementation work: `Stage 2 is technically unblocked by the completed Stage-1 persistence primitives, but may begin only after explicit user authorization. No implementation work is currently authorized.`
+- Release gates: `Spec.4 Remediation Stages 2-8 and the integrated named-test evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
 - Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Not release-ready. The last recorded HA 2025.9.0 result (631 passed) and pure result (401 passed) are historical spec.3 suite evidence, not spec.4 conformance. No spec.4 remediation stage is complete or authorized.`
+- Overall status: `Not release-ready. Stage 1 is complete with 421 passed/1 skipped in its focused HA 2025.9.0 coverage suite and 92.39% affected-module branch coverage (state_machine.py 100%). The broad historical-runtime suite currently has 555 passed, 90 expected downstream failures, 1 skipped, and 1 teardown error because Stages 2/3 have not yet created/consumed canonical records during runtime setup. Historical spec.3 evidence remains preserved.`
 
-On 2026-08-21 the user instructed "implement as per progress.md". This remains recorded as the historical authorization under which implementation code was produced. There is currently no authorized slice; any further implementation or prototype work requires explicit user authorization after review.
+On 2026-08-22 the user explicitly authorized Spec.4 Remediation Stage 1 only. That work is complete and the authorization has returned to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 2-8 implementation or prototype work requires new explicit user authorization.
 
 ## Status Legend
 
@@ -77,20 +77,20 @@ These are implementation-wide targets. Their definitions remain authoritative in
 ### Current test-evidence boundary
 
 - **Normative named tests specified:** 134 unique IDs. A mechanical scan of §39.2 matched 134 entries, found 134 unique IDs, and found zero duplicates.
-- **Tests currently implemented:** the repository contains the historical spec.3 suite described in the dated slice records. This review did not establish a current spec.4 named-ID implementation count. In particular, no current record claims implementation of PI21-PI27, LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, or the I32-I37 traceability obligations.
-- **Tests actually run/passing:** the latest recorded 631-pass HA 2025.9.0 and 401-pass pure results were run against the spec.3 implementation on 2026-08-21. No tests were run in this documentation-only reconciliation, and those historical totals are not restated as spec.4 pass evidence.
+- **Tests currently implemented:** Stage-1 portions of PI21, PI22, PI23, PI27, TB7, and TB11 are implemented, together with strict schema/migration/cross-reference/contribution tests and retained relevant PI1-PI20 Store/run-integrity coverage. PI24-PI26 and all coordinator/runtime portions remain explicitly unclaimed for Stage 3.
+- **Tests actually run/passing:** the 2026-08-22 Stage-1 focused HA 2025.9.0 coverage suite passed 421 tests with 1 expected pure-boundary skip; the pure Python 3.14.5 suite passed 391 tests; focused HA storage passed 31 tests. A broader inventory run produced 555 passed, 90 expected downstream failures, 1 skipped, and 1 teardown error at the temporary fail-closed runtime seam. Historical 2026-08-21 spec.3 totals remain unchanged below.
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 implementation records and the current implementation seams. The current code still declares Store schema 1, persists one `ZoneRecord` keyed by zone, keys SlotManager blockers by `(zone_id, reason)`, builds startup only from current subentries, has no config-entry update listener/reconciliation coordinator, schedules add-owned reloads, uses `async_update_reload_and_abort`, and performs no authoritative current-subentry/snapshot/lifecycle gate around actuator ON. Repairs are zone-ID keyed and non-fixable, and diagnostics/entities expose the spec.3 zone model. These observations assign remediation; they are not implementation changes or test results.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stage 1 now declares Store schema 2 and persists canonical `safety_records` plus independent `zone_histories[*].zone_runtime`; `ZoneRecord` remains only a non-serialized temporary projection for untouched historical callers. SlotManager and runtime callers still use spec.3 zone identity, startup still lacks config+Store union and a reconciliation coordinator, config flow still owns old reload behaviour, and no authoritative current-subentry/snapshot/lifecycle gate surrounds actuator ON. Repairs/diagnostics/entities also still expose spec.3 runtime concepts. Those remaining observations assign Stages 2-8 and are not Stage-1 defects.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
 | 0 | `[~] Spec.4 remediation required` | The quality foundation remains useful, but HA1 currently checks the incompatible reload helper and lacks the approved listener/removal/`async_update_and_abort` contract. CI must later carry the new test inventory and current-HA evidence. |
-| 1 | `[~] Spec.4 remediation required` | Domain models lack `safety_record_id`, `safety_lineage_id`, `zone_history_id`, `zone_runtime`, immutable applied shadows, actuator identity, lifecycle, contribution identity, and canonical schema-2 ownership. |
+| 1 | `[~] Stage 1 complete; later remediation required` | Stage 1 added `safety_record_id`, `safety_lineage_id`, independent `zone_history_id`/`zone_runtime`, immutable applied shadows, durable actuator identity/status, orthogonal lifecycle, contribution identity, and strict ownership validation. Stages 2/3 must consume these authorities in resource/runtime reconciliation. |
 | 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
 | 3 | `[~] Spec.4 remediation required` | Historical T1-T59 proof remains valid, but traceability stops at I31 and does not supply LC13 or the new PI/ND/TB/AR/RC evidence for I32-I37. |
-| 4 | `[~] Spec.4 remediation required` | Persistence implements schema 1 only. It needs strict verified schema-1 -> schema-2 migration, canonical safety records, independent histories/`zone_runtime`, identity, shadows, tombstones, contribution merge/deduplication, and Store-only recovery. |
+| 4 | `[~] Stage 1 complete; later remediation required` | Schema 2, strict schema-1 reading/migration, canonical records/histories, tombstones, contribution primitives, strict cross-references, Store-only migration, and verified atomic writes now pass Stage-1 evidence. Stages 2/3 still own live blocker reconstruction, A -> B handoff/merge orchestration, and startup reconciliation consumption. |
 | 5 | `[~] Spec.4 remediation required` | SlotManager keys are `(zone_id, reason)` and admission has only a broad startup enable flag. It needs `(safety_record_id, reason)`, exact retained-record ownership, and the entry reconciliation dirty/running/failed/superseded barrier. |
 | 6 | `[x]` | Entity-filtered changed/unchanged report delivery, normalization, timestamp, and freshness semantics remain normative. Persistent sensor identity and reconciliation handoff are assigned to Slices 1/4/8; real rename validation remains Slice 13. |
 | 7 | `[~] Spec.4 remediation required` | The controller has write-ahead intent and one OFF path, but lacks the complete final pre-ON membership/fingerprint/snapshot/generation/lifecycle gate, no-suspension dispatch boundary, in-flight possible-flow marker, post-call recheck, deletion compensation, and safety-record blocker identity. |
@@ -103,9 +103,11 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 
 ## Spec.4 Implementation Remediation Plan
 
-No stage below is authorized or started. A stage may be marked complete only after its named evidence is implemented and actually run.
+Stage 1 was explicitly authorized and is complete. No later stage is authorized or started. A later stage may be marked complete only after its named evidence is implemented and actually run.
 
 ### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
+
+- **Status:** `[x] Complete on 2026-08-22`; authorization returned to `None` after the focused model, migration, Store, regression, lint, formatting, and coverage gates passed.
 
 - **Objective:** introduce the approved ownership model: one canonical safety record per durable actuator lineage, independent zone histories with `zone_runtime`, durable identities/applied shadows/lifecycles/contribution IDs, strict schema-1 parsing, and atomic verified schema-2 migration without dropping any schema-1 fact.
 - **Affected existing slices/files:** Slices 1 and 4; `const.py`, `models.py`, `storage.py`, `tests/test_models.py`, `tests/test_storage_pure.py`, and `tests/test_storage.py`.
@@ -1655,6 +1657,71 @@ Tests run:
 Open issues:
 - No spec.4 remediation stage is authorized, implemented, or tested.
 - Supported-current Home Assistant, GitHub-hosted hassfest/HACS, and every §46 prototype validation remain outstanding.
+
+PROGRESS.md updated:
+- yes
+
+### 2026-08-22 - Spec.4 Remediation Stage 1
+
+Authorized work:
+- The user explicitly authorized **Spec.4 Remediation Stage 1 only**: canonical models and strict verified runtime Store schema-1 -> schema-2 migration. Stages 2-8, Slice 13, publication, and specification edits were explicitly out of scope.
+
+Completed:
+- Changed the current runtime Store format to schema `2` while retaining a read-only schema-`1` Store wrapper and the exact strict historical schema-1 parser solely for migration.
+- Added frozen canonical authorities: `SafetyRecord` (one mutable record per durable actuator lineage), `ZoneHistory`, `ZoneRuntime`, `ActuatorIdentity`, `SensorIdentity`, `AppliedEntityIdentity`, `AppliedConfigurationShadow`, `NormalizedZoneSettings`, `IdentityIncident`, `PersistedSession`, `AccountingContribution`, and `ZoneDailyRuntime`.
+- Added exact lifecycle `ACTIVE`/`DELETE_PENDING`/`RETIRED`, identity status `registry_confirmed`/`registry_unavailable`/`missing`/`conflict`, possible-flow ownership, stable safety-lineage/history/contribution IDs, blocker ownership, actuator-fault/acknowledgement authority, and strict deterministic serialization/cross-reference validation.
+- Kept the five `ControllerState` values and T1-T59 unchanged. `SafetyRecord` contains no enabled/state/sensor/session authority; those logical-zone fields live only in `zone_history.zone_runtime`.
+- Implemented pure deterministic contribution-ID deduplication and conservative aggregate merging. Conflicting reuse of one contribution ID is rejected; known distinct contributions remain; unresolved aggregate evidence is added conservatively.
+- Implemented strict schema-1 -> schema-2 migration: the old map key becomes `safety_record_id`; stable UUID5 lineage/history/contribution IDs are deterministic; configured records accept caller-supplied normalized identity/shadow facts and become `ACTIVE`; Store-only records become unresolved `DELETE_PENDING` tombstones with no invented Registry UUID/entity identity, retained history/session evidence, `actuator_not_proven_off`, possible `integration_off_unconfirmed`, and a durable migration identity incident.
+- Migration moves sessions under `zone_runtime` with `owner_safety_record_id`, preserves the complete historical `SessionContext`, daily/interval fields, summaries, estimates, run IDs, and revision lineage, and explicitly splits actuator versus sensor/configuration primary/secondary faults. Two simultaneous schema-1 actuator faults are rejected as unrepresentable rather than weakened.
+- Migration increments `store_revision`, writes schema 2 with `atomic_writes=True`, reloads through a fresh same-key Store, verifies schema/generation/revision/full serialized payload, and adopts only the verified object. Save, fresh-read, malformed/tampered payload, and generation failures remain fail closed.
+- A genuine first install now creates verified schema 2 at revision 1 with matching generation, null run IDs, and empty records/histories. Existing schema 2 loads idempotently and is never remigrated. Future, malformed, missing initialized, and mismatched-generation Stores cannot become a clean watering budget.
+- Preserved the independent initialized-flag and run-ID protocols. Integrity-loss reconstruction now creates unresolved schema-2 actuator safety evidence with the current-day budget exhausted.
+- Added a temporary, explicitly non-authoritative compatibility seam: `StoreData.zones` projects canonical schema-2 data to historical `ZoneRecord`, and `SafetyStore.async_update_zone` may update only an already-existing canonical record/history. It cannot manufacture a clean identityless schema-2 record; first-install runtime callers therefore fail closed until Stages 2/3 materialize and consume canonical records.
+- No reconciliation coordinator, blocker re-keying, A -> B orchestration, ON-race handling, config-flow change, entity/action/Repair/diagnostic change, integrated spec.4 suite, distribution work, or prototype validation was implemented.
+
+Named/focused evidence implemented:
+- PI21: configured schema-1 migration, ownership split, preservation, revision increment, fresh reload.
+- PI22: Store-only unresolved tombstone migration with durable evidence and no guessed identity.
+- PI23: atomic migration plus injected save, fresh-read, revision/payload tamper, and non-adoption failures.
+- PI27/TB11 Stage-1 persistence portion: `RETIRED` tombstone survives run writes/reload and is never automatically purged.
+- TB7: malformed schema-1 data and ambiguous two-actuator-fault ownership fail closed.
+- Relevant PI1-PI20 storage/run evidence retained and adapted: first/interrupted initialization, missing/corrupt/future/generation cases, atomic/read-back failures, previous-revision retention, monotonic serialized writes, run A -> B -> C cleanliness, unverified run-ID refusal, conservative integrity reconstruction, and concurrent canonical-record compatibility writes.
+- Additional focused tests cover schema-2 round trips, exact lifecycle vocabulary, retained lifecycle round trips, immutable shadows, identity statuses/OFF metadata, stable IDs, primary/secondary actuator/sensor/configuration splitting, strict enum/field/timestamp/finite-number handling, missing history/session-owner/source cross-references, duplicate contribution IDs, conservative merge, historical-value preservation, existing-schema-2 idempotence, and no identityless compatibility creation.
+- PI24-PI26 were not claimed; their live exact-identity/reactivation/coordinator portions remain Stage 3.
+
+Files changed:
+- `custom_components/moisture_loop/const.py`
+- `custom_components/moisture_loop/models.py`
+- `custom_components/moisture_loop/storage.py`
+- `tests/test_models.py`
+- `tests/test_storage_pure.py`
+- `tests/test_storage.py`
+- `PROGRESS.md`
+
+Tests run:
+- Pure environment: Windows, Python 3.14.5, no Home Assistant. `py -3.14 -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_state_machine.py tests/test_foundation.py -q --tb=short` -> PASS: 391 passed, 0 failed, 0 skipped (warning-only pytest/cache noise; 0.91 s).
+- HA environment: Windows, Python 3.13.13, Home Assistant 2025.9.0, `pytest-homeassistant-custom-component` 0.13.277, pytest 8.4.1. `.\.venv-ha-stage1\Scripts\python.exe -m pytest tests/test_storage.py -q --tb=short` -> PASS: 31 passed, 0 failed, 0 skipped (2 harness/cache warnings; 0.72 s).
+- Focused Stage-1/regression coverage: `.\.venv-ha-stage1\Scripts\python.exe -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_storage.py tests/test_state_machine.py tests/test_foundation.py -q --tb=short --cov=custom_components.moisture_loop.const --cov=custom_components.moisture_loop.models --cov=custom_components.moisture_loop.storage --cov=custom_components.moisture_loop.state_machine --cov-branch --cov-report=term-missing` -> PASS: 421 passed, 0 failed, 1 skipped (the deliberate pure-boundary proof skips when HA is installed), 2 warnings; affected-module branch coverage 92.39%; `const.py` 100.00%, `models.py` 87.91%, `storage.py` 92.27%, `state_machine.py` 100.00% (7.03 s).
+- Skip audit: the same focused suite with `-rs` -> PASS before the final duplicate-ID regression was added: 420 passed, 1 skipped; skip reason: the foundation boundary proof intentionally runs only in the pure environment. The final coverage command above contains the additional passing regression and the same single collected skip.
+- Ruff 0.16.4: `uvx --from ruff==0.16.4 ruff check custom_components tests scripts` -> PASS; `uvx --from ruff==0.16.4 ruff format --check custom_components tests scripts` -> PASS, 32 files already formatted.
+- Broad inventory only: `.\.venv-ha-stage1\Scripts\python.exe -m pytest -q --tb=no` -> expected downstream non-green result: 555 passed, 90 failed, 1 skipped, 1 teardown error, 3 warnings (12.52 s). Failures are confined to historical runtime/lifecycle/entity/service/Repair/controller suites that start from an empty schema-2 first install and still expect `async_update_zone` to create spec.3 zone records. The seam intentionally refuses that unsafe identityless creation; Stages 2/3 must create/consume canonical records, and Stage 6 later owns surface remediation. This result is not treated as a Stage-1 failure or as integrated spec.4 evidence.
+
+Local test-environment notes:
+- The repository's existing `.venv`/`.venv-ha` launchers referenced unavailable interpreters, so an ignored `.venv-ha-stage1` was created from `requirements_test_ha.txt` for verification only.
+- Windows harness startup required the same local-only accommodations as the historical environment: `pycares==4.4.0` for the `aiodns` compatibility issue and an untracked no-op Unix `resource` shim. Project requirements and production source were not changed for these accommodations.
+
+Open issues:
+- No Stage-1 specification ambiguity or blocker was found.
+- Stages 2-8 remain unimplemented/unverified. The broad-suite failures above are the honest downstream boundary: Stage 2 owns safety-record resource/blocker integration and history continuity; Stage 3 owns canonical record materialization/reconciliation/runtime consumption; later stages own their explicitly assigned runtime and presentation work.
+- Slices 1 and 4 remain `[~]` because Stage-1 completion does not complete their Stage-2/3 obligations.
+- Stage 2 is technically unblocked by the persistence primitives but is not authorized.
+- Slice 13 remains not started; no automated result is claimed as §46 prototype evidence.
+
+Authorization closeout:
+- Current authorized slice returned to `None`. No Stage 2 authorization is implied.
+- `SPECIFICATION.md` was not changed.
+- Historical spec.3 session/test records were preserved without rewriting.
 
 PROGRESS.md updated:
 - yes
