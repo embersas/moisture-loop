@@ -39,10 +39,12 @@ from custom_components.moisture_loop.models import (
     StoreData,
     ZoneConfig,
     ZoneDailyRuntime,
+    ZoneHistory,
     ZoneRecord,
     conservative_merge_daily_runtime,
     current_day_charge,
     deduplicate_accounting_contributions,
+    merge_zone_history_continuity,
     migrate_schema1_to_schema2,
     schema1_store_data_from_dict,
     schema1_store_data_to_dict,
@@ -524,6 +526,77 @@ class TestContributionIdentity:
         assert merged.contributions == (self.contribution("c1"),)
         assert merged.conservative_unattributed_runtime_s == 12.0
         assert merged.runtime_s == 22.0
+
+    def test_ar7_ar8_ar17_history_merge_preserves_operational_owner(self) -> None:
+        legacy = Schema1StoreData(
+            generation_id="gen-merge",
+            store_revision=1,
+            run=RunIds(None, None),
+            zones={
+                "record-a": ZoneRecord(
+                    ControllerState.DISABLED,
+                    False,
+                    last_session_end_utc=NOW - timedelta(hours=3),
+                    last_auto_session_start_utc=NOW - timedelta(hours=4),
+                    daily=DailyRuntime(date(2026, 8, 21), 100.0),
+                ),
+                "record-b": ZoneRecord(
+                    ControllerState.FAULT,
+                    True,
+                    active_fault=FaultCode.SENSOR_STALE,
+                    last_session_end_utc=NOW - timedelta(hours=1),
+                    last_auto_session_start_utc=NOW - timedelta(hours=2),
+                    daily=DailyRuntime(date(2026, 8, 21), 200.0),
+                ),
+            },
+        )
+        data = migrate_schema1_to_schema2(legacy)
+        record_a = data.safety_records["record-a"]
+        record_b = data.safety_records["record-b"]
+        continuing = data.zone_histories[record_a.zone_history_id]
+        retained = data.zone_histories[record_b.zone_history_id]
+
+        merged = merge_zone_history_continuity(continuing, retained)
+
+        assert isinstance(merged, ZoneHistory)
+        assert merged.zone_history_id == continuing.zone_history_id
+        assert merged.active_subentry_id == continuing.active_subentry_id
+        assert merged.previous_subentry_ids == continuing.previous_subentry_ids
+        assert merged.zone_runtime == continuing.zone_runtime
+        assert merged.zone_runtime.enabled is False
+        assert merged.zone_runtime.state is ControllerState.DISABLED
+        assert merged.zone_runtime.zone_fault is None
+        assert merged.daily is not None
+        assert merged.daily.runtime_s == 300.0
+        assert {item.source_safety_record_id for item in merged.daily.contributions} == {
+            "record-a",
+            "record-b",
+        }
+        assert merged.last_session_end_utc == NOW - timedelta(hours=1)
+        assert merged.last_auto_session_start_utc == NOW - timedelta(hours=2)
+
+    def test_history_merge_deduplicates_ids_and_adds_unresolved_evidence(self) -> None:
+        data = migrate_schema1_to_schema2(legacy_store())
+        continuing, retained = data.zone_histories.values()
+        contribution = self.contribution("shared")
+        continuing = continuing.evolve(
+            daily=ZoneDailyRuntime(date(2026, 8, 21), 15.0, 5.0, (contribution,))
+        )
+        retained = retained.evolve(
+            daily=ZoneDailyRuntime(date(2026, 8, 21), 17.0, 7.0, (contribution,))
+        )
+        merged = merge_zone_history_continuity(continuing, retained)
+        assert merged.daily == ZoneDailyRuntime(date(2026, 8, 21), 22.0, 12.0, (contribution,))
+
+    def test_history_merge_keeps_later_active_day(self) -> None:
+        data = migrate_schema1_to_schema2(legacy_store())
+        continuing, retained = data.zone_histories.values()
+        older = ZoneDailyRuntime(date(2026, 8, 20), 500.0, 500.0)
+        newer = ZoneDailyRuntime(date(2026, 8, 21), 20.0, 20.0)
+        merged = merge_zone_history_continuity(
+            continuing.evolve(daily=older), retained.evolve(daily=newer)
+        )
+        assert merged.daily == newer
 
 
 class TestDailySplitting:

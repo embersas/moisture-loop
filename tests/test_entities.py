@@ -242,7 +242,7 @@ class TestBinarySensors:
         assert env.hass.states.get(watering_eid).state == "on"
         status_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
         blockers = env.hass.states.get(status_eid).attributes["water_resource_blockers"]
-        assert blockers == [{"zone_id": env.subentry_id, "reason": "external_flow"}]
+        assert blockers == [{"safety_record_id": env.subentry_id, "reason": "external_flow"}]
 
 
 class TestControls:

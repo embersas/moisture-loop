@@ -28,6 +28,7 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, LEGACY_STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION
 from .models import (
+    BlockerReason,
     ControllerState,
     DailyRuntime,
     FaultCode,
@@ -35,11 +36,13 @@ from .models import (
     MigrationRecordContext,
     PersistedSession,
     RunIds,
+    RuntimeLifecycle,
     Schema1StoreData,
     StoreData,
     StoreDataError,
     ZoneDailyRuntime,
     ZoneRecord,
+    merge_zone_history_continuity,
     migrate_schema1_to_schema2,
     schema1_store_data_from_dict,
     store_data_from_dict,
@@ -310,6 +313,99 @@ class SafetyStore:
                 store_revision=self.data.store_revision + 1,
                 zone_histories=histories,
                 safety_records=records,
+            )
+            await self._save_and_verify_locked(new_data)
+            return new_data
+
+    async def async_set_record_blocker(
+        self,
+        safety_record_id: str,
+        reason: BlockerReason,
+        *,
+        active: bool,
+    ) -> StoreData:
+        """Persist one exact-record blocker without touching any other key."""
+        async with self._lock:
+            record = self.data.safety_records.get(safety_record_id)
+            if record is None:
+                raise StoreNotLoadedError(f"unknown safety_record_id {safety_record_id}")
+            blockers = set(record.blocker_reasons)
+            if active:
+                blockers.add(reason)
+            else:
+                blockers.discard(reason)
+            ordered = tuple(sorted(blockers, key=lambda item: item.value))
+            if ordered == record.blocker_reasons:
+                return self.data
+            records = dict(self.data.safety_records)
+            records[safety_record_id] = record.evolve(blocker_reasons=ordered)
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
+                safety_records=records,
+            )
+            await self._save_and_verify_locked(new_data)
+            return new_data
+
+    async def async_merge_zone_history_for_record(
+        self,
+        continuing_zone_history_id: str,
+        retained_safety_record_id: str,
+    ) -> StoreData:
+        """Verified Stage-2 history handoff with exact A/B hazard separation.
+
+        The retained record must already be non-ACTIVE and have no unresolved
+        operational session. Stage 3 performs those lifecycle prerequisites;
+        this transaction merges only budget/interval evidence, repoints that
+        exact record, and leaves every actuator-owned field byte-for-byte
+        unchanged.
+        """
+        async with self._lock:
+            continuing = self.data.zone_histories.get(continuing_zone_history_id)
+            retained_record = self.data.safety_records.get(retained_safety_record_id)
+            if continuing is None:
+                raise StoreNotLoadedError(f"unknown zone_history_id {continuing_zone_history_id}")
+            if retained_record is None:
+                raise StoreNotLoadedError(f"unknown safety_record_id {retained_safety_record_id}")
+            retained_history_id = retained_record.zone_history_id
+            if retained_history_id == continuing_zone_history_id:
+                return self.data
+            retained = self.data.zone_histories.get(retained_history_id)
+            if retained is None:
+                raise StoreNotLoadedError(f"unknown retained zone_history_id {retained_history_id}")
+            if retained_record.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+                raise StoreWriteVerificationError(
+                    "retained record must be quiesced before history handoff"
+                )
+            if retained.zone_runtime.session is not None:
+                raise StoreWriteVerificationError(
+                    "retained operational session must be reconciled before history handoff"
+                )
+            referrers = {
+                record.safety_record_id
+                for record in self.data.safety_records.values()
+                if record.zone_history_id == retained_history_id
+            }
+            if referrers != {retained_safety_record_id}:
+                raise StoreWriteVerificationError(
+                    "retained history must have exactly one owning safety record"
+                )
+
+            merged = merge_zone_history_continuity(continuing, retained)
+            historical_ids = retained_record.historical_zone_history_ids
+            if retained_history_id not in historical_ids:
+                historical_ids = (*historical_ids, retained_history_id)
+            records = dict(self.data.safety_records)
+            records[retained_safety_record_id] = retained_record.evolve(
+                zone_history_id=continuing_zone_history_id,
+                historical_zone_history_ids=historical_ids,
+            )
+            histories = dict(self.data.zone_histories)
+            histories[continuing_zone_history_id] = merged
+            del histories[retained_history_id]
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
+                safety_records=records,
+                zone_histories=histories,
             )
             await self._save_and_verify_locked(new_data)
             return new_data

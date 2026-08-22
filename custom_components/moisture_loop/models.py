@@ -1999,6 +1999,50 @@ def conservative_merge_daily_runtime(
     )
 
 
+def merge_zone_history_continuity(continuing: ZoneHistory, retained: ZoneHistory) -> ZoneHistory:
+    """Merge budget/interval evidence without importing operational state.
+
+    The continuing history is the sole authority for identity, subentry
+    audit metadata, and ``zone_runtime``. Only current-day accounting and
+    the conservative interval anchors cross the A/B boundary (§19.5,
+    §24.4.6-9). This prevents a retained actuator record's enabled state,
+    sensor faults, controller state, or session from leaking into the
+    current logical zone (AR7-AR8, AR11-AR17).
+    """
+    if continuing.zone_history_id == retained.zone_history_id:
+        if continuing != retained:
+            raise ValueError("one zone_history_id cannot have conflicting payloads")
+        return continuing
+
+    if continuing.daily is None:
+        daily = retained.daily
+    elif retained.daily is None:
+        daily = continuing.daily
+    elif continuing.daily.date_local == retained.daily.date_local:
+        daily = conservative_merge_daily_runtime(continuing.daily, retained.daily)
+    else:
+        # Only the active local-day counter is enforceable (§19.3). When a
+        # stale retained history belongs to another day, keep the later day;
+        # session summaries remain audit data and are not merged as authority.
+        daily = max((continuing.daily, retained.daily), key=lambda item: item.date_local)
+
+    def latest(left: datetime | None, right: datetime | None) -> datetime | None:
+        if left is None:
+            return right
+        if right is None:
+            return left
+        return max(left, right)
+
+    return continuing.evolve(
+        last_session_end_utc=latest(continuing.last_session_end_utc, retained.last_session_end_utc),
+        last_auto_session_start_utc=latest(
+            continuing.last_auto_session_start_utc,
+            retained.last_auto_session_start_utc,
+        ),
+        daily=daily,
+    )
+
+
 def _stable_migration_id(generation_id: str, record_id: str, kind: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{generation_id}:{record_id}:{kind}"))
 

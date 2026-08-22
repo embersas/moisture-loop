@@ -407,9 +407,16 @@ class ZoneController:
         local_tz: tzinfo,
         emit: Callable[[str, dict], None] | None = None,
         clock: Callable[[], datetime] | None = None,
+        safety_record_id: str | None = None,
     ) -> None:
         self._hass = hass
         self.zone_id = zone_id
+        # Stage 2 separates controller/subentry identity from durable
+        # actuator-safety ownership. The fallback retains historical direct
+        # test callers until Stage 3 materializes every configured record.
+        self.safety_record_id = safety_record_id or zone_id
+        if not self.safety_record_id:
+            raise ValueError("safety_record_id must be non-empty")
         self._config = config
         self._store = store
         self._slots = slots
@@ -713,7 +720,7 @@ class ZoneController:
                 # Terminal OFF proof always releases this zone's startup
                 # not-proven-off key (exact-key, idempotent; §21, §25.4).
                 await self._slots.async_remove_blocker(
-                    self.zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
+                    self.safety_record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
                 )
                 if off_op_active:
                     return  # the OFF operation consumes this proof
@@ -841,9 +848,9 @@ class ZoneController:
             await self._slots.async_release(self.zone_id)
             await self._slots.async_cancel_request(self.zone_id)
         elif isinstance(action, AddBlocker):
-            await self._slots.async_add_blocker(self.zone_id, action.reason)
+            await self._slots.async_add_blocker(self.safety_record_id, action.reason)
         elif isinstance(action, RemoveBlocker):
-            await self._slots.async_remove_blocker(self.zone_id, action.reason)
+            await self._slots.async_remove_blocker(self.safety_record_id, action.reason)
         elif isinstance(action, SetExternalOn):
             self._external_on = action.value
         elif isinstance(action, EmitSessionStarted):

@@ -10,15 +10,18 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from custom_components.moisture_loop.models import (
+    AccountingContribution,
     ActuatorIdentity,
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
+    BlockerReason,
     ControllerState,
     DailyRuntime,
     FaultCode,
     IdentityStatus,
     MigrationRecordContext,
     NormalizedZoneSettings,
+    PossibleFlowOwner,
     RunIds,
     RuntimeLifecycle,
     Schema1StoreData,
@@ -27,6 +30,7 @@ from custom_components.moisture_loop.models import (
     SessionMode,
     StoreData,
     ZoneConfig,
+    ZoneDailyRuntime,
     ZoneRecord,
     migrate_schema1_to_schema2,
     schema1_store_data_to_dict,
@@ -598,3 +602,131 @@ class TestIntegrityAndRetention:
         _, reloaded = await fresh.async_classify_setup(True)
         assert "zone-a" in reloaded.safety_records
         assert reloaded.safety_records["zone-a"].runtime_lifecycle is RuntimeLifecycle.RETIRED
+
+
+class TestStage2ExactRecordPersistence:
+    async def test_tb4_exact_record_blockers_persist_independently(
+        self, hass, hass_storage
+    ) -> None:
+        seed_schema2(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b")))
+        store = make_store(hass)
+        await store.async_classify_setup(True)
+        start_revision = store.data.store_revision
+
+        await store.async_set_record_blocker("zone-a", BlockerReason.EXTERNAL_FLOW, active=True)
+        await store.async_set_record_blocker(
+            "zone-b", BlockerReason.INTEGRATION_OFF_UNCONFIRMED, active=True
+        )
+        await store.async_set_record_blocker("zone-a", BlockerReason.EXTERNAL_FLOW, active=False)
+
+        assert store.data.safety_records["zone-a"].blocker_reasons == ()
+        assert store.data.safety_records["zone-b"].blocker_reasons == (
+            BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
+        )
+        assert store.data.store_revision == start_revision + 3
+        unchanged_revision = store.data.store_revision
+        await store.async_set_record_blocker("zone-a", BlockerReason.EXTERNAL_FLOW, active=False)
+        assert store.data.store_revision == unchanged_revision
+
+        reloaded_store = make_store(hass)
+        _, reloaded = await reloaded_store.async_classify_setup(True)
+        assert reloaded.safety_records["zone-b"].blocker_reasons == (
+            BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
+        )
+
+    async def test_ar2_ar10_verified_history_handoff_keeps_hazards_on_b(
+        self, hass, hass_storage
+    ) -> None:
+        data = schema2_snapshot(zone_ids=("zone-a", "zone-b"))
+        record_a = data.safety_records["zone-a"].evolve(
+            blocker_reasons=(BlockerReason.ACTUATOR_NOT_PROVEN_OFF,),
+            possible_flow_owner=PossibleFlowOwner.INTEGRATION,
+            actuator_fault=FaultCode.ACTUATOR_UNAVAILABLE,
+        )
+        record_b = data.safety_records["zone-b"]
+        history_a = data.zone_histories[record_a.zone_history_id]
+        history_b = data.zone_histories[record_b.zone_history_id]
+        contribution_a = AccountingContribution(
+            "contribution-a",
+            "zone-a",
+            NOW - timedelta(seconds=100),
+            NOW,
+            100.0,
+            False,
+            date(2026, 8, 22),
+        )
+        contribution_b = AccountingContribution(
+            "contribution-b",
+            "zone-b",
+            NOW - timedelta(seconds=200),
+            NOW,
+            200.0,
+            True,
+            date(2026, 8, 22),
+        )
+        retired_b = record_b.evolve(
+            active_subentry_id=None,
+            previous_subentry_ids=("zone-b",),
+            runtime_lifecycle=RuntimeLifecycle.RETIRED,
+            blocker_reasons=(BlockerReason.EXTERNAL_FLOW,),
+            possible_flow_owner=PossibleFlowOwner.EXTERNAL,
+            actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+            acknowledgement_required=True,
+        )
+        data = data.evolve(
+            safety_records={"zone-a": record_a, "zone-b": retired_b},
+            zone_histories={
+                history_a.zone_history_id: history_a.evolve(
+                    last_session_end_utc=NOW - timedelta(hours=3),
+                    daily=ZoneDailyRuntime(
+                        date(2026, 8, 22), 100.0, contributions=(contribution_a,)
+                    ),
+                ),
+                history_b.zone_history_id: history_b.evolve(
+                    active_subentry_id=None,
+                    previous_subentry_ids=("zone-b",),
+                    last_session_end_utc=NOW - timedelta(hours=1),
+                    daily=ZoneDailyRuntime(
+                        date(2026, 8, 22), 200.0, contributions=(contribution_b,)
+                    ),
+                ),
+            },
+        )
+        seed_schema2(hass_storage, data)
+        store = make_store(hass)
+        await store.async_classify_setup(True)
+
+        await store.async_merge_zone_history_for_record(history_a.zone_history_id, "zone-b")
+
+        merged_b = store.data.safety_records["zone-b"]
+        assert merged_b == retired_b.evolve(
+            zone_history_id=history_a.zone_history_id,
+            historical_zone_history_ids=(history_b.zone_history_id,),
+        )
+        assert store.data.safety_records["zone-a"] == record_a
+        assert history_b.zone_history_id not in store.data.zone_histories
+        merged_history = store.data.zone_histories[history_a.zone_history_id]
+        assert merged_history.zone_runtime == history_a.zone_runtime
+        assert merged_history.daily is not None
+        assert merged_history.daily.runtime_s == 300.0
+        assert merged_history.last_session_end_utc == NOW - timedelta(hours=1)
+
+        # B's exact OFF evidence can remove only B's key; A remains A-owned.
+        await store.async_set_record_blocker("zone-b", BlockerReason.EXTERNAL_FLOW, active=False)
+        assert store.data.safety_records["zone-b"].blocker_reasons == ()
+        assert store.data.safety_records["zone-a"].blocker_reasons == (
+            BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
+        )
+
+        fresh = make_store(hass)
+        _, reloaded = await fresh.async_classify_setup(True)
+        assert reloaded == store.data
+
+    async def test_history_handoff_rejects_active_record(self, hass, hass_storage) -> None:
+        data = schema2_snapshot(zone_ids=("zone-a", "zone-b"))
+        seed_schema2(hass_storage, data)
+        store = make_store(hass)
+        await store.async_classify_setup(True)
+        history_a = data.safety_records["zone-a"].zone_history_id
+        with pytest.raises(StoreWriteVerificationError, match="quiesced"):
+            await store.async_merge_zone_history_for_record(history_a, "zone-b")

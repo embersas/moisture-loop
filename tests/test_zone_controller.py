@@ -152,7 +152,13 @@ class ScriptedValve:
         self.hass.states.async_set(VALVE, state, attrs)
 
 
-async def build_env(hass, freezer, config=CONFIG, actuator_cls=ScriptedSwitch):
+async def build_env(
+    hass,
+    freezer,
+    config=CONFIG,
+    actuator_cls=ScriptedSwitch,
+    safety_record_id: str | None = None,
+):
     freezer.move_to(START_AT)
     store = SafetyStore(hass, "entry-1", GEN)
     await store.async_first_initialize()
@@ -170,6 +176,7 @@ async def build_env(hass, freezer, config=CONFIG, actuator_cls=ScriptedSwitch):
         run_id="run-1",
         local_tz=UTC,
         emit=lambda kind, payload: events.append((kind, dict(payload))),
+        safety_record_id=safety_record_id,
     )
     ctrl.async_attach()
     await hass.async_block_till_done()
@@ -614,6 +621,19 @@ class TestTerminationRaces:
 
 
 class TestExternalInterference:
+    async def test_stage2_blocker_uses_safety_record_not_zone_id(
+        self, hass, hass_storage, freezer
+    ) -> None:
+        exact_record_id = "durable-safety-record-a"
+        e = await build_env(hass, freezer, safety_record_id=exact_record_id)
+        try:
+            e.actuator.set_state("on")
+            await settle(e)
+            assert e.slots.blockers() == {(exact_record_id, BlockerReason.EXTERNAL_FLOW)}
+            assert (ZONE, BlockerReason.EXTERNAL_FLOW) not in e.slots.blockers()
+        finally:
+            await e.ctrl.async_detach()
+
     async def test_er9_external_off_during_watering(self, env) -> None:
         await set_moisture(env, "27")
         await advance(env, 100)

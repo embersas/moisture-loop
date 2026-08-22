@@ -89,8 +89,8 @@ class ZoneStatusSensor(MoistureLoopZoneEntity, SensorEntity):
                 and controller.zone_id in self._runtime.slots.snapshot().queue
             ),
             "water_resource_blockers": [
-                {"zone_id": zone_id, "reason": reason.value}
-                for zone_id, reason in self._runtime.slots.snapshot().blockers
+                {"safety_record_id": record_id, "reason": reason.value}
+                for record_id, reason in self._runtime.slots.snapshot().blockers
             ],
         }
 

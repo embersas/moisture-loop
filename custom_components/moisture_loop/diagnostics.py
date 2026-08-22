@@ -171,9 +171,14 @@ async def async_get_config_entry_diagnostics(
             "owner": slots.owner,
             "queue": list(slots.queue),
             "blockers": [
-                {"zone_id": zone_id, "reason": reason.value} for zone_id, reason in slots.blockers
+                {"safety_record_id": record_id, "reason": reason.value}
+                for record_id, reason in slots.blockers
             ],
             "grants_enabled": slots.grants_enabled,
+            "reconciliation_dirty": slots.reconciliation_dirty,
+            "reconciling": slots.reconciling,
+            "reconciliation_failed": slots.reconciliation_failed,
+            "admission_open": slots.admission_open,
         },
         "zones": zones,
         "recent_transitions": transitions[-50:],

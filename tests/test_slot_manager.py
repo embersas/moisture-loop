@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from custom_components.moisture_loop.models import BlockerReason
 from custom_components.moisture_loop.slot_manager import SlotManager
 
@@ -54,6 +56,39 @@ class TestStartupGating:
         assert second.pending  # no new offer while disabled
         await manager.async_enable_grants()
         assert not second.pending
+
+    @pytest.mark.parametrize("flag", ["dirty", "reconciling", "failed"])
+    async def test_i18_reconciliation_barrier_blocks_each_failure_state(self, flag: str) -> None:
+        manager = await enabled_manager()
+        await manager.async_set_reconciliation_barrier(**{flag: True})
+        request = await manager.async_request("zone-a")
+        assert request.pending
+        assert manager.owner is None
+        snapshot = manager.snapshot()
+        assert not snapshot.admission_open
+        snapshot_field = {
+            "dirty": "reconciliation_dirty",
+            "reconciling": "reconciling",
+            "failed": "reconciliation_failed",
+        }[flag]
+        assert getattr(snapshot, snapshot_field)
+        await manager.async_set_reconciliation_barrier(**{flag: False})
+        assert not request.pending
+        assert manager.owner == "zone-a"
+
+    async def test_barrier_closure_keeps_owner_and_exact_blockers(self) -> None:
+        manager = await enabled_manager()
+        await manager.async_request("zone-a")
+        await manager.async_add_blocker("record-retained", EXTERNAL)
+        await manager.async_set_reconciliation_barrier(dirty=True, reconciling=True)
+        assert manager.owner == "zone-a"
+        assert manager.blockers() == {("record-retained", EXTERNAL)}
+        await manager.async_release("zone-a")
+        queued = await manager.async_request("zone-b")
+        await manager.async_set_reconciliation_barrier(dirty=False, reconciling=False)
+        assert queued.pending
+        await manager.async_remove_blocker("record-retained", EXTERNAL)
+        assert not queued.pending
 
 
 class TestFifoOwnership:
@@ -144,6 +179,66 @@ class TestFifoOwnership:
 
 
 class TestKeyedBlockers:
+    async def test_keys_are_safety_records_not_requesting_zone_ids(self) -> None:
+        manager = await enabled_manager()
+        await manager.async_add_blocker("safety-record-a", EXTERNAL)
+        request = await manager.async_request("current-subentry-b")
+        assert request.pending
+        assert manager.snapshot().blockers == (("safety-record-a", EXTERNAL),)
+        await manager.async_remove_blocker("current-subentry-b", EXTERNAL)
+        assert request.pending
+        await manager.async_remove_blocker("safety-record-a", EXTERNAL)
+        assert not request.pending
+
+    async def test_empty_safety_record_id_is_rejected(self) -> None:
+        manager = await enabled_manager()
+        with pytest.raises(ValueError, match="safety_record_id"):
+            await manager.async_add_blocker("", EXTERNAL)
+
+    async def test_persistence_failure_retains_live_blocker_and_prevents_grant(self) -> None:
+        calls: list[tuple[str, BlockerReason, bool]] = []
+        fail = True
+
+        async def persist(record_id: str, reason: BlockerReason, active: bool) -> None:
+            calls.append((record_id, reason, active))
+            if fail:
+                raise RuntimeError("write failed")
+
+        manager = SlotManager(persist)
+        await manager.async_enable_grants()
+        with pytest.raises(RuntimeError, match="write failed"):
+            await manager.async_add_blocker("record-a", EXTERNAL)
+        assert manager.blockers() == {("record-a", EXTERNAL)}
+        request = await manager.async_request("zone-b")
+        assert request.pending
+        assert calls == [("record-a", EXTERNAL, True)]
+        fail = False
+        await manager.async_add_blocker("record-a", EXTERNAL)
+        assert calls == [
+            ("record-a", EXTERNAL, True),
+            ("record-a", EXTERNAL, True),
+        ]
+        assert request.pending
+        await manager.async_remove_blocker("record-a", EXTERNAL)
+        assert not request.pending
+
+    async def test_failed_persisted_removal_cannot_release_or_grant(self) -> None:
+        fail_removal = False
+
+        async def persist(_record_id: str, _reason: BlockerReason, active: bool) -> None:
+            if not active and fail_removal:
+                raise RuntimeError("remove failed")
+
+        manager = SlotManager(persist)
+        await manager.async_enable_grants()
+        await manager.async_add_blocker("record-a", EXTERNAL)
+        request = await manager.async_request("zone-b")
+        fail_removal = True
+        with pytest.raises(RuntimeError, match="remove failed"):
+            await manager.async_remove_blocker("record-a", EXTERNAL)
+        assert manager.blockers() == {("record-a", EXTERNAL)}
+        assert request.pending
+
     async def test_er1_external_flow_blocks_other_zone(self) -> None:
         manager = await enabled_manager()
         await manager.async_add_blocker("zone-a", EXTERNAL)

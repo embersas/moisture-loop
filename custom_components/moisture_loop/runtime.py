@@ -128,7 +128,7 @@ class EntryRuntime:
         self.entry = entry
         generation = entry.data[CONF_RUNTIME_STORE_GENERATION_ID]
         self.store = SafetyStore(hass, entry.entry_id, generation)
-        self.slots = SlotManager()
+        self.slots = SlotManager(self._persist_slot_blocker)
         self.controllers: dict[str, ZoneController] = {}
         self.run_id = str(uuid.uuid4())
         self.previous_run: RunIds | None = None
@@ -186,9 +186,13 @@ class EntryRuntime:
         }
 
         # Step 6: populate blockers and reconcile persisted state.
+        for safety_record in self.store.data.safety_records.values():
+            for reason in safety_record.blocker_reasons:
+                await self.slots.async_add_blocker(safety_record.safety_record_id, reason)
         for zone_id, cfg in zone_configs.items():
             assessment = assessments[zone_id]
             record = self.store.data.zones.get(zone_id)
+            safety_record_id = self._safety_record_id_for_zone(zone_id)
             watering_recovery = (
                 record is not None
                 and record.state is ControllerState.WATERING
@@ -197,7 +201,9 @@ class EntryRuntime:
             if not assessment.proven_off and not assessment.observed_on and not watering_recovery:
                 # Unknown/unavailable/transitional at startup is never
                 # proven OFF (§25.4); the keyed blocker holds until proof.
-                await self.slots.async_add_blocker(zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF)
+                await self.slots.async_add_blocker(
+                    safety_record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
+                )
             controller = self._create_controller(zone_id, cfg)
             await self._reconcile_zone(controller, record, assessment)
             if assessment.observed_on and not watering_recovery:
@@ -212,13 +218,14 @@ class EntryRuntime:
         # Step 7: re-read every actuator after reconciliation.
         for zone_id, cfg in zone_configs.items():
             final = ActuatorAdapter(self.hass, cfg.actuator).current()
+            safety_record_id = self._safety_record_id_for_zone(zone_id)
             if final.proven_off:
                 # Terminal OFF proof releases this zone's startup keys
                 # (exact-key; other zones/reasons are untouched, §21).
                 await self.slots.async_remove_blocker(
-                    zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
+                    safety_record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
                 )
-                await self.slots.async_remove_blocker(zone_id, BlockerReason.EXTERNAL_FLOW)
+                await self.slots.async_remove_blocker(safety_record_id, BlockerReason.EXTERNAL_FLOW)
 
         # Step 8: activation. The controllers' own listeners replace the
         # passive ones (attach happened above, so there is no observation
@@ -226,6 +233,22 @@ class EntryRuntime:
         self._remove_passive_listeners()
         self._install_periodic_triggers()
         await self.slots.async_enable_grants()
+
+    async def _persist_slot_blocker(
+        self,
+        safety_record_id: str,
+        reason: BlockerReason,
+        active: bool,
+    ) -> None:
+        """Persist a live blocker when its canonical Stage-2 record exists.
+
+        Empty-schema first-install callers still lack records until Stage 3;
+        their live fallback key remains fail-closed but is deliberately not
+        invented as schema-2 authority.
+        """
+        if not self.store.loaded or safety_record_id not in self.store.data.safety_records:
+            return
+        await self.store.async_set_record_blocker(safety_record_id, reason, active=active)
 
     def _mark_initialized(self) -> None:
         """§23.5 step 5: flag update only after verified Store state."""
@@ -289,9 +312,40 @@ class EntryRuntime:
             run_id=self.run_id,
             local_tz=self._local_tz,
             emit=self._make_emitter(zone_id),
+            safety_record_id=self._safety_record_id_for_zone(zone_id),
         )
         self.controllers[zone_id] = controller
         return controller
+
+    def _safety_record_id_for_zone(self, zone_id: str) -> str:
+        """Resolve exact blocker ownership for a current spec.3 caller.
+
+        Stage 3 replaces the final fallback by materializing a canonical
+        record before controller construction. Existing migrated records are
+        already resolved by current subentry first, then unique legacy zone
+        metadata; ambiguity fails closed instead of choosing a hazard owner.
+        """
+        if not self.store.loaded:
+            return zone_id
+        active = [
+            record.safety_record_id
+            for record in self.store.data.safety_records.values()
+            if record.active_subentry_id == zone_id
+        ]
+        if len(active) == 1:
+            return active[0]
+        if len(active) > 1:
+            raise ConfigEntryNotReady(f"multiple safety records own current subentry {zone_id}")
+        legacy = [
+            record.safety_record_id
+            for record in self.store.data.safety_records.values()
+            if record.zone_id == zone_id
+        ]
+        if len(legacy) == 1:
+            return legacy[0]
+        if len(legacy) > 1:
+            raise ConfigEntryNotReady(f"ambiguous safety-record ownership for zone {zone_id}")
+        return zone_id
 
     def _make_emitter(self, zone_id: str):
         def emit(kind: str, payload: dict) -> None:
@@ -475,17 +529,25 @@ class EntryRuntime:
     def _install_passive_listeners(self, zone_configs: dict[str, ZoneConfig]) -> None:
         for zone_id, cfg in zone_configs.items():
             adapter = ActuatorAdapter(self.hass, cfg.actuator)
+            safety_record_id = self._safety_record_id_for_zone(zone_id)
 
             @callback
-            def _passive(event: Event, zone_id: str = zone_id, adapter=adapter) -> None:
+            def _passive(
+                event: Event,
+                safety_record_id: str = safety_record_id,
+                adapter=adapter,
+            ) -> None:
                 assessment = adapter.assess(event.data["new_state"])
                 if assessment.observed_on:
                     self.hass.async_create_task(
-                        self.slots.async_add_blocker(zone_id, BlockerReason.EXTERNAL_FLOW)
+                        self.slots.async_add_blocker(safety_record_id, BlockerReason.EXTERNAL_FLOW)
                     )
                 elif not assessment.proven_off:
                     self.hass.async_create_task(
-                        self.slots.async_add_blocker(zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF)
+                        self.slots.async_add_blocker(
+                            safety_record_id,
+                            BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
+                        )
                     )
 
             self._passive_unsubs.append(

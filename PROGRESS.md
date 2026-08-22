@@ -9,14 +9,14 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Spec.4 Remediation Stage 1 is complete. Its canonical schema-2 models, strict schema-1 migration, and focused persistence evidence are current; Slices 1 and 4 remain [~] because Stages 2/3 still own blocker/resource identity, zone-history handoff, reconciliation, and runtime consumption. Slices 2 and 6 remain fully conformant within their documented scopes. Slices 0, 3, 5, and 7-12 still require spec.4 implementation changes and/or new evidence.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-2 are complete. Canonical schema-2 models/migration, exact safety-record blocker ownership, verified blocker persistence, reconciliation admission fencing, and conservative zone-history continuity primitives are current. Slices 1, 4, and 5 remain [~] only because Stage 3 and later integrated reconciliation/runtime evidence is still outstanding. Slices 2 and 6 remain fully conformant within their documented scopes. Slices 0, 3, and 7-12 still require spec.4 implementation changes and/or new evidence.`
 - Slice 9 specification status: `Resolved by approved spec.4. The former lack-of-pre-delete-hook specification question is closed by update-listener-driven tombstoned reconciliation and authoritative final ON gates. Slice 9 implementation remediation is not complete and has not been tested against the approved design.`
-- Next implementation work: `Stage 2 is technically unblocked by the completed Stage-1 persistence primitives, but may begin only after explicit user authorization. No implementation work is currently authorized.`
-- Release gates: `Spec.4 Remediation Stages 2-8 and the integrated named-test evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
+- Next implementation work: `Stage 3 is technically unblocked by the completed Stage-1/2 persistence, blocker, admission, and history primitives, but may begin only after explicit user authorization. No implementation work is currently authorized.`
+- Release gates: `Spec.4 Remediation Stages 3-8 and the integrated named-test evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
 - Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Not release-ready. Stage 1 is complete with 421 passed/1 skipped in its focused HA 2025.9.0 coverage suite and 92.39% affected-module branch coverage (state_machine.py 100%). The broad historical-runtime suite currently has 555 passed, 90 expected downstream failures, 1 skipped, and 1 teardown error because Stages 2/3 have not yet created/consumed canonical records during runtime setup. Historical spec.3 evidence remains preserved.`
+- Overall status: `Not release-ready. Stages 1-2 are complete with 458 passed/1 skipped in the current focused HA 2025.9.0 coverage suite and 92.25% affected-module branch coverage (slot_manager.py and state_machine.py 100%). The pure Python 3.14.5 suite has 423 passed. The broad historical-runtime suite currently has 570 passed, 90 expected downstream failures, 1 skipped, and the same classified teardown error because Stage 3 has not yet materialized/consumed canonical records during runtime setup. Historical spec.3 evidence remains preserved.`
 
-On 2026-08-22 the user explicitly authorized Spec.4 Remediation Stage 1 only. That work is complete and the authorization has returned to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 2-8 implementation or prototype work requires new explicit user authorization.
+On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stage 1, then explicitly authorized the teardown classification prerequisite and continuation into Stage 2. Stage 2 is complete and the authorization has returned to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 3-8 implementation or prototype work requires new explicit user authorization.
 
 ## Status Legend
 
@@ -39,7 +39,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 2 | Pure state machine | [x] |
 | 3 | State-machine and invariant test suite | [~] Spec.4 remediation required |
 | 4 | Persistence and run-integrity layer | [~] Spec.4 remediation required |
-| 5 | Global SlotManager and resource blockers | [~] Spec.4 remediation required |
+| 5 | Global SlotManager and resource blockers | [~] Stage 2 complete; later integration evidence required |
 | 6 | Home Assistant moisture sensor adapter | [x] |
 | 7 | Zone runtime controller | [~] Spec.4 remediation required |
 | 8 | Startup, reload, reconfiguration, and shutdown lifecycle | [~] Spec.4 remediation required |
@@ -77,21 +77,21 @@ These are implementation-wide targets. Their definitions remain authoritative in
 ### Current test-evidence boundary
 
 - **Normative named tests specified:** 134 unique IDs. A mechanical scan of §39.2 matched 134 entries, found 134 unique IDs, and found zero duplicates.
-- **Tests currently implemented:** Stage-1 portions of PI21, PI22, PI23, PI27, TB7, and TB11 are implemented, together with strict schema/migration/cross-reference/contribution tests and retained relevant PI1-PI20 Store/run-integrity coverage. PI24-PI26 and all coordinator/runtime portions remain explicitly unclaimed for Stage 3.
-- **Tests actually run/passing:** the 2026-08-22 Stage-1 focused HA 2025.9.0 coverage suite passed 421 tests with 1 expected pure-boundary skip; the pure Python 3.14.5 suite passed 391 tests; focused HA storage passed 31 tests. A broader inventory run produced 555 passed, 90 expected downstream failures, 1 skipped, and 1 teardown error at the temporary fail-closed runtime seam. Historical 2026-08-21 spec.3 totals remain unchanged below.
+- **Tests currently implemented:** Stage-1 portions of PI21, PI22, PI23, PI27, TB7, and TB11 plus Stage-2 manager/model/Store portions of ER1-ER12, TB1-TB4, AR2-AR10, and AR17 are implemented. The Stage-2 evidence covers exact safety-record blocker keys, grant admission, durable exact-key removal/addition failure paths, conservative contribution/history continuity, and A/B hazard non-transfer. PI24-PI26, coordinator/runtime handoff portions, and final end-to-end repetitions remain explicitly unclaimed for Stages 3 and 7.
+- **Tests actually run/passing:** the 2026-08-22 Stage-2 focused HA 2025.9.0 coverage suite passed 458 tests with 1 expected pure-boundary skip and 92.25% affected-module branch coverage; the pure Python 3.14.5 suite passed 423 tests. The post-Stage-2 broad inventory produced 570 passed, 90 expected downstream failures, 1 skipped, and the same classified teardown error at the temporary fail-closed runtime seam. Historical 2026-08-21 spec.3 totals remain unchanged below.
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stage 1 now declares Store schema 2 and persists canonical `safety_records` plus independent `zone_histories[*].zone_runtime`; `ZoneRecord` remains only a non-serialized temporary projection for untouched historical callers. SlotManager and runtime callers still use spec.3 zone identity, startup still lacks config+Store union and a reconciliation coordinator, config flow still owns old reload behaviour, and no authoritative current-subentry/snapshot/lifecycle gate surrounds actuator ON. Repairs/diagnostics/entities also still expose spec.3 runtime concepts. Those remaining observations assign Stages 2-8 and are not Stage-1 defects.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-2 now declare Store schema 2, persist canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, key live/durable blockers by `safety_record_id`, fail grant admission closed for reconciliation state, and provide verified conservative history handoff without hazard transfer; `ZoneRecord` remains only a non-serialized temporary projection for untouched historical callers. Startup still lacks config+Store union and a reconciliation coordinator, config flow still owns old reload behaviour, and no authoritative current-subentry/snapshot/lifecycle gate surrounds actuator ON. Repairs/diagnostics/entities still require their later-stage full schema-2 surface remediation. Those remaining observations assign Stages 3-8 and are not Stage-1/2 defects.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
 | 0 | `[~] Spec.4 remediation required` | The quality foundation remains useful, but HA1 currently checks the incompatible reload helper and lacks the approved listener/removal/`async_update_and_abort` contract. CI must later carry the new test inventory and current-HA evidence. |
-| 1 | `[~] Stage 1 complete; later remediation required` | Stage 1 added `safety_record_id`, `safety_lineage_id`, independent `zone_history_id`/`zone_runtime`, immutable applied shadows, durable actuator identity/status, orthogonal lifecycle, contribution identity, and strict ownership validation. Stages 2/3 must consume these authorities in resource/runtime reconciliation. |
+| 1 | `[~] Stages 1-2 complete; later remediation required` | Stage 1 added canonical identity/ownership models; Stage 2 added whole-history conservative continuity that preserves the continuing `zone_runtime`. Stage 3 must consume them in live reconciliation/reactivation/A -> B orchestration. |
 | 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
 | 3 | `[~] Spec.4 remediation required` | Historical T1-T59 proof remains valid, but traceability stops at I31 and does not supply LC13 or the new PI/ND/TB/AR/RC evidence for I32-I37. |
-| 4 | `[~] Stage 1 complete; later remediation required` | Schema 2, strict schema-1 reading/migration, canonical records/histories, tombstones, contribution primitives, strict cross-references, Store-only migration, and verified atomic writes now pass Stage-1 evidence. Stages 2/3 still own live blocker reconstruction, A -> B handoff/merge orchestration, and startup reconciliation consumption. |
-| 5 | `[~] Spec.4 remediation required` | SlotManager keys are `(zone_id, reason)` and admission has only a broad startup enable flag. It needs `(safety_record_id, reason)`, exact retained-record ownership, and the entry reconciliation dirty/running/failed/superseded barrier. |
+| 4 | `[~] Stages 1-2 complete; later remediation required` | Schema 2/migration and verified atomic writes pass Stage 1; Stage 2 adds exact-record blocker writes and verified zone-history handoff. Stage 3 still owns full startup union, record materialization, live A -> B orchestration, and reconciliation consumption. |
+| 5 | `[~] Stage 2 complete; later integration evidence required` | SlotManager blocker keys and controller/runtime hazard call sites now use `safety_record_id`; exact durable add/removal is fail closed, persisted blockers rebuild before grants, and dirty/reconciling/failed admission blocks offers. Stage 3 supplies the coordinator owner and Stage 7 repeats exact-key behaviour end to end. |
 | 6 | `[x]` | Entity-filtered changed/unchanged report delivery, normalization, timestamp, and freshness semantics remain normative. Persistent sensor identity and reconciliation handoff are assigned to Slices 1/4/8; real rename validation remains Slice 13. |
 | 7 | `[~] Spec.4 remediation required` | The controller has write-ahead intent and one OFF path, but lacks the complete final pre-ON membership/fingerprint/snapshot/generation/lifecycle gate, no-suspension dispatch boundary, in-flight possible-flow marker, post-call recheck, deletion compensation, and safety-record blocker identity. |
 | 8 | `[~] Spec.4 remediation required` | EntryRuntime has no listener-owned coordinator, immutable applied shadows, dirty/latest-snapshot barrier, add/change/remove classification, `DELETE_PENDING`/`RETIRED` handoff, startup config+Store union, exact same-record reactivation, or A -> B reconciliation. It currently skips Store-only hazardous records when configuration is absent. |
@@ -103,7 +103,7 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 
 ## Spec.4 Implementation Remediation Plan
 
-Stage 1 was explicitly authorized and is complete. No later stage is authorized or started. A later stage may be marked complete only after its named evidence is implemented and actually run.
+Stages 1-2 were explicitly authorized in sequence and are complete. No later stage is authorized or started. A later stage may be marked complete only after its named evidence is implemented and actually run.
 
 ### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
 
@@ -117,6 +117,8 @@ Stage 1 was explicitly authorized and is complete. No later stage is authorized 
 - **Completion evidence:** schema-1 preservation/migration and malformed/write/read-back failure cases pass; schema-2 round trips show correct single-authority field ownership; no grant or watering-capable runtime can use unverified migrated data. Full identity reactivation tests PI24-PI26 close in Stage 3.
 
 ### Stage 2 - Safety-record blocker identity and zone-history continuity
+
+- **Status:** `[x] Complete on 2026-08-22`; authorization returned to `None` after exact-key persistence, admission, history-continuity, pure/HA regression, lint, formatting, coverage, and broad-inventory gates ran.
 
 - **Objective:** re-key all hazards to `(safety_record_id, reason)`, add the reconciliation admission barrier to SlotManager, and implement deterministic contribution deduplication/conservative merge plus exact A/B hazard separation.
 - **Affected existing slices/files:** Slices 1, 4, and 5; `models.py`, `storage.py`, `slot_manager.py`, controller/runtime call sites, `sensor.py`, and their focused tests.
@@ -1706,6 +1708,7 @@ Tests run:
 - Skip audit: the same focused suite with `-rs` -> PASS before the final duplicate-ID regression was added: 420 passed, 1 skipped; skip reason: the foundation boundary proof intentionally runs only in the pure environment. The final coverage command above contains the additional passing regression and the same single collected skip.
 - Ruff 0.16.4: `uvx --from ruff==0.16.4 ruff check custom_components tests scripts` -> PASS; `uvx --from ruff==0.16.4 ruff format --check custom_components tests scripts` -> PASS, 32 files already formatted.
 - Broad inventory only: `.\.venv-ha-stage1\Scripts\python.exe -m pytest -q --tb=no` -> expected downstream non-green result: 555 passed, 90 failed, 1 skipped, 1 teardown error, 3 warnings (12.52 s). Failures are confined to historical runtime/lifecycle/entity/service/Repair/controller suites that start from an empty schema-2 first install and still expect `async_update_zone` to create spec.3 zone records. The seam intentionally refuses that unsafe identityless creation; Stages 2/3 must create/consume canonical records, and Stage 6 later owns surface remediation. This result is not treated as a Stage-1 failure or as integrated spec.4 evidence.
+- Teardown-error reproduction/classification (performed before any Stage 2 implementation change): the broad command was rerun with `--tb=short` and reproduced the same 555 passed, 90 failed, 1 skipped, and 1 error. The sole error is `tests/test_services.py::TestManualAction::test_manual_refused_for_blocking_fault` during the HA `hass` fixture teardown. An isolated `-vv --tb=long` run reproduced the test-body mismatch (`session_active` instead of the historical `fault_blocks_manual`) and the teardown `AssertionError` at `state_machine.py::_close_open_accounting` (`session.pending_termination_reason is None`). This is not a Stage-1 model, Store, or compatibility-seam defect: `SafetyStore.async_update_zone` correctly emits the documented `StoreWriteVerificationError` before manufacturing identityless schema-2 authority. The unchanged spec.3 controller first installs its proposed session in memory, then its generic persistence-failure handler moves to `FAULT` while retaining that uncommitted session without a termination reason; the test's subsequent `unavailable -> closed` actuator change routes that impossible downstream state through delayed-accounting closure. Stage 3 replaces the empty-Store runtime materialization/consumption path and Stage 6 replaces the service-surface expectation. No suppression, xfail, skip, ignore rule, or implementation workaround was added.
 
 Local test-environment notes:
 - The repository's existing `.venv`/`.venv-ha` launchers referenced unavailable interpreters, so an ignored `.venv-ha-stage1` was created from `requirements_test_ha.txt` for verification only.
@@ -1720,6 +1723,73 @@ Open issues:
 
 Authorization closeout:
 - Current authorized slice returned to `None`. No Stage 2 authorization is implied.
+- `SPECIFICATION.md` was not changed.
+- Historical spec.3 session/test records were preserved without rewriting.
+
+PROGRESS.md updated:
+- yes
+
+### 2026-08-22 - Spec.4 Remediation Stage 2
+
+Authorized work:
+- The user required reproduction and ownership classification of the Stage-1 broad-inventory teardown error before any implementation change, then authorized continuation when it proved to be the expected downstream spec.3 runtime path. This authorized **Spec.4 Remediation Stage 2** only: exact safety-record blocker identity, SlotManager reconciliation admission, and conservative zone-history continuity. Stages 3-8, Slice 13, publication, and specification edits remained out of scope.
+
+Prerequisite teardown classification:
+- Reran the broad HA 2025.9.0 inventory with traceback enabled before modifying implementation code: 555 passed, 90 failed, 1 skipped, and the same single teardown error.
+- Isolated `tests/test_services.py::TestManualAction::test_manual_refused_for_blocking_fault`; its body expected the historical `fault_blocks_manual` refusal but received `session_active`, then HA teardown surfaced `AssertionError` in `state_machine.py::_close_open_accounting` because `session.pending_termination_reason` was null.
+- Classified this as the expected downstream spec.3 runtime/materialization path, not a Stage-1 model, Store, or compatibility-seam defect. The Stage-1 seam correctly refuses identityless creation; unchanged controller code installs a proposed session before that write, then its generic persistence-failure handler retains the uncommitted session in FAULT. The later test-driven actuator `unavailable -> closed` observation reaches a delayed-accounting precondition that the downstream path violated.
+- No suppression, xfail, skip, ignore rule, exception swallowing, or implementation workaround was added. The exact classification was added to the Stage-1 remediation session before Stage-2 implementation began.
+
+Completed:
+- Re-keyed the SlotManager blocker API and every controller/runtime hazard call site to explicit `(safety_record_id, BlockerReason)` ownership while retaining zone/subentry IDs solely for FIFO request/slot ownership.
+- Added a controller `safety_record_id` distinct from `zone_id`; migrated/current records resolve by current subentry first and unique legacy metadata second. The temporary no-record fallback remains live-only and fail closed until Stage 3 materializes every configured canonical record; it does not create Store authority.
+- Added exact durable blocker writes on `SafetyStore`. Adds become live before persistence and remain live if persistence fails; removals become visible and can trigger a grant only after exact-record write/read-back verification. Idempotent same-value writes do not increment the revision.
+- Rebuilt every persisted record blocker into SlotManager before startup grant enablement. An OFF/removal event for B cannot clear A or another reason, and persisted failure cannot create a grant window.
+- Added immutable reconciliation admission state (`dirty`, `reconciling`, `failed`) to SlotManager. Each state independently blocks new grants; lifecycle grant enablement remains separate; clearing the barrier never clears a keyed blocker or disturbs a current owner.
+- Changed SlotManager snapshots and the currently touched blocker projections in sensor/diagnostics from `zone_id` labels to `safety_record_id`, and exposed reconciliation/admission state in diagnostics.
+- Added pure `merge_zone_history_continuity`: it preserves the continuing history's identity, current-subentry audit metadata, and exact `zone_runtime`; deduplicates identical contribution IDs; retains known distinct contributions; conservatively adds unresolved aggregates; keeps the later active local-day counter when dates differ; and takes the latest applicable interval anchors without importing retained B operational state.
+- Added a serialized, read-back-verified Store history handoff for a quiesced retained record. It rejects ACTIVE or unresolved-session sources, requires exactly one source-history owner, merges budget/interval evidence, appends the old history ID as audit metadata, repoints only that exact retained record, and leaves all A/B blocker, possible-flow, fault, acknowledgement, identity, and lifecycle fields unchanged.
+- Preserved T1-T59 and the pure state-machine implementation unchanged. No configuration coordinator, record materialization, live add/change/remove orchestration, same-record reactivation, final ON gate, config-flow change, or full surface remediation was implemented.
+
+Named/focused evidence implemented:
+- ER1-ER12 Stage-2 manager/call-site portions: exact durable keys, FIFO/owner separation, multiple records/reasons, startup reconstruction, persistence failures, adversarial grants, and a controller whose zone ID differs from its safety-record ID.
+- TB1-TB4 Stage-2 exact-key persistence portions: exact record/reason add/remove, independent retention, idempotence, read-back reload, and no cross-record clearing.
+- AR2-AR10 and AR17 Stage-2 model/Store portions: A/B hazard fields remain exclusively on their source records while known/unresolved budget contributions merge conservatively, current-day runtime cannot reset, latest minimum-interval evidence wins, and retained B `zone_runtime` does not replace the continuing logical-zone authority.
+- Full coordinator/runtime/end-to-end repetitions of those named IDs remain assigned to Stages 3 and 7 and are not claimed here.
+
+Files changed:
+- `custom_components/moisture_loop/models.py`
+- `custom_components/moisture_loop/storage.py`
+- `custom_components/moisture_loop/slot_manager.py`
+- `custom_components/moisture_loop/runtime.py`
+- `custom_components/moisture_loop/zone_controller.py`
+- `custom_components/moisture_loop/sensor.py`
+- `custom_components/moisture_loop/diagnostics.py`
+- `tests/test_slot_manager.py`
+- `tests/test_storage_pure.py`
+- `tests/test_storage.py`
+- `tests/test_zone_controller.py`
+- `tests/test_entities.py`
+- `PROGRESS.md`
+
+Tests run:
+- Pre-change broad reproduction: `.\.venv-ha-stage1\Scripts\python.exe -m pytest -q --tb=short` -> expected downstream non-green result: 555 passed, 90 failed, 1 skipped, 1 teardown error, 3 warnings (14.47 s); exact teardown test/error as classified above.
+- Isolated pre-change reproduction: `.\.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_services.py::TestManualAction::test_manual_refused_for_blocking_fault -vv --tb=long` -> expected downstream result: 1 failed plus the one teardown error; exact `session_active` body mismatch and `_close_open_accounting` assertion captured.
+- Pure Python 3.14.5: `py -3.14 -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_state_machine.py tests/test_foundation.py tests/test_slot_manager.py -q --tb=short` -> PASS: 423 passed, 0 failed, 0 skipped (warning-only Python 3.14/pytest-asyncio deprecation noise; 1.08 s).
+- Focused HA 2025.9.0 regression: `.\.venv-ha-stage1\Scripts\python.exe -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_storage.py tests/test_state_machine.py tests/test_foundation.py tests/test_slot_manager.py tests/test_zone_controller.py::TestExternalInterference::test_stage2_blocker_uses_safety_record_not_zone_id tests/test_lifecycle.py::TestRuntimeEdges::test_passive_listener_window -q --tb=short` -> PASS: 458 passed, 0 failed, 1 skipped; the skip is the deliberate pure-boundary proof in an HA-installed environment (5.67 s).
+- Focused coverage: the same focused HA command with branch coverage for `const.py`, `models.py`, `storage.py`, `state_machine.py`, and `slot_manager.py` -> PASS: 458 passed, 1 skipped; combined affected-module branch coverage 92.25%; `const.py` 100.00%, `models.py` 87.53%, `storage.py` 89.04%, `state_machine.py` 100.00%, `slot_manager.py` 100.00% (8.12 s).
+- Ruff 0.16.4: `uvx --from ruff==0.16.4 ruff check custom_components tests scripts` -> PASS; `uvx --from ruff==0.16.4 ruff format --check custom_components tests scripts` -> PASS, 32 files formatted.
+- Post-change broad inventory: `.\.venv-ha-stage1\Scripts\python.exe -m pytest -q --tb=no` -> expected downstream non-green result: 570 passed, 90 failed, 1 skipped, the same 1 classified teardown error, 2 warnings (12.81 s). The 15 new Stage-2 tests account for the pass-count increase; no historical passing test regressed and the teardown path was neither masked nor changed.
+
+Open issues:
+- No Stage-2 specification ambiguity or blocker was found.
+- Stage 3 must replace the temporary no-record compatibility fallback by creating/resolving canonical records before controllers, own the update listener/generations/barrier flags, reconcile the config+Store union, and orchestrate live same-record/A -> B lifecycle handoffs using the verified Stage-2 primitives.
+- Stage 7 must repeat ER/TB/AR exact-key behaviour end to end. The focused Stage-2 portions are not claimed as complete integrated spec.4 evidence.
+- The classified downstream teardown error remains intentionally visible until Stage 3 materializes/consumes canonical runtime records and Stage 6 updates the service-surface expectation. It was not suppressed or ignored.
+- Slice 13 remains not started; no automated result is claimed as §46 prototype evidence.
+
+Authorization closeout:
+- Current authorized slice returned to `None`. No Stage 3 authorization is implied.
 - `SPECIFICATION.md` was not changed.
 - Historical spec.3 session/test records were preserved without rewriting.
 

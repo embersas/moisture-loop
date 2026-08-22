@@ -1,7 +1,8 @@
 """Global watering SlotManager (SPECIFICATION.md §21, §11.4, §22.3).
 
 Integration-wide FIFO serialization of watering ownership plus the
-deterministic water-resource blocker set keyed by ``(zone_id, reason)``.
+deterministic water-resource blocker set keyed by
+``(safety_record_id, reason)``.
 v0.1 permits at most one integration-commanded flowing zone, and no zone may
 be commanded ON while any configured actuator is observed or conservatively
 believed to be flowing, regardless of who initiated that flow (I19, I21).
@@ -23,11 +24,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from .models import BlockerReason
 
 BlockerKey = tuple[str, BlockerReason]
+BlockerPersistence = Callable[[str, BlockerReason, bool], Awaitable[None]]
 
 
 @dataclass
@@ -50,28 +53,61 @@ class SlotSnapshot:
     queue: tuple[str, ...]
     blockers: tuple[BlockerKey, ...]
     grants_enabled: bool
+    reconciliation_dirty: bool
+    reconciling: bool
+    reconciliation_failed: bool
+    admission_open: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationBarrier:
+    """Entry-wide configuration admission state (§21, §22.4, I18)."""
+
+    dirty: bool = False
+    reconciling: bool = False
+    failed: bool = False
+
+    @property
+    def clear(self) -> bool:
+        """Whether configuration reconciliation permits a new grant."""
+        return not (self.dirty or self.reconciling or self.failed)
 
 
 class SlotManager:
     """FIFO watering-slot owner and keyed conservative blocker set."""
 
-    def __init__(self) -> None:
+    def __init__(self, persist_blocker: BlockerPersistence | None = None) -> None:
         self._lock = asyncio.Lock()
         self._owner: str | None = None
         self._queue: deque[SlotRequest] = deque()
         self._blockers: set[BlockerKey] = set()
+        self._unpersisted_blockers: set[BlockerKey] = set()
         # No grant is possible until startup reconciliation completes and
         # every configured actuator has been classified (§21, §25.1, ER6).
         self._grants_enabled = False
+        self._reconciliation = ReconciliationBarrier()
+        self._persist_blocker = persist_blocker
 
     # -- observation / blocker updates --------------------------------------
 
-    async def async_add_blocker(self, zone_id: str, reason: BlockerReason) -> None:
+    async def async_add_blocker(self, safety_record_id: str, reason: BlockerReason) -> None:
         """Add one keyed blocker. Idempotent; never affects other keys."""
+        if not safety_record_id:
+            raise ValueError("safety_record_id must be non-empty")
         async with self._lock:
-            self._blockers.add((zone_id, reason))
+            key = (safety_record_id, reason)
+            if key in self._blockers and key not in self._unpersisted_blockers:
+                return
+            # Make the live resource fail closed before awaiting the durable
+            # write. If persistence fails, retain the blocker in memory and
+            # propagate the failure; no grant can slip through.
+            self._blockers.add(key)
+            if self._persist_blocker is not None:
+                self._unpersisted_blockers.add(key)
+                await self._persist_blocker(safety_record_id, reason, True)
+                self._unpersisted_blockers.discard(key)
 
-    async def async_remove_blocker(self, zone_id: str, reason: BlockerReason) -> None:
+    async def async_remove_blocker(self, safety_record_id: str, reason: BlockerReason) -> None:
         """Remove exactly one keyed blocker on proven terminal OFF evidence.
 
         Removing a key that is not present is a no-op. One zone/reason's
@@ -79,7 +115,15 @@ class SlotManager:
         if the whole set is now empty and no owner remains.
         """
         async with self._lock:
-            self._blockers.discard((zone_id, reason))
+            key = (safety_record_id, reason)
+            if key not in self._blockers:
+                return
+            # Removal becomes visible only after exact-record persistence is
+            # verified. A failed write therefore retains the live blocker.
+            if self._persist_blocker is not None:
+                await self._persist_blocker(safety_record_id, reason, False)
+            self._blockers.remove(key)
+            self._unpersisted_blockers.discard(key)
             self._try_grant_locked()
 
     def blockers(self) -> frozenset[BlockerKey]:
@@ -101,6 +145,33 @@ class SlotManager:
         """Stop offering new grants (shutdown/reload); ownership is untouched."""
         async with self._lock:
             self._grants_enabled = False
+
+    async def async_set_reconciliation_barrier(
+        self,
+        *,
+        dirty: bool | None = None,
+        reconciling: bool | None = None,
+        failed: bool | None = None,
+    ) -> ReconciliationBarrier:
+        """Atomically update the entry-wide reconciliation admission fence.
+
+        Stage 3's coordinator owns these flags. Stage 2 makes the grant path
+        fail closed for each independently and exposes the immutable state to
+        diagnostics. Clearing the fence never clears a keyed actuator hazard.
+        """
+        async with self._lock:
+            current = self._reconciliation
+            self._reconciliation = ReconciliationBarrier(
+                dirty=current.dirty if dirty is None else dirty,
+                reconciling=current.reconciling if reconciling is None else reconciling,
+                failed=current.failed if failed is None else failed,
+            )
+            self._try_grant_locked()
+            return self._reconciliation
+
+    def admission_open(self) -> bool:
+        """Whether lifecycle enablement and reconciliation both permit grants."""
+        return self._grants_enabled and self._reconciliation.clear
 
     # -- FIFO ownership --------------------------------------------------------
 
@@ -168,6 +239,10 @@ class SlotManager:
             queue=tuple(r.zone_id for r in self._queue),
             blockers=tuple(sorted(self._blockers, key=lambda k: (k[0], k[1].value))),
             grants_enabled=self._grants_enabled,
+            reconciliation_dirty=self._reconciliation.dirty,
+            reconciling=self._reconciliation.reconciling,
+            reconciliation_failed=self._reconciliation.failed,
+            admission_open=self.admission_open(),
         )
 
     # -- grant decision (always under the lock) ------------------------------
@@ -180,6 +255,8 @@ class SlotManager:
         release (decline) if any fails; release triggers the next offer.
         """
         if not self._grants_enabled:
+            return
+        if not self._reconciliation.clear:
             return
         if self._owner is not None:
             return
