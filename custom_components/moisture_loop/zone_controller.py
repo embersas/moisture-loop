@@ -29,8 +29,10 @@ import math
 import uuid
 from collections import deque
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
-from typing import TYPE_CHECKING
+from enum import StrEnum
+from typing import TYPE_CHECKING, Protocol
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, Event, HomeAssistant, State, callback
@@ -54,6 +56,7 @@ from .models import (
     BlockerReason,
     ClearFaultRequested,
     CompletionReason,
+    ConfigChangedPrepare,
     ConfigurationInvalid,
     ControllerState,
     DailyRuntime,
@@ -79,11 +82,13 @@ from .models import (
     OnConfirmed,
     OnConfirmTimeout,
     PersistState,
+    PossibleFlowOwner,
     PulseDeadlineReached,
     ReleaseSlot,
     RemoveBlocker,
     RequestSlot,
     ResourceAssessment,
+    RuntimeEstimationReason,
     RuntimeLifecycle,
     ScheduleEvaluation,
     SessionContext,
@@ -104,6 +109,10 @@ from .models import (
     config_fingerprint,
     current_day_charge,
 )
+from .reconciliation import (
+    FinalOnAuthorizationResult,
+    FinalOnAuthorizationToken,
+)
 from .slot_manager import SlotManager
 from .state_machine import decide
 from .storage import SafetyStore, StoreWriteVerificationError
@@ -118,6 +127,52 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 type ObservationSink = Callable[[MoistureObservation], None]
+
+
+class OnAuthorizationProvider(Protocol):
+    """Entry-owned synchronous authority for every integration ON."""
+
+    def authorize_on(
+        self,
+        controller: ZoneController,
+        session_id: str,
+        command_attempt_id: str,
+    ) -> FinalOnAuthorizationResult: ...
+
+    def recheck_on_authorization(
+        self,
+        controller: ZoneController,
+        token: FinalOnAuthorizationToken,
+    ) -> FinalOnAuthorizationResult: ...
+
+    def finish_on_authorization(self, token: FinalOnAuthorizationToken) -> None: ...
+
+
+class OnCommandOutcome(StrEnum):
+    """In-memory result state for one possible-flow command attempt."""
+
+    IN_FLIGHT = "in_flight"
+    RETURNED = "returned"
+    RAISED = "raised"
+    CANCELLED = "cancelled"
+
+
+@dataclass(slots=True)
+class InFlightOnCommand:
+    """Exact integration-owned ON attempt that may have reached hardware."""
+
+    safety_record_id: str
+    zone_history_id: str
+    session_id: str
+    command_attempt_id: str
+    authorization: FinalOnAuthorizationToken
+    context_id: str
+    dispatched_at_utc: datetime
+    outcome: OnCommandOutcome = OnCommandOutcome.IN_FLIGHT
+    completed_at_utc: datetime | None = None
+    error: str | None = None
+    observed_on_at_utc: datetime | None = None
+    post_call_failed_predicates: tuple[str, ...] = ()
 
 
 def classify_moisture(
@@ -407,6 +462,7 @@ class ZoneController:
         slots: SlotManager,
         run_id: str,
         local_tz: tzinfo,
+        authorization: OnAuthorizationProvider,
         emit: Callable[[str, dict], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         safety_record_id: str | None = None,
@@ -431,6 +487,7 @@ class ZoneController:
         self._slots = slots
         self._run_id = run_id
         self._tz = local_tz
+        self._authorization = authorization
         self._emit = emit if emit is not None else (lambda kind, payload: None)
         self._clock = clock if clock is not None else dt_util.utcnow
 
@@ -472,11 +529,19 @@ class ZoneController:
         self._on_requested = False
         self._off_requested = False
         self._off_operation: asyncio.Future[bool] | None = None
+        self._off_task: asyncio.Task[None] | None = None
+        self._off_error: Exception | None = None
         self._off_proven = asyncio.Event()
         self._off_proven_at: datetime | None = None
         self._slot_task: asyncio.Task | None = None
         self._pending_manual: float | None = None
         self._persist_failed = False
+        self._quiescing = False
+        self._detaching = False
+        self._inflight_on: InFlightOnCommand | None = None
+        self._on_dispatch_completed = asyncio.Event()
+        self._on_dispatch_completed.set()
+        self._last_on_authorization: FinalOnAuthorizationResult | None = None
         self._listeners: list[Callable[[], None]] = []
         # Last transitions for diagnostics (§33.2); merged/capped at 50
         # across zones by diagnostics.
@@ -515,10 +580,12 @@ class ZoneController:
 
     async def async_detach(self) -> None:
         """Tear down listeners/timers/tasks; no state decisions here."""
-        self._adapter.async_stop()
-        for unsubscribe in self._unsubscribers:
-            unsubscribe()
-        self._unsubscribers = []
+        # Revoke every future command synchronously, but retain actuator
+        # observation until an in-flight command/session task has completed
+        # its shared OFF compensation.
+        self._detaching = True
+        self._quiescing = True
+        self.runtime_eligible = False
         self._cancel_all_timers()
         if self._slot_task is not None:
             self._slot_task.cancel()
@@ -533,6 +600,23 @@ class ZoneController:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._session_task = None
+        off_task = self._off_task
+        if off_task is not None and not off_task.done():
+            off_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await off_task
+        self._adapter.async_stop()
+        for unsubscribe in self._unsubscribers:
+            unsubscribe()
+        self._unsubscribers = []
+
+    def begin_quiescing(self) -> None:
+        """Synchronously revoke commands/timers for changed/deleted config."""
+        self._quiescing = True
+        self.runtime_eligible = False
+        self._pending_manual = None
+        self._cancel_all_timers()
+        self._wake.set()
 
     def update_runtime_ownership(
         self,
@@ -549,7 +633,8 @@ class ZoneController:
         self.zone_history_id = zone_history_id
         self.runtime_lifecycle = lifecycle
         self.applied_config = applied_config
-        self.runtime_eligible = lifecycle is RuntimeLifecycle.ACTIVE
+        self._quiescing = lifecycle is not RuntimeLifecycle.ACTIVE
+        self.runtime_eligible = lifecycle is RuntimeLifecycle.ACTIVE and not self._detaching
 
     # -- public inputs ---------------------------------------------------------
 
@@ -655,6 +740,176 @@ class ZoneController:
         return self._config.name
 
     @property
+    def command_authorization_open(self) -> bool:
+        """Controller-local lifecycle half of the authoritative ON gate."""
+        return (
+            self.runtime_eligible
+            and self.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+            and not self._quiescing
+            and not self._detaching
+            and not self._persist_failed
+        )
+
+    @property
+    def inflight_on(self) -> InFlightOnCommand | None:
+        """Current exact possible-flow command marker, if any."""
+        return self._inflight_on
+
+    @property
+    def last_on_authorization(self) -> FinalOnAuthorizationResult | None:
+        """Most recent mechanically testable final-gate/recheck result."""
+        return self._last_on_authorization
+
+    @property
+    def off_operation(self) -> asyncio.Future[bool] | None:
+        """The one shared idempotent OFF operation/future for this exit."""
+        return self._off_operation
+
+    @property
+    def session_owner_task(self) -> asyncio.Task | None:
+        """Controller-owned session task used by lifecycle convergence."""
+        return self._session_task
+
+    async def async_wait_on_dispatch_completed(self, timeout_s: float) -> bool:
+        """Wait only until the current ON service invocation has returned.
+
+        An OFF-unconfirmed session deliberately remains open, so lifecycle
+        reconciliation must not wait for the whole session-owner task before
+        it can persist DELETE_PENDING.  The event is set synchronously after
+        the immediate post-call recheck/terminal commit and immediately
+        before the first compensating-OFF await.
+        """
+        marker = self._inflight_on
+        if marker is None or marker.outcome is not OnCommandOutcome.IN_FLIGHT:
+            return True
+        if timeout_s <= 0:
+            return False
+        try:
+            await asyncio.wait_for(self._on_dispatch_completed.wait(), timeout_s)
+        except TimeoutError:
+            return False
+        return True
+
+    async def async_ensure_off(self) -> bool:
+        """Public lifecycle entry point into the shared idempotent OFF path."""
+        return await self._ensure_off_operation()
+
+    def begin_off_operation(self) -> asyncio.Future[bool]:
+        """Synchronously begin/join the shared OFF operation."""
+        operation = self._off_operation
+        if operation is not None:
+            if not operation.done():
+                return operation
+            # Exhausting the three-attempt sequence is a completed shared
+            # operation, not permission for a lifecycle/compensation caller
+            # to start a second sequence.  A later exact OFF observation
+            # closes the open accounting path.  TurnOn explicitly clears the
+            # operation before a genuinely new pulse.
+            if not operation.result():
+                return operation
+            if operation.result() and self._assessment.proven_off:
+                return operation
+        loop = asyncio.get_running_loop()
+        operation = loop.create_future()
+        self._off_operation = operation
+        self._off_error = None
+        self._off_task = self._hass.async_create_background_task(
+            self._complete_off_operation(operation),
+            name=f"moisture_loop.off.{self.zone_id}",
+        )
+        return operation
+
+    async def async_abort_off_as_unconfirmed(self) -> None:
+        """End a budget-exhausted shared operation with durable hazard state."""
+        task = self._off_task
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    def refresh_actuator_for_final_gate(self) -> ActuatorAssessment:
+        """Synchronously re-read the live HA state for the last OFF proof."""
+        self._assessment = self._actuator.current()
+        return self._assessment
+
+    def final_on_guard_failures(
+        self,
+        session_id: str,
+        *,
+        authoritative_daily_runtime_s: float,
+        pre_dispatch: bool,
+    ) -> tuple[str, ...]:
+        """Re-run all controller/session/freshness/budget guards live."""
+        failed: list[str] = []
+        session = self._session
+        now = self._clock()
+        if self._state is not ControllerState.WATERING:
+            failed.append("state_not_watering")
+        if session is None or session.session_id != session_id:
+            failed.append("session_mismatch")
+            return tuple(failed)
+        if not self._enabled:
+            failed.append("disabled")
+        if session.owner_run_id != self._run_id:
+            failed.append("run_owner_mismatch")
+        if session.config_fingerprint != self._fingerprint:
+            failed.append("session_config_mismatch")
+        if session.pulse_intent_at_utc is None:
+            failed.append("missing_hazard_intent")
+        if session.pending_termination_reason is not None:
+            failed.append("terminal_request_committed")
+        if self._off_requested:
+            failed.append("off_requested")
+        if self._off_operation is not None and not self._off_operation.done():
+            failed.append("off_operation_active")
+        if pre_dispatch and self._inflight_on is not None:
+            failed.append("another_on_attempt_in_flight")
+        if self._active_fault is not None and not (
+            session.mode is SessionMode.MANUAL and self._active_fault.allows_manual
+        ):
+            failed.append("blocking_fault")
+
+        if session.mode is SessionMode.AUTO:
+            if (
+                self._observation.classification is not MoistureClassification.VALID
+                or not self._observation.is_fresh(now, self._config.sensor_max_age_s)
+                or session.sensor_fresh_until_utc is None
+                or session.sensor_fresh_until_utc <= now
+            ):
+                failed.append("auto_sensor_not_fresh")
+            if session.cycle < 1 or session.cycle > self._config.max_cycles:
+                failed.append("cycle_limit")
+            if (
+                session.session_runtime_s + self._config.pulse_duration_s
+                > self._config.max_session_runtime_s
+            ):
+                failed.append("session_budget")
+            if (
+                authoritative_daily_runtime_s + self._config.pulse_duration_s
+                > self._config.max_daily_runtime_s
+            ):
+                failed.append("daily_budget")
+            if (
+                session.cycle == 1
+                and session.session_runtime_s == 0
+                and self._last_session_end is not None
+                and (now - self._last_session_end).total_seconds()
+                < self._config.min_session_interval_s
+            ):
+                failed.append("minimum_interval")
+        else:
+            effective = session.manual_effective_duration_s
+            if effective is None or effective <= 0:
+                failed.append("manual_duration")
+            elif (
+                effective > self._config.manual_max_duration_s
+                or effective > self._config.max_session_runtime_s
+                or authoritative_daily_runtime_s + effective > self._config.max_daily_runtime_s
+            ):
+                failed.append("manual_budget")
+        return tuple(failed)
+
+    @property
     def may_be_flowing(self) -> bool:
         """Whether this configured actuator may be flowing (§28.2).
 
@@ -713,8 +968,25 @@ class ZoneController:
             self._off_proven.set()
         else:
             self._off_proven.clear()
+        marker = self._inflight_on
+        own_inflight_on = bool(
+            marker is not None
+            and terminal_on
+            and new_state is not None
+            and new_state.context.id == marker.context_id
+        )
+        if own_inflight_on and marker is not None:
+            # The listener may run while the blocking service coroutine is
+            # suspended.  Record acknowledgement in memory only; normal
+            # pulse continuation waits for the post-call authority recheck.
+            marker.observed_on_at_utc = now
         self._hass.async_create_task(
-            self._async_actuator_change(previous, assessment, terminal_on, now)
+            self._async_actuator_change(
+                previous,
+                assessment,
+                terminal_on,
+                now,
+            )
         )
 
     async def _async_actuator_change(
@@ -733,6 +1005,12 @@ class ZoneController:
                 return
             off_op_active = self._off_operation is not None and not self._off_operation.done()
             if assessment.observed_on:
+                if self._inflight_on is not None:
+                    # An integration ON attempt is already a possible-flow
+                    # owner.  A matching-context terminal state is captured
+                    # above; no acknowledgement/continuation occurs until
+                    # the service result passes its immediate live recheck.
+                    return
                 if state is ControllerState.WATERING and session is not None:
                     # Our own ON acknowledgement requires the terminal
                     # ON/open state; transitional states never confirm
@@ -757,6 +1035,11 @@ class ZoneController:
                 )
                 if off_op_active:
                     return  # the OFF operation consumes this proof
+                if self._inflight_on is not None:
+                    # OFF observed before an in-flight ON returns cannot
+                    # close/release the session: the command may still reach
+                    # hardware afterwards.  Post-call compensation owns it.
+                    return
                 await self._decide_and_apply_locked(ExternalActuatorOff(observed_at))
 
     # -- decide/apply core -------------------------------------------------------
@@ -864,11 +1147,18 @@ class ZoneController:
 
     async def _apply_action_locked(self, action: object, decision: Decision) -> None:
         if isinstance(action, PersistState):
-            await self._persist_locked()
+            await self._persist_locked(action.tag)
         elif isinstance(action, TurnOn):
             self._on_requested = True
             # A new pulse gets a fresh idempotent OFF operation (§11.3).
             self._off_operation = None
+            self._off_task = None
+            self._off_error = None
+            # OFF evidence belongs to one exact pulse.  The actuator state
+            # callback for this ON may be queued behind the service result, so
+            # invalidate the previous pulse's proof synchronously here.
+            self._off_proven.clear()
+            self._off_proven_at = None
         elif isinstance(action, ExecuteOff):
             self._off_requested = True
         elif isinstance(action, ArmTimer):
@@ -981,6 +1271,7 @@ class ZoneController:
     # -- persistence -------------------------------------------------------------
 
     def build_record(self) -> ZoneRecord:
+        """Return the remaining Stage-7 compatibility projection."""
         return ZoneRecord(
             state=self._state,
             enabled=self._enabled,
@@ -993,15 +1284,50 @@ class ZoneController:
             session=self._session,
         )
 
-    async def _persist_locked(self) -> None:
-        record = self.build_record()
-        await self._store.async_update_record_runtime(self.safety_record_id, lambda _old: record)
+    async def async_persist_current_state(self, reason: str) -> None:
+        """Persist current controller state through canonical schema-2 IDs."""
+        async with self._lock:
+            await self._persist_locked(reason)
+
+    async def _persist_locked(self, _reason: str) -> None:
+        await self._store.async_update_controller_runtime(
+            self.safety_record_id,
+            self.zone_history_id,
+            state=self._state,
+            enabled=self._enabled,
+            active_fault=self._active_fault,
+            secondary_fault=self._secondary_fault,
+            last_session_end_utc=self._last_session_end,
+            last_auto_session_start_utc=self._last_auto_session_start,
+            daily=self._current_daily(),
+            last_session_summary=self._last_summary,
+            session=self._session,
+            possible_flow_owner=self._possible_flow_owner_for_persist(),
+        )
+
+    def _possible_flow_owner_for_persist(self) -> PossibleFlowOwner | None:
+        record = self._store.data.safety_records[self.safety_record_id]
+        blockers = set(record.blocker_reasons)
+        session = self._session
+        if (
+            session is not None
+            and session.pulse_intent_at_utc is not None
+            and session.off_confirmed_at_utc is None
+        ) or BlockerReason.INTEGRATION_OFF_UNCONFIRMED in blockers:
+            return PossibleFlowOwner.INTEGRATION
+        if self._external_on or BlockerReason.EXTERNAL_FLOW in blockers:
+            return PossibleFlowOwner.EXTERNAL
+        return None
 
     async def _handle_persist_failure_locked(self, err: Exception) -> None:
         """§23.4: a failed safety write must never authorize watering."""
         _LOGGER.error("Zone %s: safety write failed; blocking operation: %s", self.zone_id, err)
         self._persist_failed = True
         self._on_requested = False
+        if self._session is not None and self._session.pending_termination_reason is None:
+            self._session = self._session.evolve(
+                pending_termination_reason=CompletionReason.ACTUATOR_FAULT,
+            )
         self._active_fault = FaultCode.RESTORED_FROM_UNSAFE_STATE
         self._state = ControllerState.FAULT
         self._emit(
@@ -1194,13 +1520,31 @@ class ZoneController:
             await self._wake.wait()
 
     async def _perform_on(self) -> None:
-        """§11.2 ON sequence steps 3-4 with the §18.5 pre-ON recheck."""
-        async with self._lock:
+        """Execute the complete §11.2 command envelope for one pulse.
+
+        The hazardous intent was already verified-persisted by T1/T25/T40.
+        The final gate therefore occurs after every preparatory await.  Once
+        it succeeds, the marker, lock release, and direct service coroutine
+        call contain no suspension before Home Assistant begins dispatch.
+        """
+        lock_held = False
+        token: FinalOnAuthorizationToken | None = None
+        marker: InFlightOnCommand | None = None
+        call_error: BaseException | None = None
+        post_call: FinalOnAuthorizationResult | None = None
+
+        await self._lock.acquire()
+        lock_held = True
+        try:
             session = self._session
             if session is None or self._state is not ControllerState.WATERING:
                 return
             if session.pending_termination_reason is not None:
                 return
+
+            # This is an ordinary state-machine guard, not the final
+            # configuration authority.  It catches an expired AUTO report
+            # with its existing transition semantics before gate evaluation.
             now = self._clock()
             if (
                 session.mode is SessionMode.AUTO
@@ -1208,53 +1552,342 @@ class ZoneController:
                 and session.sensor_fresh_until_utc <= now
                 and self._armed_watchdog is not None
             ):
-                # Freshness expired during persistence: never issue ON;
-                # terminate through the stale/OFF-assurance path (§18.1).
                 await self._decide_and_apply_locked(WatchdogFired(self._armed_watchdog))
                 return
+
+            attempt_id = str(uuid.uuid4())
+            authorization = self._authorization.authorize_on(self, session.session_id, attempt_id)
+            self._last_on_authorization = authorization
+            if not authorization.authorized:
+                # The intent is already durable, so a failed final gate closes
+                # this zero-flow session conservatively.  CONFIG_CHANGED is
+                # accepted only if an earlier terminal request does not own it.
+                if authorization.requires_quiescing:
+                    self.begin_quiescing()
+                await self._decide_and_apply_locked(self._final_gate_refusal_event(authorization))
+                return
+
+            token = authorization.token
+            assert token is not None
             context = Context()
-        try:
-            await self._actuator.async_turn_on(context)
-        except Exception as err:
-            _LOGGER.error("Zone %s: ON command failed: %s", self.zone_id, err)
-            await self.async_dispatch(OnConfirmTimeout())
+            marker = InFlightOnCommand(
+                safety_record_id=self.safety_record_id,
+                zone_history_id=self.zone_history_id,
+                session_id=session.session_id,
+                command_attempt_id=attempt_id,
+                authorization=token,
+                context_id=context.id,
+                dispatched_at_utc=self._clock(),
+            )
+            self._on_dispatch_completed.clear()
+            self._inflight_on = marker
+
+            # CRITICAL NO-SUSPENSION BOUNDARY.  From the successful gate
+            # through marker publication, synchronous lock release, and this
+            # direct await expression there is no await/task scheduling.  An
+            # async function starts executing immediately and Home Assistant's
+            # ServiceRegistry.async_call initiates dispatch before its first
+            # suspension.  The controller lock must be released synchronously
+            # so Stop/deletion can commit while a slow service handler runs.
+            lock_held = False
+            self._lock.release()
+            try:
+                await self._actuator.async_turn_on(context)
+            except asyncio.CancelledError as err:
+                call_error = err
+                marker.outcome = OnCommandOutcome.CANCELLED
+                marker.error = type(err).__name__
+            except Exception as err:  # the command may still have reached hardware
+                call_error = err
+                marker.outcome = OnCommandOutcome.RAISED
+                marker.error = f"{type(err).__name__}: {err}"
+                _LOGGER.error("Zone %s: ON command failed: %s", self.zone_id, err)
+            else:
+                marker.outcome = OnCommandOutcome.RETURNED
+
+            # Immediate, synchronous post-call evidence and live authority
+            # recheck.  No non-OFF await is allowed before these statements.
+            marker.completed_at_utc = self._clock()
+            self._record_possible_command_in_memory(marker)
+            post_call = self._authorization.recheck_on_authorization(self, token)
+            self._last_on_authorization = post_call
+            marker.post_call_failed_predicates = post_call.failed_predicates
+            if post_call.requires_quiescing:
+                self.begin_quiescing()
+
+            if call_error is not None or not post_call.authorized:
+                self._commit_on_compensation_now(
+                    configuration_changed=not post_call.configuration_authority_valid,
+                    service_failed=call_error is not None,
+                )
+                self._off_requested = False
+                self._on_dispatch_completed.set()
+                # Physical OFF is deliberately the first await after the
+                # mismatch/error is classified; durable intent already covers
+                # the command-persistence crash window.
+                await self._ensure_off_operation()
+                return
+
+            # Re-enter serialization for normal commanded-anchor persistence.
+            # Authority can change while this acquire waits, so it is checked
+            # again before the Store write.
+            self._on_dispatch_completed.set()
+            await self._lock.acquire()
+            lock_held = True
+            post_call = self._authorization.recheck_on_authorization(self, token)
+            self._last_on_authorization = post_call
+            marker.post_call_failed_predicates = post_call.failed_predicates
+            if not post_call.authorized:
+                if post_call.requires_quiescing:
+                    self.begin_quiescing()
+                self._commit_on_compensation_now(
+                    configuration_changed=not post_call.configuration_authority_valid,
+                )
+                self._off_requested = False
+                lock_held = False
+                self._lock.release()
+                await self._ensure_off_operation()
+                return
+
+            try:
+                await self._persist_locked("on_commanded")
+            except StoreWriteVerificationError as err:
+                await self._handle_persist_failure_locked(err)
+                self._commit_on_compensation_now(
+                    configuration_changed=False,
+                    service_failed=True,
+                )
+                self._off_requested = False
+                lock_held = False
+                self._lock.release()
+                await self._ensure_off_operation()
+                return
+
+            # A current-config notification is synchronous and closes command
+            # authority even while the verified Store write is suspended.
+            post_call = self._authorization.recheck_on_authorization(self, token)
+            self._last_on_authorization = post_call
+            marker.post_call_failed_predicates = post_call.failed_predicates
+            if not post_call.authorized:
+                if post_call.requires_quiescing:
+                    self.begin_quiescing()
+                self._commit_on_compensation_now(
+                    configuration_changed=not post_call.configuration_authority_valid,
+                )
+                self._off_requested = False
+                lock_held = False
+                self._lock.release()
+                await self._ensure_off_operation()
+                return
+
+            confirmed_at = marker.observed_on_at_utc
+
+            if confirmed_at is not None:
+                await self._decide_and_apply_locked(OnConfirmed(confirmed_at))
+                post_call = self._authorization.recheck_on_authorization(self, token)
+                self._last_on_authorization = post_call
+                marker.post_call_failed_predicates = post_call.failed_predicates
+                if not post_call.authorized:
+                    if post_call.requires_quiescing:
+                        self.begin_quiescing()
+                    self._commit_on_compensation_now(
+                        configuration_changed=not post_call.configuration_authority_valid,
+                    )
+                    self._off_requested = False
+                    lock_held = False
+                    self._lock.release()
+                    await self._ensure_off_operation()
+                    return
+            self._authorization.finish_on_authorization(token)
+            token = None
+            self._inflight_on = None
+        except asyncio.CancelledError as err:
+            # Cancellation at any point after marker publication is another
+            # uncertain possible-flow outcome.  Revoke continuation and join
+            # the exact same OFF operation before propagating cancellation.
+            call_error = err
+            if marker is not None and token is not None:
+                marker.outcome = OnCommandOutcome.CANCELLED
+                marker.completed_at_utc = marker.completed_at_utc or self._clock()
+                marker.error = type(err).__name__
+                self._record_possible_command_in_memory(marker)
+                post_call = self._authorization.recheck_on_authorization(self, token)
+                self._last_on_authorization = post_call
+                marker.post_call_failed_predicates = post_call.failed_predicates
+                if post_call.requires_quiescing:
+                    self.begin_quiescing()
+                self._commit_on_compensation_now(
+                    configuration_changed=not post_call.configuration_authority_valid,
+                    service_failed=True,
+                )
+                self._off_requested = False
+                self._on_dispatch_completed.set()
+                if lock_held:
+                    lock_held = False
+                    self._lock.release()
+                await asyncio.shield(self._ensure_off_operation())
+        finally:
+            if lock_held:
+                self._lock.release()
+            if token is not None:
+                self._authorization.finish_on_authorization(token)
+            if marker is not None and self._inflight_on is marker:
+                self._inflight_on = None
+            self._on_dispatch_completed.set()
+            if isinstance(call_error, asyncio.CancelledError):
+                raise call_error
+
+    def _record_possible_command_in_memory(self, marker: InFlightOnCommand) -> None:
+        """Anchor possible command flow before any post-call await."""
+        session = self._session
+        if session is None or session.session_id != marker.session_id:
             return
-        async with self._lock:
-            if self._session is not None:
-                # §11.2 step 4: persist commanded immediately after the call.
-                self._session = self._session.evolve(pulse_commanded_at_utc=self._clock())
-                try:
-                    await self._persist_locked()
-                except StoreWriteVerificationError as err:
-                    await self._handle_persist_failure_locked(err)
+        if session.pulse_commanded_at_utc is None:
+            self._session = session.evolve(
+                pulse_commanded_at_utc=marker.dispatched_at_utc,
+            )
+
+    def _final_gate_refusal_event(self, authorization: FinalOnAuthorizationResult) -> object:
+        """Preserve existing state-machine semantics for a zero-flow refusal."""
+        if not authorization.configuration_authority_valid:
+            return ConfigChangedPrepare()
+        if "actuator_available_and_proven_off" in authorization.failed_predicates:
+            if not self._assessment.available:
+                return ActuatorBecameUnavailable()
+            return OnConfirmTimeout()
+        session = self._session
+        if (
+            "ordinary_runtime_guards" in authorization.failed_predicates
+            and session is not None
+            and session.mode is SessionMode.AUTO
+        ):
+            if self._observation.classification is not MoistureClassification.VALID:
+                return MoistureReport(self._observation)
+            if (
+                self._armed_watchdog is not None
+                and session.sensor_fresh_until_utc is not None
+                and session.sensor_fresh_until_utc <= self._clock()
+            ):
+                return WatchdogFired(self._armed_watchdog)
+        # Slot/blocker authority can disappear after intent persistence even
+        # though configuration itself is intact.  There is no new T-row for
+        # that resource-revocation race; the existing configuration-authority
+        # cancellation closes the zero-flow session without inventing a state.
+        return ConfigChangedPrepare()
+
+    def _commit_on_compensation_now(
+        self,
+        *,
+        configuration_changed: bool,
+        service_failed: bool = False,
+    ) -> None:
+        """Commit first-terminal state synchronously, before starting OFF.
+
+        Only the synchronous portion of the existing pure transition result is
+        applied here.  Its PersistState action is intentionally deferred until
+        the shared OFF operation has begun; its ExecuteOff action converges on
+        that same operation.  No alternative OFF implementation exists.
+        """
+        session = self._session
+        if session is None:
+            return
+        if not session.runtime_estimated:
+            self._session = session.evolve(
+                runtime_estimated=True,
+                runtime_estimation_reason=RuntimeEstimationReason.OFF_UNCONFIRMED,
+            )
+        if configuration_changed:
+            event: object = ConfigChangedPrepare()
+        elif service_failed:
+            event = OnConfirmTimeout()
+        elif session.mode is SessionMode.AUTO and self._armed_watchdog is not None:
+            now = self._clock()
+            if session.sensor_fresh_until_utc is not None and session.sensor_fresh_until_utc <= now:
+                event = WatchdogFired(self._armed_watchdog)
+            elif self._observation.classification is not MoistureClassification.VALID:
+                event = MoistureReport(self._observation)
+            else:
+                event = OnConfirmTimeout()
+        else:
+            event = OnConfirmTimeout()
+        inp = self._build_input(event)
+        decision = decide(inp)
+        if decision.no_op:
+            return
+
+        previous_state = self._state
+        if decision.session is not None:
+            self._session = decision.session
+        if decision.new_state is not None:
+            self._state = decision.new_state
+        if decision.fault is not None:
+            self._active_fault = decision.fault
+        if decision.secondary_fault is not None:
+            self._secondary_fault = decision.secondary_fault
+
+        if previous_state is ControllerState.WATERING and self._state is not (
+            ControllerState.WATERING
+        ):
+            self._cancel_timers(
+                TimerKind.PULSE_END,
+                TimerKind.MANUAL_END,
+                TimerKind.ON_CONFIRM_TIMEOUT,
+            )
+            self._cancel_watchdog()
+        for action in decision.actions:
+            if isinstance(action, PersistState):
+                continue
+            elif isinstance(action, EmitFaultSet):
+                self._emit(
+                    "fault_set",
+                    {
+                        "zone_id": self.zone_id,
+                        "fault": action.fault.value,
+                        "replaces": action.replaces.value if action.replaces else None,
+                    },
+                )
+            elif not isinstance(action, ExecuteOff):
+                raise RuntimeError(f"unsafe compensation action {type(action).__name__}")
+        self._record_and_log(decision, inp)
+        self._wake.set()
+        self._notify_listeners()
 
     async def _ensure_off_operation(self) -> bool:
         """Enter/join the one idempotent OFF operation (§11.3)."""
-        operation = self._off_operation
-        if operation is not None:
-            if not operation.done():
-                return await asyncio.shield(operation)
-            if operation.result() and self._assessment.proven_off:
-                return True  # already proven OFF for this exit
-            # A previous operation ended unconfirmed, or it belonged to an
-            # earlier exit and the actuator is flowing again (external ON
-            # during SOAKING): a fresh defensive operation is required
-            # (§11.3, §11.4).
-        loop = asyncio.get_running_loop()
-        operation = loop.create_future()
-        self._off_operation = operation
+        operation = self.begin_off_operation()
+        result = await asyncio.shield(operation)
+        if self._off_error is not None:
+            raise self._off_error
+        return result
+
+    async def _complete_off_operation(self, operation: asyncio.Future[bool]) -> None:
+        """Own one uncancellable physical-OFF and state-closure sequence."""
         try:
             confirmed_at = await self._run_off_attempts()
-        except Exception:
-            operation.set_result(False)
+            if confirmed_at is not None:
+                await self.async_dispatch(OffConfirmed(confirmed_at))
+                if not operation.done():
+                    operation.set_result(True)
+                return
+            await self.async_dispatch(OffNotConfirmed())
+            if not operation.done():
+                operation.set_result(False)
+        except asyncio.CancelledError:
+            # The operation is integration safety ownership and is not
+            # cancelled with an ordinary waiter.  Explicit process teardown
+            # records unconfirmed OFF/blocker evidence before listeners are
+            # removed.
+            with contextlib.suppress(Exception):
+                await self.async_dispatch(OffNotConfirmed())
+            if not operation.done():
+                operation.set_result(False)
             raise
-        if confirmed_at is not None:
-            operation.set_result(True)
-            await self.async_dispatch(OffConfirmed(confirmed_at))
-            return True
-        operation.set_result(False)
-        await self.async_dispatch(OffNotConfirmed())
-        return False
+        except Exception as err:
+            self._off_error = err
+            with contextlib.suppress(Exception):
+                await self.async_dispatch(OffNotConfirmed())
+            if not operation.done():
+                operation.set_result(False)
 
     async def _run_off_attempts(self) -> datetime | None:
         for _attempt in range(OFF_TOTAL_ATTEMPTS):
@@ -1265,6 +1898,10 @@ class ZoneController:
                 await self._actuator.async_turn_off(context)
             except Exception as err:
                 _LOGGER.warning("Zone %s: OFF command failed: %s", self.zone_id, err)
+            # The ON service may have changed hardware immediately before
+            # compensation while its state callback is still queued.  Never
+            # accept the cached pre-dispatch OFF assessment as proof.
+            self._assessment = self._actuator.current()
             if self._assessment.proven_off or await self._wait_off_proof():
                 return self._off_proven_at or self._clock()
         return None

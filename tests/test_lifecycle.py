@@ -93,12 +93,12 @@ class ScriptedSwitch:
 
         async def turn_on(call) -> None:
             self.on_calls += 1
-            hass.states.async_set(SWITCH, "on")
+            hass.states.async_set(SWITCH, "on", context=call.context)
 
         async def turn_off(call) -> None:
             self.off_calls += 1
             if self.off_behavior == "ack":
-                hass.states.async_set(SWITCH, "off")
+                hass.states.async_set(SWITCH, "off", context=call.context)
 
         hass.services.async_register("switch", "turn_on", turn_on)
         hass.services.async_register("switch", "turn_off", turn_off)
@@ -365,6 +365,38 @@ class TestFirstInstallAndIdentity:
 
 
 class TestPersistedWateringRecovery:
+    async def test_stage4_intent_only_crash_before_or_after_dispatch_never_resumes(
+        self, env
+    ) -> None:
+        """ND12 W/X: durable intent covers both indistinguishable crashes."""
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        intent = NOW - timedelta(minutes=20)
+        record = watering_record(intent)
+        assert record.session is not None
+        record = record.evolve(
+            session=record.session.evolve(
+                pulse_commanded_at_utc=None,
+                pulse_confirmed_at_utc=None,
+            )
+        )
+        seed_store(env.storage, entry, store_snapshot({zone_id: record}))
+
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        summary = controller.last_summary
+        assert env.switch.on_calls == 0
+        assert controller.session is None
+        assert summary is not None
+        assert summary.reason is CompletionReason.RESTART_RECOVERY
+        assert summary.runtime_estimated
+        assert (
+            summary.runtime_estimation_reason
+            is RuntimeEstimationReason.RESTART_FOUND_OFF_UNKNOWN_STOP
+        )
+        assert summary.runtime_s == pytest.approx(1200.0)
+        await runtime.async_unload()
+
     async def test_pi12_found_on_defensive_off_and_estimate(self, env) -> None:
         entry = make_entry(env.hass, initialized=True)
         zone_id = zone_subentry_id(entry)

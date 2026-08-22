@@ -85,6 +85,41 @@ class RuntimeControllerBinding:
     quiescing: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class FinalOnAuthorizationToken:
+    """Single-use Stage-4 authorization bound to one command attempt.
+
+    The controller consumes this token immediately.  It is retained only so
+    the same exact configuration authority can be checked again when the
+    asynchronous Home Assistant service call returns or raises; it is never
+    authorization for a later pulse.
+    """
+
+    subentry_id: str
+    safety_record_id: str
+    zone_history_id: str
+    session_id: str
+    command_attempt_id: str
+    applied_generation: int
+    zone_config_fingerprint: str
+    entry_snapshot_fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class FinalOnAuthorizationResult:
+    """Mechanically testable result of the authoritative Stage-4 gate."""
+
+    token: FinalOnAuthorizationToken | None
+    failed_predicates: tuple[str, ...] = ()
+    configuration_authority_valid: bool = False
+    requires_quiescing: bool = False
+
+    @property
+    def authorized(self) -> bool:
+        """Whether every final-ON predicate passed."""
+        return self.token is not None and not self.failed_predicates
+
+
 def normalized_zone_fingerprint(
     subentry_id: str,
     config: ZoneConfig,
@@ -162,6 +197,11 @@ class ConfigurationReconciliationCoordinator:
         self.failed = False
         self.superseded_count = 0
         self.last_error: str | None = None
+
+    @property
+    def stopping(self) -> bool:
+        """Whether unload/reload/shutdown has revoked publication authority."""
+        return self._stopping or not self._publication_allowed
 
     def observe_current(self) -> int:
         """Synchronously record one public mapping notification.

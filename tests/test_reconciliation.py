@@ -232,11 +232,11 @@ async def runtime_env(hass, hass_storage, freezer):
     hass.states.async_set(actuator, "off")
     hass.states.async_set(SENSOR, "35")
 
-    async def turn_on(_call) -> None:
-        hass.states.async_set(actuator, "on")
+    async def turn_on(call) -> None:
+        hass.states.async_set(actuator, "on", context=call.context)
 
-    async def turn_off(_call) -> None:
-        hass.states.async_set(actuator, "off")
+    async def turn_off(call) -> None:
+        hass.states.async_set(actuator, "off", context=call.context)
 
     hass.services.async_register("switch", "turn_on", turn_on)
     hass.services.async_register("switch", "turn_off", turn_off)

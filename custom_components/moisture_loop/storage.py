@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -40,11 +40,14 @@ from .models import (
     RuntimeLifecycle,
     SafetyRecord,
     Schema1StoreData,
+    SessionContext,
+    SessionSummary,
     StoreData,
     StoreDataError,
     ZoneDailyRuntime,
     ZoneHistory,
     ZoneRecord,
+    ZoneRuntime,
     merge_zone_history_continuity,
     migrate_schema1_to_schema2,
     schema1_store_data_from_dict,
@@ -304,6 +307,79 @@ class SafetyStore:
                     f"unknown canonical safety_record_id {safety_record_id}"
                 )
             return await self._update_record_runtime_locked(match, mutator)
+
+    async def async_update_controller_runtime(
+        self,
+        safety_record_id: str,
+        zone_history_id: str,
+        *,
+        state: ControllerState,
+        enabled: bool,
+        active_fault: FaultCode | None,
+        secondary_fault: FaultCode | None,
+        last_session_end_utc: datetime | None,
+        last_auto_session_start_utc: datetime | None,
+        daily: DailyRuntime | None,
+        last_session_summary: SessionSummary | None,
+        session: SessionContext | None,
+        possible_flow_owner: PossibleFlowOwner | None,
+    ) -> StoreData:
+        """Write controller/session/accounting state through schema-2 owners.
+
+        This is the Stage-4 live-command persistence API.  Both stable IDs
+        are explicit: logical operational state/session/accounting mutate the
+        exact ``zone_history_id`` while actuator possible-flow/fault evidence
+        mutates only ``safety_record_id``.  No ``ZoneRecord`` projection is
+        created or consumed on this path.
+        """
+        async with self._lock:
+            record = self.data.safety_records.get(safety_record_id)
+            history = self.data.zone_histories.get(zone_history_id)
+            if record is None:
+                raise StoreWriteVerificationError(
+                    f"unknown canonical safety_record_id {safety_record_id}"
+                )
+            if history is None or record.zone_history_id != zone_history_id:
+                raise StoreWriteVerificationError(
+                    "controller safety-record/zone-history ownership mismatch"
+                )
+
+            actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
+                active_fault, secondary_fault
+            )
+            zone_runtime = ZoneRuntime(
+                enabled=enabled,
+                state=state,
+                zone_fault=zone_fault,
+                secondary_fault=secondary_zone_fault,
+                sensor_identity=history.zone_runtime.sensor_identity,
+                last_session_summary=last_session_summary,
+                session=(
+                    PersistedSession(safety_record_id, session) if session is not None else None
+                ),
+            )
+            histories = dict(self.data.zone_histories)
+            histories[zone_history_id] = history.evolve(
+                last_session_end_utc=last_session_end_utc,
+                last_auto_session_start_utc=last_auto_session_start_utc,
+                zone_runtime=zone_runtime,
+                daily=_project_daily_runtime(history.daily, daily, safety_record_id),
+            )
+            records = dict(self.data.safety_records)
+            records[safety_record_id] = record.evolve(
+                possible_flow_owner=possible_flow_owner,
+                actuator_fault=actuator_fault,
+                acknowledgement_required=(
+                    actuator_fault.requires_user_ack if actuator_fault is not None else False
+                ),
+            )
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
+                zone_histories=histories,
+                safety_records=records,
+            )
+            await self._save_and_verify_locked(new_data)
+            return new_data
 
     async def _update_record_runtime_locked(
         self,

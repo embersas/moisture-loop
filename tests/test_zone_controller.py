@@ -22,6 +22,7 @@ from custom_components.moisture_loop.models import (
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
     BlockerReason,
+    CompletionReason,
     ControllerState,
     FaultCode,
     IdentityStatus,
@@ -35,6 +36,10 @@ from custom_components.moisture_loop.models import (
     ZoneDailyRuntime,
     ZoneHistory,
     ZoneRuntime,
+)
+from custom_components.moisture_loop.reconciliation import (
+    FinalOnAuthorizationResult,
+    FinalOnAuthorizationToken,
 )
 from custom_components.moisture_loop.slot_manager import SlotManager
 from custom_components.moisture_loop.storage import (
@@ -122,14 +127,14 @@ class ScriptedSwitch:
             if self.on_behavior == "error":
                 raise RuntimeError("scripted ON failure")
             if self.on_behavior == "ack":
-                hass.states.async_set(SWITCH, "on")
+                hass.states.async_set(SWITCH, "on", context=call.context)
 
         async def turn_off(call) -> None:
             self.off_calls += 1
             if self.off_behavior == "error":
                 raise RuntimeError("scripted OFF failure")
             if self.off_behavior == "ack":
-                hass.states.async_set(SWITCH, "off")
+                hass.states.async_set(SWITCH, "off", context=call.context)
 
         hass.services.async_register("switch", "turn_on", turn_on)
         hass.services.async_register("switch", "turn_off", turn_off)
@@ -149,11 +154,21 @@ class ScriptedValve:
 
         async def open_valve(call) -> None:
             self.open_calls += 1
-            hass.states.async_set(VALVE, "opening", {"current_position": 10})
+            hass.states.async_set(
+                VALVE,
+                "opening",
+                {"current_position": 10},
+                context=call.context,
+            )
 
         async def close_valve(call) -> None:
             self.close_calls += 1
-            hass.states.async_set(VALVE, "closing", {"current_position": 10})
+            hass.states.async_set(
+                VALVE,
+                "closing",
+                {"current_position": 10},
+                context=call.context,
+            )
 
         hass.services.async_register("valve", "open_valve", open_valve)
         hass.services.async_register("valve", "close_valve", close_valve)
@@ -161,6 +176,57 @@ class ScriptedValve:
     def set_state(self, state: str, position: int | None = None) -> None:
         attrs = {} if position is None else {"current_position": position}
         self.hass.states.async_set(VALVE, state, attrs)
+
+
+class ControllerTestAuthorization:
+    """Explicit unit-test authority; production always uses EntryRuntime."""
+
+    def __init__(self) -> None:
+        self.tokens: dict[str, FinalOnAuthorizationToken] = {}
+        self.pre_dispatch_failures: tuple[str, ...] = ()
+        self.post_dispatch_failures: tuple[str, ...] = ()
+        self.configuration_authority_valid = True
+
+    def authorize_on(self, controller, session_id, command_attempt_id):
+        if self.pre_dispatch_failures:
+            return FinalOnAuthorizationResult(
+                token=None,
+                failed_predicates=self.pre_dispatch_failures,
+                configuration_authority_valid=self.configuration_authority_valid,
+            )
+        applied = controller.applied_config
+        assert applied is not None
+        token = FinalOnAuthorizationToken(
+            subentry_id=controller.zone_id,
+            safety_record_id=controller.safety_record_id,
+            zone_history_id=controller.zone_history_id,
+            session_id=session_id,
+            command_attempt_id=command_attempt_id,
+            applied_generation=applied.applied_generation,
+            zone_config_fingerprint=applied.config_fingerprint,
+            entry_snapshot_fingerprint=applied.entry_snapshot_fingerprint,
+        )
+        self.tokens[command_attempt_id] = token
+        return FinalOnAuthorizationResult(token=token, configuration_authority_valid=True)
+
+    def recheck_on_authorization(self, controller, token):
+        if self.post_dispatch_failures:
+            return FinalOnAuthorizationResult(
+                token=None,
+                failed_predicates=self.post_dispatch_failures,
+                configuration_authority_valid=self.configuration_authority_valid,
+            )
+        if self.tokens.get(token.command_attempt_id) != token:
+            return FinalOnAuthorizationResult(
+                token=None,
+                failed_predicates=("authorization_token_matches",),
+                configuration_authority_valid=False,
+            )
+        return FinalOnAuthorizationResult(token=token, configuration_authority_valid=True)
+
+    def finish_on_authorization(self, token):
+        if self.tokens.get(token.command_attempt_id) == token:
+            self.tokens.pop(token.command_attempt_id, None)
 
 
 async def build_env(
@@ -237,6 +303,7 @@ async def build_env(
     actuator = actuator_cls(hass)
     await hass.async_block_till_done()
     events: list[tuple[str, dict]] = []
+    authorization = ControllerTestAuthorization()
     ctrl = ZoneController(
         hass,
         ZONE,
@@ -245,6 +312,7 @@ async def build_env(
         slots,
         run_id="run-1",
         local_tz=UTC,
+        authorization=authorization,
         emit=lambda kind, payload: events.append((kind, dict(payload))),
         safety_record_id=record_id,
     )
@@ -258,6 +326,7 @@ async def build_env(
         actuator=actuator,
         ctrl=ctrl,
         events=events,
+        authorization=authorization,
     )
 
 
@@ -365,12 +434,12 @@ class TestNormalAutoSession:
         assert event_kinds(env).count("session_finished") == 1
         assert event_kinds(env).count("session_started") == 1
 
-        # The zone record was persisted with the finished summary.
-        record = env.store.data.zones[ZONE]
-        assert record.state is ControllerState.IDLE
-        assert record.session is None
-        assert record.last_session_summary is not None
-        assert record.daily is not None and record.daily.runtime_s == pytest.approx(600.0)
+        # Canonical schema-2 history/runtime owns the finished summary.
+        history = env.store.data.zone_histories[env.ctrl.zone_history_id]
+        assert history.zone_runtime.state is ControllerState.IDLE
+        assert history.zone_runtime.session is None
+        assert history.zone_runtime.last_session_summary is not None
+        assert history.daily is not None and history.daily.runtime_s == pytest.approx(600.0)
 
     async def test_min_interval_blocks_immediate_restart(self, env) -> None:
         await set_moisture(env, "27")
@@ -393,6 +462,21 @@ class TestNormalAutoSession:
 
 
 class TestOnSequence:
+    async def test_stage4_live_session_uses_only_canonical_schema2_writes(self, env) -> None:
+        async def legacy_write_forbidden(*args, **kwargs):
+            raise AssertionError("live command path used a ZoneRecord compatibility API")
+
+        env.store.async_update_record_runtime = legacy_write_forbidden  # type: ignore[method-assign]
+        env.store.async_update_zone = legacy_write_forbidden  # type: ignore[method-assign]
+        await set_moisture(env, "27")
+        assert env.actuator.on_calls == 1
+        await env.ctrl.async_stop_watering()
+        await settle(env)
+        history = env.store.data.zone_histories[env.ctrl.zone_history_id]
+        assert history.zone_runtime.session is None
+        assert history.zone_runtime.last_session_summary is not None
+        assert history.zone_runtime.last_session_summary.reason is CompletionReason.USER_STOP
+
     async def test_on_timeout_faults_after_defensive_off(self, env) -> None:
         env.actuator.on_behavior = "silent"
         await set_moisture(env, "27")
@@ -407,10 +491,10 @@ class TestOnSequence:
         assert env.ctrl.last_session_end is not None  # interval reset (§19.4)
 
     async def test_write_ahead_gate_no_on_after_persist_failure(self, env) -> None:
-        async def failing_update(zone_id, mutator):
+        async def failing_update(*args, **kwargs):
             raise StoreWriteVerificationError("injected")
 
-        env.store.async_update_record_runtime = failing_update  # type: ignore[method-assign]
+        env.store.async_update_controller_runtime = failing_update  # type: ignore[method-assign]
         await set_moisture(env, "27")
         assert env.actuator.on_calls == 0  # ON never issued (I15)
         assert env.ctrl.state is ControllerState.FAULT
@@ -420,19 +504,19 @@ class TestOnSequence:
         self, hass, hass_storage, freezer
     ) -> None:
         e = await build_env(hass, freezer, config=WATCHDOG_CONFIG)
-        original = e.store.async_update_record_runtime
+        original = e.store.async_update_controller_runtime
         calls = 0
 
-        async def slow_first_persist(zone_id, mutator):
+        async def slow_first_persist(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
                 # Verified write-ahead persistence consumes more time than
                 # the freshness horizon (§18.1/§18.5).
                 e.freezer.tick(timedelta(seconds=400))
-            return await original(zone_id, mutator)
+            return await original(*args, **kwargs)
 
-        e.store.async_update_record_runtime = slow_first_persist  # type: ignore[method-assign]
+        e.store.async_update_controller_runtime = slow_first_persist  # type: ignore[method-assign]
         await set_moisture(e, "27")
         assert e.actuator.on_calls == 0  # ON was never issued
         assert e.ctrl.state is ControllerState.FAULT
@@ -938,7 +1022,16 @@ class TestControllerEdges:
             last_session_summary=None,
             session=None,
         )
-        ctrl2 = ZoneController(hass, ZONE, CONFIG, e.store, e.slots, run_id="run-2", local_tz=UTC)
+        ctrl2 = ZoneController(
+            hass,
+            ZONE,
+            CONFIG,
+            e.store,
+            e.slots,
+            run_id="run-2",
+            local_tz=UTC,
+            authorization=e.authorization,
+        )
         ctrl2.async_attach(record)
         assert ctrl2.state is ControllerState.FAULT
         assert ctrl2.active_fault is FaultCode.SENSOR_STALE
@@ -974,10 +1067,10 @@ class TestControllerEdges:
         await set_moisture(env, "27")
         assert env.ctrl.state is ControllerState.WATERING
 
-        async def failing_update(zone_id, mutator):
+        async def failing_update(*args, **kwargs):
             raise StoreWriteVerificationError("injected mid-session")
 
-        env.store.async_update_record_runtime = failing_update  # type: ignore[method-assign]
+        env.store.async_update_controller_runtime = failing_update  # type: ignore[method-assign]
         await env.ctrl.async_stop_watering()  # commit persist fails
         await settle(env)
         assert env.ctrl.state is ControllerState.FAULT
@@ -986,17 +1079,17 @@ class TestControllerEdges:
         assert env.actuator.off_calls >= 1
 
     async def test_post_on_persist_failure_fails_closed(self, env) -> None:
-        original = env.store.async_update_record_runtime
+        original = env.store.async_update_controller_runtime
         calls = 0
 
-        async def failing_second(zone_id, mutator):
+        async def failing_second(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls >= 2:  # the pulse_commanded anchor write
                 raise StoreWriteVerificationError("injected post-ON")
-            return await original(zone_id, mutator)
+            return await original(*args, **kwargs)
 
-        env.store.async_update_record_runtime = failing_second  # type: ignore[method-assign]
+        env.store.async_update_controller_runtime = failing_second  # type: ignore[method-assign]
         await set_moisture(env, "27")
         assert env.ctrl.state is ControllerState.FAULT
         assert env.ctrl.active_fault is FaultCode.RESTORED_FROM_UNSAFE_STATE
@@ -1119,7 +1212,16 @@ class TestControllerEdges:
 
         e = await build_env(hass, freezer)
         await e.ctrl.async_detach()
-        ctrl2 = ZoneController(hass, ZONE, CONFIG, e.store, e.slots, run_id="run-2", local_tz=UTC)
+        ctrl2 = ZoneController(
+            hass,
+            ZONE,
+            CONFIG,
+            e.store,
+            e.slots,
+            run_id="run-2",
+            local_tz=UTC,
+            authorization=e.authorization,
+        )
         ctrl2.async_attach(ZoneRecord(state=ControllerState.IDLE, enabled=True))
         assert ctrl2.daily.runtime_s == 0.0  # controller keeps its fresh counter
         await ctrl2.async_detach()

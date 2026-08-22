@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from dataclasses import replace
@@ -67,6 +68,8 @@ from .models import (
 )
 from .reconciliation import (
     ConfigurationReconciliationCoordinator,
+    FinalOnAuthorizationResult,
+    FinalOnAuthorizationToken,
     ImmutableEntrySnapshot,
     ImmutableZoneSnapshot,
     ReconciliationError,
@@ -160,10 +163,281 @@ class EntryRuntime:
         self._stop_unsub: CALLBACK_TYPE | None = None
         self._local_tz = dt_util.get_default_time_zone()
         self._listener_registered = False
+        self._on_authorizations: dict[str, FinalOnAuthorizationToken] = {}
         self.coordinator = ConfigurationReconciliationCoordinator(
             self.slots,
             self._build_immutable_snapshot,
             self._apply_configuration_snapshot,
+        )
+
+    # ------------------------------------------------------------------
+    # Stage-4 final actuator-ON authorization (§11.2, I32, I36)
+    # ------------------------------------------------------------------
+
+    def authorize_on(
+        self,
+        controller: ZoneController,
+        session_id: str,
+        command_attempt_id: str,
+    ) -> FinalOnAuthorizationResult:
+        """Run the complete authoritative final gate from fresh live state.
+
+        This method is synchronous by design.  The caller invokes it only
+        after verified hazardous-intent persistence while owning its command
+        transition domain, then records possible-flow ownership and starts
+        the service coroutine without yielding.
+        """
+        result = self._evaluate_on_authority(
+            controller,
+            session_id,
+            command_attempt_id,
+            token=None,
+            pre_dispatch=True,
+        )
+        if not result.authorized:
+            return result
+        token = result.token
+        assert token is not None
+        if command_attempt_id in self._on_authorizations:
+            return FinalOnAuthorizationResult(
+                token=None,
+                failed_predicates=("authorization_token_single_use",),
+                configuration_authority_valid=result.configuration_authority_valid,
+            )
+        self._on_authorizations[command_attempt_id] = token
+        return result
+
+    def recheck_on_authorization(
+        self,
+        controller: ZoneController,
+        token: FinalOnAuthorizationToken,
+    ) -> FinalOnAuthorizationResult:
+        """Immediately re-read authority after an ON call returns/raises."""
+        return self._evaluate_on_authority(
+            controller,
+            token.session_id,
+            token.command_attempt_id,
+            token=token,
+            pre_dispatch=False,
+        )
+
+    def finish_on_authorization(self, token: FinalOnAuthorizationToken) -> None:
+        """Retire a consumed token after its exact command is reconciled."""
+        if self._on_authorizations.get(token.command_attempt_id) == token:
+            self._on_authorizations.pop(token.command_attempt_id, None)
+
+    def _evaluate_on_authority(
+        self,
+        controller: ZoneController,
+        session_id: str,
+        command_attempt_id: str,
+        *,
+        token: FinalOnAuthorizationToken | None,
+        pre_dispatch: bool,
+    ) -> FinalOnAuthorizationResult:
+        failures: list[str] = []
+        authority_failures: set[str] = set()
+        quiescing_failures: set[str] = set()
+
+        def fail(
+            predicate: str,
+            *,
+            authority: bool = False,
+            requires_quiescing: bool = False,
+        ) -> None:
+            if predicate not in failures:
+                failures.append(predicate)
+            if authority:
+                authority_failures.add(predicate)
+            if requires_quiescing:
+                quiescing_failures.add(predicate)
+
+        try:
+            fresh_snapshot = self._build_immutable_snapshot(self.coordinator.observed_generation)
+        except Exception:
+            fresh_snapshot = None
+            fail("current_entry_snapshot_matches", authority=True)
+
+        fresh_zone = None
+        if fresh_snapshot is not None:
+            fresh_zone = fresh_snapshot.by_subentry_id().get(controller.zone_id)
+        if fresh_zone is None:
+            fail(
+                "current_subentry_exists",
+                authority=True,
+                requires_quiescing=True,
+            )
+
+        binding = self.bindings.get(controller.zone_id)
+        applied = controller.applied_config
+        if (
+            fresh_zone is None
+            or applied is None
+            or fresh_zone.config_fingerprint != applied.config_fingerprint
+        ):
+            fail(
+                "current_zone_fingerprint_matches",
+                authority=True,
+                requires_quiescing=True,
+            )
+
+        applied_snapshot = self.coordinator.applied_snapshot
+        observed_snapshot = self.coordinator.observed_snapshot
+        if (
+            fresh_snapshot is None
+            or applied_snapshot is None
+            or observed_snapshot is None
+            or fresh_snapshot.entry_snapshot_fingerprint
+            != applied_snapshot.entry_snapshot_fingerprint
+            or fresh_snapshot.entry_snapshot_fingerprint
+            != observed_snapshot.entry_snapshot_fingerprint
+            or applied is None
+            or fresh_snapshot.entry_snapshot_fingerprint != applied.entry_snapshot_fingerprint
+        ):
+            fail("current_entry_snapshot_matches", authority=True)
+
+        if (
+            applied is None
+            or self.coordinator.observed_generation != self.coordinator.applied_generation
+            or applied.applied_generation != self.coordinator.applied_generation
+            or (
+                fresh_snapshot is not None
+                and fresh_snapshot.observed_generation != self.coordinator.applied_generation
+            )
+        ):
+            fail("applied_generation_current", authority=True)
+
+        slot_snapshot = self.slots.snapshot()
+        if (
+            self.process_stopping
+            or self.coordinator.stopping
+            or self.coordinator.dirty
+            or self.coordinator.reconciling
+            or self.coordinator.failed
+            or not slot_snapshot.admission_open
+        ):
+            fail("reconciliation_admission_clear", authority=True)
+
+        if (
+            binding is None
+            or binding.controller is not controller
+            or binding.lifecycle is not RuntimeLifecycle.ACTIVE
+            or binding.quiescing
+            or controller.runtime_lifecycle is not RuntimeLifecycle.ACTIVE
+        ):
+            fail(
+                "runtime_lifecycle_active",
+                authority=True,
+                requires_quiescing=True,
+            )
+
+        if not controller.command_authorization_open:
+            fail(
+                "controller_commandable",
+                authority=True,
+                requires_quiescing=True,
+            )
+
+        record = self.store.data.safety_records.get(controller.safety_record_id)
+        history = self.store.data.zone_histories.get(controller.zone_history_id)
+        canonical_ok = (
+            binding is not None
+            and record is not None
+            and history is not None
+            and binding.safety_record_id == controller.safety_record_id
+            and binding.zone_history_id == controller.zone_history_id
+            and record.safety_record_id == controller.safety_record_id
+            and record.zone_history_id == controller.zone_history_id
+            and record.active_subentry_id == controller.zone_id
+            and record.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+            and history.zone_history_id == controller.zone_history_id
+            and history.active_subentry_id == controller.zone_id
+            and record.applied_config is not None
+            and record.applied_config == applied
+            and binding.applied_shadow == applied
+            and record.actuator_identity.last_known_entity_id == controller.config.actuator
+        )
+        if not canonical_ok:
+            fail(
+                "canonical_ownership_matches",
+                authority=True,
+                requires_quiescing=True,
+            )
+
+        persisted = history.zone_runtime.session if history is not None else None
+        if (
+            persisted is None
+            or persisted.owner_safety_record_id != controller.safety_record_id
+            or persisted.context.session_id != session_id
+            or persisted.context.pulse_intent_at_utc is None
+        ):
+            fail("verified_hazard_intent_matches", authority=True)
+
+        if slot_snapshot.owner != controller.zone_id:
+            fail("slot_owned_by_session")
+        if slot_snapshot.blockers:
+            fail("keyed_blockers_clear")
+
+        daily_runtime_s = 0.0
+        if history is not None and history.daily is not None:
+            today = dt_util.utcnow().astimezone(self._local_tz).date()
+            if history.daily.date_local == today:
+                daily_runtime_s = history.daily.runtime_s
+        guard_failures = controller.final_on_guard_failures(
+            session_id,
+            authoritative_daily_runtime_s=daily_runtime_s,
+            pre_dispatch=pre_dispatch,
+        )
+        if guard_failures:
+            fail("ordinary_runtime_guards")
+
+        if pre_dispatch:
+            live_actuator = controller.refresh_actuator_for_final_gate()
+            if not (
+                live_actuator.available
+                and live_actuator.proven_off
+                and not live_actuator.observed_on
+            ):
+                fail("actuator_available_and_proven_off")
+
+        if token is not None:
+            expected = self._on_authorizations.get(token.command_attempt_id)
+            if (
+                expected != token
+                or token.subentry_id != controller.zone_id
+                or token.safety_record_id != controller.safety_record_id
+                or token.zone_history_id != controller.zone_history_id
+                or token.session_id != session_id
+                or token.command_attempt_id != command_attempt_id
+                or applied is None
+                or token.applied_generation != applied.applied_generation
+                or token.zone_config_fingerprint != applied.config_fingerprint
+                or token.entry_snapshot_fingerprint != applied.entry_snapshot_fingerprint
+            ):
+                fail("authorization_token_matches", authority=True)
+
+        authority_valid = not authority_failures
+        if failures:
+            return FinalOnAuthorizationResult(
+                token=None,
+                failed_predicates=tuple(failures),
+                configuration_authority_valid=authority_valid,
+                requires_quiescing=bool(quiescing_failures),
+            )
+        assert applied is not None
+        authorized_token = token or FinalOnAuthorizationToken(
+            subentry_id=controller.zone_id,
+            safety_record_id=controller.safety_record_id,
+            zone_history_id=controller.zone_history_id,
+            session_id=session_id,
+            command_attempt_id=command_attempt_id,
+            applied_generation=applied.applied_generation,
+            zone_config_fingerprint=applied.config_fingerprint,
+            entry_snapshot_fingerprint=applied.entry_snapshot_fingerprint,
+        )
+        return FinalOnAuthorizationResult(
+            token=authorized_token,
+            configuration_authority_valid=True,
         )
 
     # ------------------------------------------------------------------
@@ -335,6 +609,7 @@ class EntryRuntime:
             ):
                 continue
             binding.quiescing = True
+            binding.controller.begin_quiescing()
             await self.slots.async_cancel_request(subentry_id)
             controller = binding.controller
             if controller.state in (ControllerState.WATERING, ControllerState.SOAKING):
@@ -486,6 +761,7 @@ class EntryRuntime:
                 local_tz=self._local_tz,
                 emit=self._make_emitter(record.zone_id),
                 safety_record_id=record.safety_record_id,
+                authorization=self,
             )
             projected = self.store.legacy_record_for(record.safety_record_id)
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
@@ -1044,6 +1320,7 @@ class EntryRuntime:
                 local_tz=self._local_tz,
                 emit=self._make_emitter(record.zone_id),
                 safety_record_id=record.safety_record_id,
+                authorization=self,
             )
             projected = self.store.legacy_record_for(record.safety_record_id)
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
@@ -1225,6 +1502,7 @@ class EntryRuntime:
             local_tz=self._local_tz,
             emit=self._make_emitter(zone.subentry_id),
             safety_record_id=record.safety_record_id,
+            authorization=self,
         )
 
     def _make_emitter(self, zone_id: str):
@@ -1457,10 +1735,7 @@ class EntryRuntime:
                 # T37: persist the active soak unchanged; no new water.
                 await controller.async_dispatch(HomeAssistantShutdown())
             else:
-                await self.store.async_update_record_runtime(
-                    controller.safety_record_id,
-                    lambda _old, c=controller: c.build_record(),
-                )
+                await controller.async_persist_current_state("shutdown_resting")
         # Only after every zone's safety handling is honestly persisted.
         # A failed clean marking is safe: the next run reads unequal IDs
         # and treats this run as unclean.
@@ -1470,37 +1745,84 @@ class EntryRuntime:
             _LOGGER.error("Clean-shutdown marking failed: %s", err)
 
     async def _await_off_within_budget(self, controller: ZoneController) -> None:
-        """Await cooperative OFF within the shutdown budget, then fall back.
+        """Join the controller's one OFF operation within the lifecycle budget.
 
-        The budget is real wall-clock (the HA stop window is real; its
-        tuning is §46 item 4). The bounded fallback cancels the session task
-        and makes one best-effort call into the same OFF path (§24.1).
+        An ON service already in flight must finish or be cancelled before
+        OFF is allowed to land; otherwise that ON could reach hardware after
+        OFF.  Cancellation is handled by ``_perform_on`` as uncertain flow
+        and converges on this same operation.  There is no lifecycle-specific
+        direct actuator call.
         """
         import asyncio
 
-        # Give the session-owner task a few loop passes to enter the OFF
-        # operation after the cooperative signal.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, self.shutdown_off_budget_s)
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
+        task = controller.session_owner_task
+        if controller.inflight_on is not None and remaining() > 0:
+            await controller.async_wait_on_dispatch_completed(remaining())
+
+        # Give the cooperative session owner a bounded set of deterministic
+        # event-loop turns to publish the shared operation.
         for _ in range(10):
-            await asyncio.sleep(0)
-            if controller._off_operation is not None:
+            if controller.off_operation is not None:
                 break
-        operation = controller._off_operation
-        if operation is not None and not operation.done() and self.shutdown_off_budget_s > 0:
-            await asyncio.wait({operation}, timeout=self.shutdown_off_budget_s)
+            await asyncio.sleep(0)
+        operation = controller.off_operation
+        if operation is not None and not operation.done() and remaining() > 0:
+            await asyncio.wait({operation}, timeout=remaining())
         if operation is not None and operation.done():
             return
-        if controller.session is None or controller.state is not ControllerState.WATERING:
-            return
-        # Bounded fallback: forced cancellation plus best-effort OFF.
-        task = controller._session_task
+
+        # Bounded fallback: force the session owner through cancellation
+        # compensation.  If an OFF is already running, end that exact
+        # operation as unconfirmed (which persists the exact blocker) instead
+        # of issuing a second actuator command sequence.
+        task = controller.session_owner_task
         if task is not None and not task.done():
             task.cancel()
-        from homeassistant.core import Context
+        for _ in range(10):
+            operation = controller.off_operation
+            if operation is not None:
+                break
+            await asyncio.sleep(0)
+        if operation is not None and not operation.done():
+            await controller.async_abort_off_as_unconfirmed()
+        if task is not None and not task.done():
+            for _ in range(10):
+                if task.done():
+                    break
+                await asyncio.sleep(0)
+            if task.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    task.result()
 
-        try:
-            await controller._actuator.async_turn_off(Context())
-        except Exception as err:
-            _LOGGER.error("Zone %s: best-effort shutdown OFF failed: %s", controller.zone_id, err)
+        # A faulted OFF result deliberately leaves the session/accounting
+        # open.  Once that exact future has durably resolved unconfirmed, the
+        # reconciler may publish a retained DELETE_PENDING controller; it must
+        # not fail merely because the session owner remains alive to consume a
+        # later exact OFF observation.
+        operation = controller.off_operation
+        if operation is not None and operation.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                operation.result()
+            return
+
+        # Cancellation of an in-flight ON begins compensation synchronously;
+        # allow it to publish the shared future before considering a direct
+        # entry into that same controller operation.
+        if controller.session is None and controller.inflight_on is None:
+            return
+        operation = controller.off_operation or controller.begin_off_operation()
+        if operation.done():
+            return
+        if remaining() > 0:
+            await asyncio.wait({operation}, timeout=remaining())
+        if not operation.done():
+            await controller.async_abort_off_as_unconfirmed()
 
     # ------------------------------------------------------------------
     # Generic entry unload/reload (§24.2)
