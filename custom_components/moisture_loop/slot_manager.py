@@ -169,6 +169,31 @@ class SlotManager:
             self._try_grant_locked()
             return self._reconciliation
 
+    def set_reconciliation_state_now(
+        self,
+        *,
+        dirty: bool | None = None,
+        reconciling: bool | None = None,
+        failed: bool | None = None,
+    ) -> ReconciliationBarrier:
+        """Synchronously update the existing reconciliation barrier.
+
+        Home Assistant does not await config-entry update listeners.  The
+        listener must therefore be able to close grant admission before it
+        returns its coroutine.  This method mutates the same Stage-2 barrier
+        (it is not a second fence) and contains no suspension point.  The
+        coordinator is its sole runtime caller and Home Assistant invokes it
+        on the event-loop thread.
+        """
+        current = self._reconciliation
+        self._reconciliation = ReconciliationBarrier(
+            dirty=current.dirty if dirty is None else dirty,
+            reconciling=current.reconciling if reconciling is None else reconciling,
+            failed=current.failed if failed is None else failed,
+        )
+        self._try_grant_locked()
+        return self._reconciliation
+
     def admission_open(self) -> bool:
         """Whether lifecycle enablement and reconciliation both permit grants."""
         return self._grants_enabled and self._reconciliation.clear

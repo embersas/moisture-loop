@@ -102,7 +102,7 @@ class TestControllerEntryFlow:
         runtime = entry.runtime_data
         assert runtime.store.data.generation_id == generation
         assert runtime.store.data.store_revision >= 1
-        assert entry.update_listeners == []  # no update listener (§5.1)
+        assert len(entry.update_listeners) == 1  # Stage-3 entry reconciler (§5.1)
 
     async def test_second_entry_aborts(self, hass) -> None:
         await create_controller_entry(hass)

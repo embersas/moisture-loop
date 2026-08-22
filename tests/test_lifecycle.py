@@ -29,18 +29,27 @@ from custom_components.moisture_loop.const import (
     DOMAIN,
 )
 from custom_components.moisture_loop.models import (
+    ActuatorIdentity,
+    AppliedConfigurationShadow,
+    AppliedEntityIdentity,
     BlockerReason,
     CompletionReason,
     ControllerState,
     DailyRuntime,
     FaultCode,
+    IdentityStatus,
+    MigrationRecordContext,
+    NormalizedZoneSettings,
     RunIds,
     RuntimeEstimationReason,
+    Schema1StoreData,
+    SensorIdentity,
     SessionContext,
     SessionMode,
     StoreData,
     ZoneRecord,
     config_fingerprint,
+    migrate_schema1_to_schema2,
     store_data_to_dict,
 )
 from custom_components.moisture_loop.storage import (
@@ -139,11 +148,44 @@ def store_snapshot(
     clean: str | None = "run-a",
     revision: int = 5,
 ) -> StoreData:
-    return StoreData(
+    config = zone_config_from_subentry(ZONE_DATA)
+    contexts: dict[str, MigrationRecordContext] = {}
+    for zone_id in zones:
+        shadow = AppliedConfigurationShadow(
+            subentry_id=zone_id,
+            config_fingerprint="test-migration-shadow",
+            entry_snapshot_fingerprint="test-migration-entry",
+            applied_generation=1,
+            normalized_settings=NormalizedZoneSettings.from_config(config),
+            sensor_identity=AppliedEntityIdentity(None, SENSOR, "sensor"),
+            actuator_identity=AppliedEntityIdentity(None, SWITCH, "switch"),
+        )
+        contexts[zone_id] = MigrationRecordContext(
+            active_subentry_id=zone_id,
+            applied_config=shadow,
+            actuator_identity=ActuatorIdentity(
+                registry_entry_id=None,
+                last_known_entity_id=SWITCH,
+                domain="switch",
+                identity_status=IdentityStatus.REGISTRY_UNAVAILABLE,
+                off_service="switch.turn_off",
+                confirm_timeout_s=config.actuator_confirm_timeout_s,
+            ),
+            sensor_identity=SensorIdentity(None, SENSOR),
+        )
+    migrated = migrate_schema1_to_schema2(
+        Schema1StoreData(
+            generation_id=GEN,
+            store_revision=max(1, revision - 1),
+            run=RunIds(active_run_id=active, last_clean_shutdown_run_id=clean),
+            zones=zones,
+        ),
+        contexts,
+    )
+    return migrated.evolve(
         generation_id=GEN,
         store_revision=revision,
         run=RunIds(active_run_id=active, last_clean_shutdown_run_id=clean),
-        zones=zones,
     )
 
 
@@ -508,7 +550,7 @@ class TestSoakingAdoption:
         async def failing(self, zone_id, new_run_id):
             raise StoreWriteVerificationError("injected")
 
-        monkeypatch.setattr(SafetyStore, "async_rebase_soaking_owner", failing)
+        monkeypatch.setattr(SafetyStore, "async_rebase_soaking_owner_for_record", failing)
         runtime = EntryRuntime(env.hass, entry)
         with pytest.raises(ConfigEntryNotReady):
             await runtime.async_initialize()
@@ -692,8 +734,9 @@ class TestStartupResourceSafety:
         await env.hass.async_block_till_done()
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
         assert env.switch.off_calls == 0  # respected, never counter-commanded
-        assert (zone_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
+        assert (record_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
         env.hass.states.async_set(SENSOR, "5")
         await settle(env.hass)
         assert env.switch.on_calls == 0  # no grant while occupied
@@ -712,7 +755,8 @@ class TestStartupResourceSafety:
         await env.hass.async_block_till_done()
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
-        assert (zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF) in runtime.slots.blockers()
+        record_id = runtime.bindings[zone_id].safety_record_id
+        assert (record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF) in runtime.slots.blockers()
         await runtime.async_unload()
 
     async def test_setup_entry_and_unload_via_module_api(self, env) -> None:
@@ -844,24 +888,22 @@ class TestRuntimeEdges:
         assert not EntryRuntime._session_structure_valid(no_off)
 
     async def test_passive_listener_window(self, env) -> None:
-        """ER12: events during the subscribe-before-snapshot window update
-        the keyed set before any grant is possible."""
+        """ER12: live observation is keyed by canonical record identity."""
         entry = make_entry(env.hass, initialized=False)
-        runtime = EntryRuntime(env.hass, entry)
-        configs = runtime._parse_zone_configs()
-        zone_id = next(iter(configs))
-        runtime._install_passive_listeners(configs)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
         env.switch.set_state("on")
         await settle(env.hass)
-        assert (zone_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
+        assert (record_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
         env.switch.set_state("unknown")
         await settle(env.hass)
-        assert (zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF) in (runtime.slots.blockers())
+        assert (record_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
         env.switch.set_state("off")  # proven OFF adds nothing here
         await settle(env.hass)
-        runtime._remove_passive_listeners()
-        await runtime.slots.async_remove_blocker(zone_id, BlockerReason.EXTERNAL_FLOW)
-        await runtime.slots.async_remove_blocker(zone_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF)
+        await runtime.async_unload()
+        await runtime.slots.async_remove_blocker(record_id, BlockerReason.EXTERNAL_FLOW)
+        await runtime.slots.async_remove_blocker(record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF)
         env.switch.set_state("on")
         await settle(env.hass)
         assert runtime.slots.blockers() == frozenset()  # listeners removed

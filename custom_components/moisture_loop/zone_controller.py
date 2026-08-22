@@ -47,6 +47,7 @@ from .models import (
     ActuatorAssessment,
     ActuatorBecameUnavailable,
     AddBlocker,
+    AppliedConfigurationShadow,
     ArmTimer,
     ArmWatchdog,
     AutoEvaluate,
@@ -83,6 +84,7 @@ from .models import (
     RemoveBlocker,
     RequestSlot,
     ResourceAssessment,
+    RuntimeLifecycle,
     ScheduleEvaluation,
     SessionContext,
     SessionIdentity,
@@ -411,12 +413,19 @@ class ZoneController:
     ) -> None:
         self._hass = hass
         self.zone_id = zone_id
-        # Stage 2 separates controller/subentry identity from durable
-        # actuator-safety ownership. The fallback retains historical direct
-        # test callers until Stage 3 materializes every configured record.
+        # Stage 3 requires exact canonical ownership before a controller can
+        # become watering-capable.  ``zone_id`` remains config/presentation
+        # identity only; blockers and persistence use ``safety_record_id``.
         self.safety_record_id = safety_record_id or zone_id
         if not self.safety_record_id:
             raise ValueError("safety_record_id must be non-empty")
+        if not store.loaded or self.safety_record_id not in store.data.safety_records:
+            raise ValueError("ZoneController requires a verified canonical safety record")
+        canonical = store.data.safety_records[self.safety_record_id]
+        self.zone_history_id = canonical.zone_history_id
+        self.runtime_lifecycle = canonical.runtime_lifecycle
+        self.applied_config: AppliedConfigurationShadow | None = canonical.applied_config
+        self.runtime_eligible = canonical.runtime_lifecycle is RuntimeLifecycle.ACTIVE
         self._config = config
         self._store = store
         self._slots = slots
@@ -525,6 +534,23 @@ class ZoneController:
                 await task
         self._session_task = None
 
+    def update_runtime_ownership(
+        self,
+        *,
+        zone_history_id: str,
+        lifecycle: RuntimeLifecycle,
+        applied_config: AppliedConfigurationShadow | None,
+    ) -> None:
+        """Publish coordinator-owned canonical lifecycle metadata.
+
+        Stage 4 consumes these fields for the final pre-ON gate; Stage 3 does
+        not move actuator dispatch into that critical region yet.
+        """
+        self.zone_history_id = zone_history_id
+        self.runtime_lifecycle = lifecycle
+        self.applied_config = applied_config
+        self.runtime_eligible = lifecycle is RuntimeLifecycle.ACTIVE
+
     # -- public inputs ---------------------------------------------------------
 
     async def async_dispatch(self, event: object) -> Decision:
@@ -533,6 +559,8 @@ class ZoneController:
             return await self._decide_and_apply_locked(event)
 
     async def async_evaluate(self) -> Decision:
+        if not self.runtime_eligible:
+            return Decision(transition_id=None, new_state=None, no_op=True)
         return await self.async_dispatch(AutoEvaluate())
 
     async def async_fallback_scan(self) -> Decision:
@@ -545,11 +573,15 @@ class ZoneController:
         observation = self._adapter.scan_current()
         async with self._lock:
             self._observation = observation
+            if not self.runtime_eligible:
+                return Decision(transition_id=None, new_state=None, no_op=True)
             decision = await self._decide_and_apply_locked(MoistureReport(observation))
         self._notify_listeners()
         return decision
 
     async def async_manual_start(self, requested_duration_s: float) -> Decision:
+        if not self.runtime_eligible:
+            return Decision(transition_id=None, new_state=None, no_op=True)
         return await self.async_dispatch(ManualStartRequested(requested_duration_s))
 
     async def async_stop_watering(self) -> Decision:
@@ -660,7 +692,8 @@ class ZoneController:
     async def _async_moisture(self, observation: MoistureObservation) -> None:
         async with self._lock:
             self._observation = observation
-            await self._decide_and_apply_locked(MoistureReport(observation))
+            if self.runtime_eligible:
+                await self._decide_and_apply_locked(MoistureReport(observation))
         self._notify_listeners()
 
     @callback
@@ -962,7 +995,7 @@ class ZoneController:
 
     async def _persist_locked(self) -> None:
         record = self.build_record()
-        await self._store.async_update_zone(self.zone_id, lambda _old: record)
+        await self._store.async_update_record_runtime(self.safety_record_id, lambda _old: record)
 
     async def _handle_persist_failure_locked(self, err: Exception) -> None:
         """§23.4: a failed safety write must never authorize watering."""
@@ -1108,6 +1141,8 @@ class ZoneController:
     # -- slot integration -------------------------------------------------------
 
     def _ensure_slot_request(self) -> None:
+        if not self.runtime_eligible:
+            return
         if self._slot_task is not None and not self._slot_task.done():
             return
         self._slot_task = self._hass.async_create_background_task(
@@ -1121,6 +1156,9 @@ class ZoneController:
         except asyncio.CancelledError:
             await self._slots.async_cancel_request(self.zone_id)
             raise
+        if not self.runtime_eligible:
+            await self._slots.async_release(self.zone_id)
+            return
         pending_manual = self._pending_manual
         self._pending_manual = None
         if pending_manual is not None:

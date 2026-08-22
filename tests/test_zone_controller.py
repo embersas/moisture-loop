@@ -18,12 +18,23 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.moisture_loop.models import (
+    ActuatorIdentity,
+    AppliedConfigurationShadow,
+    AppliedEntityIdentity,
     BlockerReason,
     ControllerState,
     FaultCode,
+    IdentityStatus,
     ManualClampReason,
+    NormalizedZoneSettings,
+    RuntimeLifecycle,
+    SafetyRecord,
+    SensorIdentity,
     SessionMode,
     ZoneConfig,
+    ZoneDailyRuntime,
+    ZoneHistory,
+    ZoneRuntime,
 )
 from custom_components.moisture_loop.slot_manager import SlotManager
 from custom_components.moisture_loop.storage import (
@@ -162,6 +173,65 @@ async def build_env(
     freezer.move_to(START_AT)
     store = SafetyStore(hass, "entry-1", GEN)
     await store.async_first_initialize()
+    record_id = safety_record_id or ZONE
+    actuator_domain = config.actuator.split(".", 1)[0]
+    history_id = f"{record_id}-history"
+    applied = AppliedConfigurationShadow(
+        subentry_id=ZONE,
+        config_fingerprint=f"test-{record_id}",
+        entry_snapshot_fingerprint=f"test-entry-{record_id}",
+        applied_generation=1,
+        normalized_settings=NormalizedZoneSettings.from_config(config),
+        sensor_identity=AppliedEntityIdentity(None, config.moisture_sensor, "sensor"),
+        actuator_identity=AppliedEntityIdentity(None, config.actuator, actuator_domain),
+    )
+    history = ZoneHistory(
+        zone_history_id=history_id,
+        active_subentry_id=ZONE,
+        previous_subentry_ids=(),
+        last_session_end_utc=None,
+        last_auto_session_start_utc=None,
+        zone_runtime=ZoneRuntime(
+            enabled=True,
+            state=ControllerState.IDLE,
+            zone_fault=None,
+            secondary_fault=None,
+            sensor_identity=SensorIdentity(None, config.moisture_sensor),
+            last_session_summary=None,
+            session=None,
+        ),
+        daily=ZoneDailyRuntime(dt_util.utcnow().date(), 0.0),
+    )
+    record = SafetyRecord(
+        safety_record_id=record_id,
+        zone_id=ZONE,
+        active_subentry_id=ZONE,
+        previous_subentry_ids=(),
+        safety_lineage_id=f"{record_id}-lineage",
+        zone_history_id=history_id,
+        historical_zone_history_ids=(),
+        runtime_lifecycle=RuntimeLifecycle.ACTIVE,
+        applied_config=applied,
+        actuator_identity=ActuatorIdentity(
+            registry_entry_id=None,
+            last_known_entity_id=config.actuator,
+            domain=actuator_domain,
+            identity_status=IdentityStatus.REGISTRY_UNAVAILABLE,
+            off_service=("switch.turn_off" if actuator_domain == "switch" else "valve.close_valve"),
+            confirm_timeout_s=config.actuator_confirm_timeout_s,
+        ),
+        blocker_reasons=(),
+        possible_flow_owner=None,
+        identity_incident=None,
+        actuator_fault=None,
+        acknowledgement_required=False,
+    )
+    await store.async_reconcile(
+        lambda data: (
+            {**data.safety_records, record_id: record},
+            {**data.zone_histories, history_id: history},
+        )
+    )
     slots = SlotManager()
     await slots.async_enable_grants()
     actuator = actuator_cls(hass)
@@ -176,7 +246,7 @@ async def build_env(
         run_id="run-1",
         local_tz=UTC,
         emit=lambda kind, payload: events.append((kind, dict(payload))),
-        safety_record_id=safety_record_id,
+        safety_record_id=record_id,
     )
     ctrl.async_attach()
     await hass.async_block_till_done()
@@ -340,7 +410,7 @@ class TestOnSequence:
         async def failing_update(zone_id, mutator):
             raise StoreWriteVerificationError("injected")
 
-        env.store.async_update_zone = failing_update  # type: ignore[method-assign]
+        env.store.async_update_record_runtime = failing_update  # type: ignore[method-assign]
         await set_moisture(env, "27")
         assert env.actuator.on_calls == 0  # ON never issued (I15)
         assert env.ctrl.state is ControllerState.FAULT
@@ -350,7 +420,7 @@ class TestOnSequence:
         self, hass, hass_storage, freezer
     ) -> None:
         e = await build_env(hass, freezer, config=WATCHDOG_CONFIG)
-        original = e.store.async_update_zone
+        original = e.store.async_update_record_runtime
         calls = 0
 
         async def slow_first_persist(zone_id, mutator):
@@ -362,7 +432,7 @@ class TestOnSequence:
                 e.freezer.tick(timedelta(seconds=400))
             return await original(zone_id, mutator)
 
-        e.store.async_update_zone = slow_first_persist  # type: ignore[method-assign]
+        e.store.async_update_record_runtime = slow_first_persist  # type: ignore[method-assign]
         await set_moisture(e, "27")
         assert e.actuator.on_calls == 0  # ON was never issued
         assert e.ctrl.state is ControllerState.FAULT
@@ -813,6 +883,43 @@ class TestLifecycleInputs:
 class TestControllerEdges:
     """Remaining deterministic edge paths (adoption, failures, joins)."""
 
+    async def test_retained_runtime_is_observation_only(self, env) -> None:
+        env.ctrl.update_runtime_ownership(
+            zone_history_id=env.ctrl.zone_history_id,
+            lifecycle=RuntimeLifecycle.DELETE_PENDING,
+            applied_config=env.ctrl.applied_config,
+        )
+        assert (await env.ctrl.async_evaluate()).no_op
+        assert (await env.ctrl.async_manual_start(60)).no_op
+        assert (await env.ctrl.async_fallback_scan()).no_op
+        env.ctrl._ensure_slot_request()
+        assert env.ctrl._slot_task is None
+        env.ctrl.update_runtime_ownership(
+            zone_history_id=env.ctrl.zone_history_id,
+            lifecycle=RuntimeLifecycle.ACTIVE,
+            applied_config=env.ctrl.applied_config,
+        )
+
+    async def test_retained_runtime_declines_late_slot_grant(self, env) -> None:
+        await env.slots.async_add_blocker("other", BlockerReason.EXTERNAL_FLOW)
+        env.ctrl._ensure_slot_request()
+        await settle(env)
+        assert env.slots.snapshot().queue == (ZONE,)
+        env.ctrl.update_runtime_ownership(
+            zone_history_id=env.ctrl.zone_history_id,
+            lifecycle=RuntimeLifecycle.DELETE_PENDING,
+            applied_config=env.ctrl.applied_config,
+        )
+        await env.slots.async_remove_blocker("other", BlockerReason.EXTERNAL_FLOW)
+        await settle(env)
+        assert env.slots.owner is None
+        assert env.ctrl.session is None
+        env.ctrl.update_runtime_ownership(
+            zone_history_id=env.ctrl.zone_history_id,
+            lifecycle=RuntimeLifecycle.ACTIVE,
+            applied_config=env.ctrl.applied_config,
+        )
+
     async def test_attach_adopts_persisted_record(self, hass, hass_storage, freezer) -> None:
         from datetime import date, datetime
 
@@ -870,7 +977,7 @@ class TestControllerEdges:
         async def failing_update(zone_id, mutator):
             raise StoreWriteVerificationError("injected mid-session")
 
-        env.store.async_update_zone = failing_update  # type: ignore[method-assign]
+        env.store.async_update_record_runtime = failing_update  # type: ignore[method-assign]
         await env.ctrl.async_stop_watering()  # commit persist fails
         await settle(env)
         assert env.ctrl.state is ControllerState.FAULT
@@ -879,7 +986,7 @@ class TestControllerEdges:
         assert env.actuator.off_calls >= 1
 
     async def test_post_on_persist_failure_fails_closed(self, env) -> None:
-        original = env.store.async_update_zone
+        original = env.store.async_update_record_runtime
         calls = 0
 
         async def failing_second(zone_id, mutator):
@@ -889,7 +996,7 @@ class TestControllerEdges:
                 raise StoreWriteVerificationError("injected post-ON")
             return await original(zone_id, mutator)
 
-        env.store.async_update_zone = failing_second  # type: ignore[method-assign]
+        env.store.async_update_record_runtime = failing_second  # type: ignore[method-assign]
         await set_moisture(env, "27")
         assert env.ctrl.state is ControllerState.FAULT
         assert env.ctrl.active_fault is FaultCode.RESTORED_FROM_UNSAFE_STATE

@@ -197,7 +197,8 @@ class TestManualAction:
     async def test_manual_refused_while_resource_occupied(self, env) -> None:
         from custom_components.moisture_loop.models import BlockerReason
 
-        await env.runtime.slots.async_add_blocker("other-zone", BlockerReason.EXTERNAL_FLOW)
+        record_id = env.runtime.bindings[env.subentry_id].safety_record_id
+        await env.runtime.slots.async_add_blocker(record_id, BlockerReason.EXTERNAL_FLOW)
         with pytest.raises(ServiceValidationError) as excinfo:
             await call(env, "start_manual_watering", device_id=env.device.id, duration=600)
         assert raises_key(excinfo) == "water_resource_occupied"

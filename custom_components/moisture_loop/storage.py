@@ -35,12 +35,15 @@ from .models import (
     FutureStoreVersion,
     MigrationRecordContext,
     PersistedSession,
+    PossibleFlowOwner,
     RunIds,
     RuntimeLifecycle,
+    SafetyRecord,
     Schema1StoreData,
     StoreData,
     StoreDataError,
     ZoneDailyRuntime,
+    ZoneHistory,
     ZoneRecord,
     merge_zone_history_continuity,
     migrate_schema1_to_schema2,
@@ -145,7 +148,16 @@ class SafetyStore:
                 if legacy.generation_id != self._generation_id:
                     return SetupClassification.INTEGRITY_LOSS, None
                 try:
-                    migrated = migrate_schema1_to_schema2(legacy, migration_records)
+                    # Current configuration may contain zones added after
+                    # the schema-1 snapshot.  Only same-key legacy records
+                    # are migration contexts; Stage 3 materializes current-
+                    # only zones in the subsequent config+Store union.
+                    relevant_records = {
+                        record_id: context
+                        for record_id, context in (migration_records or {}).items()
+                        if record_id in legacy.zones
+                    }
+                    migrated = migrate_schema1_to_schema2(legacy, relevant_records)
                 except (StoreDataError, ValueError):
                     return SetupClassification.INTEGRITY_LOSS, None
                 await self._save_and_verify_locked(migrated)
@@ -261,61 +273,122 @@ class SafetyStore:
         identity and an applied shadow. Stage 3 replaces this seam.
         """
         async with self._lock:
-            match = next(
-                (
-                    record
-                    for record in self.data.safety_records.values()
-                    if record.zone_id == zone_id
-                ),
-                None,
-            )
+            matches = [
+                record for record in self.data.safety_records.values() if record.zone_id == zone_id
+            ]
+            if len(matches) > 1:
+                raise StoreWriteVerificationError(
+                    "legacy zone projection is ambiguous across canonical records"
+                )
+            match = matches[0] if matches else None
             if match is None:
                 raise StoreWriteVerificationError(
                     "legacy zone projection cannot create a canonical schema-2 safety record"
                 )
-            history = self.data.zone_histories[match.zone_history_id]
-            current = self.data.zones[zone_id]
-            replacement = mutator(current)
-            actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
-                replacement.active_fault, replacement.secondary_fault
-            )
-            old_daily = history.daily
-            new_daily = _project_daily_runtime(old_daily, replacement.daily, match.safety_record_id)
-            zone_runtime = history.zone_runtime
-            zone_runtime = replace(
-                zone_runtime,
-                enabled=replacement.enabled,
-                state=replacement.state,
-                zone_fault=zone_fault,
-                secondary_fault=secondary_zone_fault,
-                last_session_summary=replacement.last_session_summary,
-                session=(
-                    PersistedSession(match.safety_record_id, replacement.session)
-                    if replacement.session
-                    else None
-                ),
-            )
-            histories = dict(self.data.zone_histories)
-            histories[history.zone_history_id] = history.evolve(
-                last_session_end_utc=replacement.last_session_end_utc,
-                last_auto_session_start_utc=replacement.last_auto_session_start_utc,
-                zone_runtime=zone_runtime,
-                daily=new_daily,
-            )
-            records = dict(self.data.safety_records)
-            records[match.safety_record_id] = match.evolve(
-                actuator_fault=actuator_fault,
-                acknowledgement_required=(
-                    actuator_fault.requires_user_ack if actuator_fault is not None else False
-                ),
-            )
+            return await self._update_record_runtime_locked(match, mutator)
+
+    async def async_update_record_runtime(
+        self,
+        safety_record_id: str,
+        mutator: Callable[[ZoneRecord], ZoneRecord],
+    ) -> StoreData:
+        """Update logical runtime through one exact canonical record.
+
+        Stage 3 runtime consumers use this API so an A -> B handoff never
+        falls back to ambiguous ``zone_id`` safety authority.
+        """
+        async with self._lock:
+            match = self.data.safety_records.get(safety_record_id)
+            if match is None:
+                raise StoreWriteVerificationError(
+                    f"unknown canonical safety_record_id {safety_record_id}"
+                )
+            return await self._update_record_runtime_locked(match, mutator)
+
+    async def _update_record_runtime_locked(
+        self,
+        match: SafetyRecord,
+        mutator: Callable[[ZoneRecord | None], ZoneRecord],
+    ) -> StoreData:
+        history = self.data.zone_histories[match.zone_history_id]
+        current = history.zone_runtime.to_legacy_record(
+            actuator_fault=match.actuator_fault,
+            last_session_end_utc=history.last_session_end_utc,
+            last_auto_session_start_utc=history.last_auto_session_start_utc,
+            daily=history.daily,
+        )
+        replacement = mutator(current)
+        actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
+            replacement.active_fault, replacement.secondary_fault
+        )
+        old_daily = history.daily
+        new_daily = _project_daily_runtime(old_daily, replacement.daily, match.safety_record_id)
+        zone_runtime = history.zone_runtime
+        zone_runtime = replace(
+            zone_runtime,
+            enabled=replacement.enabled,
+            state=replacement.state,
+            zone_fault=zone_fault,
+            secondary_fault=secondary_zone_fault,
+            last_session_summary=replacement.last_session_summary,
+            session=(
+                PersistedSession(match.safety_record_id, replacement.session)
+                if replacement.session
+                else None
+            ),
+        )
+        histories = dict(self.data.zone_histories)
+        histories[history.zone_history_id] = history.evolve(
+            last_session_end_utc=replacement.last_session_end_utc,
+            last_auto_session_start_utc=replacement.last_auto_session_start_utc,
+            zone_runtime=zone_runtime,
+            daily=new_daily,
+        )
+        records = dict(self.data.safety_records)
+        records[match.safety_record_id] = match.evolve(
+            actuator_fault=actuator_fault,
+            acknowledgement_required=(
+                actuator_fault.requires_user_ack if actuator_fault is not None else False
+            ),
+        )
+        new_data = self.data.evolve(
+            store_revision=self.data.store_revision + 1,
+            zone_histories=histories,
+            safety_records=records,
+        )
+        await self._save_and_verify_locked(new_data)
+        return new_data
+
+    async def async_reconcile(
+        self,
+        mutator: Callable[[StoreData], tuple[dict[str, SafetyRecord], dict[str, ZoneHistory]]],
+    ) -> StoreData:
+        """Apply one complete serialized Stage-3 reconciliation transaction.
+
+        The mutator receives the last verified immutable snapshot and returns
+        the full canonical record/history maps.  SafetyStore owns the revision
+        increment, schema validation, atomic save, and fresh-Store read-back.
+        """
+        async with self._lock:
+            records, histories = mutator(self.data)
             new_data = self.data.evolve(
                 store_revision=self.data.store_revision + 1,
-                zone_histories=histories,
                 safety_records=records,
+                zone_histories=histories,
             )
             await self._save_and_verify_locked(new_data)
             return new_data
+
+    def legacy_record_for(self, safety_record_id: str) -> ZoneRecord:
+        """Project one exact canonical record for the current controller seam."""
+        record = self.data.safety_records[safety_record_id]
+        history = self.data.zone_histories[record.zone_history_id]
+        return history.zone_runtime.to_legacy_record(
+            actuator_fault=record.actuator_fault,
+            last_session_end_utc=history.last_session_end_utc,
+            last_auto_session_start_utc=history.last_auto_session_start_utc,
+            daily=history.daily,
+        )
 
     async def async_set_record_blocker(
         self,
@@ -337,8 +410,23 @@ class SafetyStore:
             ordered = tuple(sorted(blockers, key=lambda item: item.value))
             if ordered == record.blocker_reasons:
                 return self.data
+            possible_flow_owner = record.possible_flow_owner
+            if active and reason is BlockerReason.EXTERNAL_FLOW:
+                possible_flow_owner = PossibleFlowOwner.EXTERNAL
+            elif active and reason is BlockerReason.INTEGRATION_OFF_UNCONFIRMED:
+                possible_flow_owner = PossibleFlowOwner.INTEGRATION
+            elif not active:
+                if BlockerReason.INTEGRATION_OFF_UNCONFIRMED in blockers:
+                    possible_flow_owner = PossibleFlowOwner.INTEGRATION
+                elif BlockerReason.EXTERNAL_FLOW in blockers:
+                    possible_flow_owner = PossibleFlowOwner.EXTERNAL
+                elif possible_flow_owner is not None:
+                    possible_flow_owner = None
             records = dict(self.data.safety_records)
-            records[safety_record_id] = record.evolve(blocker_reasons=ordered)
+            records[safety_record_id] = record.evolve(
+                blocker_reasons=ordered,
+                possible_flow_owner=possible_flow_owner,
+            )
             new_data = self.data.evolve(
                 store_revision=self.data.store_revision + 1,
                 safety_records=records,
@@ -419,29 +507,53 @@ class SafetyStore:
         """
         async with self._lock:
             record = next(
-                (item for item in self.data.safety_records.values() if item.zone_id == zone_id),
+                (
+                    item
+                    for item in self.data.safety_records.values()
+                    if item.active_subentry_id == zone_id
+                ),
                 None,
             )
             if record is None:
+                matches = [
+                    item for item in self.data.safety_records.values() if item.zone_id == zone_id
+                ]
+                record = matches[0] if len(matches) == 1 else None
+            if record is None:
                 raise StoreNotLoadedError(f"zone {zone_id} has no persisted session")
-            history = self.data.zone_histories[record.zone_history_id]
-            persisted = history.zone_runtime.session
-            if persisted is None:
-                raise StoreNotLoadedError(f"zone {zone_id} has no persisted session")
-            runtime = replace(
-                history.zone_runtime,
-                session=PersistedSession(
-                    persisted.owner_safety_record_id,
-                    persisted.context.evolve(owner_run_id=new_run_id),
-                ),
-            )
-            histories = dict(self.data.zone_histories)
-            histories[history.zone_history_id] = history.evolve(zone_runtime=runtime)
-            new_data = self.data.evolve(
-                store_revision=self.data.store_revision + 1, zone_histories=histories
-            )
-            await self._save_and_verify_locked(new_data)
-            return new_data
+            return await self._rebase_soaking_owner_locked(record, new_run_id)
+
+    async def async_rebase_soaking_owner_for_record(
+        self, safety_record_id: str, new_run_id: str
+    ) -> StoreData:
+        """Exact-record Stage-3 trusted-SOAKING owner rebase."""
+        async with self._lock:
+            record = self.data.safety_records.get(safety_record_id)
+            if record is None:
+                raise StoreNotLoadedError(f"record {safety_record_id} has no persisted session")
+            return await self._rebase_soaking_owner_locked(record, new_run_id)
+
+    async def _rebase_soaking_owner_locked(
+        self, record: SafetyRecord, new_run_id: str
+    ) -> StoreData:
+        history = self.data.zone_histories[record.zone_history_id]
+        persisted = history.zone_runtime.session
+        if persisted is None:
+            raise StoreNotLoadedError(f"record {record.safety_record_id} has no persisted session")
+        runtime = replace(
+            history.zone_runtime,
+            session=PersistedSession(
+                persisted.owner_safety_record_id,
+                persisted.context.evolve(owner_run_id=new_run_id),
+            ),
+        )
+        histories = dict(self.data.zone_histories)
+        histories[history.zone_history_id] = history.evolve(zone_runtime=runtime)
+        new_data = self.data.evolve(
+            store_revision=self.data.store_revision + 1, zone_histories=histories
+        )
+        await self._save_and_verify_locked(new_data)
+        return new_data
 
     async def _load_current_or_schema1_locked(self) -> object | None:
         """Load schema 2 normally, falling back to the historical Store wrapper.
