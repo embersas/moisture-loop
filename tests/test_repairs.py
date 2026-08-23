@@ -13,6 +13,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
@@ -62,6 +63,7 @@ async def env(hass, freezer):
     entry, subentry_id = await setup_with_zone(hass)
     events: list = []
 
+    @callback
     def capture(event) -> None:
         events.append(event)
 
