@@ -6,3 +6,6 @@
 # Requires Python 3.13 on a HA-supported platform (CI: ubuntu-latest).
 # This job can never be dropped while the 2025.9.0 floor stands.
 pytest-homeassistant-custom-component==0.13.277
+# pycares 5 removed result-type attributes imported by HA 2025.9.0. Keep the
+# newest compatible 4.x release while preserving aiodns 3.5's >=4.9 contract.
+pycares==4.11.0
