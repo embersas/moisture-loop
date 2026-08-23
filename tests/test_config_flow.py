@@ -7,6 +7,8 @@ signature is exercised). Skips cleanly in the pure environment.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -29,9 +31,16 @@ from custom_components.moisture_loop.const import (
     DOMAIN,
 )
 from custom_components.moisture_loop.models import (
+    BlockerReason,
     CompletionReason,
     ControllerState,
+    FaultCode,
+    PersistedSession,
+    PossibleFlowOwner,
+    PulseDeadlineReached,
     RuntimeLifecycle,
+    SessionContext,
+    SessionMode,
 )
 
 SENSOR = "sensor.moisture_1"
@@ -670,6 +679,21 @@ class TestZoneReconfigureFlow:
         b_record_id = runtime.bindings[b_subentry_id].safety_record_id
         assert hass.config_entries.async_remove_subentry(entry, b_subentry_id)
         await hass.async_block_till_done()
+        await runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    b_record_id: data.safety_records[b_record_id].evolve(
+                        runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+                        blocker_reasons=(BlockerReason.INTEGRATION_OFF_UNCONFIRMED,),
+                        possible_flow_owner=PossibleFlowOwner.INTEGRATION,
+                        actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                        acknowledgement_required=True,
+                    ),
+                },
+                dict(data.zone_histories),
+            )
+        )
 
         await run_zone_add_flow(
             hass, entry, identity={**IDENTITY, "actuator": actuator_a.entity_id}
@@ -693,6 +717,199 @@ class TestZoneReconfigureFlow:
         assert binding.safety_record_id == b_record_id
         assert binding.zone_history_id == a_history_id
         assert len(applied.store.data.safety_records) == 2
+        retained_b = applied.store.data.safety_records[b_record_id]
+        assert retained_b.blocker_reasons == (BlockerReason.INTEGRATION_OFF_UNCONFIRMED,)
+        assert retained_b.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+        assert retained_b.acknowledgement_required
+        assert binding.controller.state is ControllerState.FAULT
+
+    @pytest.mark.parametrize(
+        ("current_sensor_state", "expected_fault"),
+        [
+            ("44", None),
+            ("unavailable", FaultCode.SENSOR_UNAVAILABLE),
+            ("not-a-number", FaultCode.SENSOR_INVALID),
+        ],
+    )
+    async def test_ar12_ar13_ar16_retained_b_operational_state_never_overrides_current_zone(
+        self, hass, entities, current_sensor_state, expected_fault
+    ) -> None:
+        registry = er.async_get(hass)
+        actuator_a = registry.async_get_or_create(
+            "switch", "test", "operational-a", suggested_object_id="operational_a"
+        )
+        actuator_b = registry.async_get_or_create(
+            "switch", "test", "operational-b", suggested_object_id="operational_b"
+        )
+        hass.states.async_set(actuator_a.entity_id, "off")
+        hass.states.async_set(actuator_b.entity_id, "off")
+        entry = await create_controller_entry(hass)
+
+        await run_zone_add_flow(
+            hass,
+            entry,
+            identity={
+                "name": "Historical B",
+                "moisture_sensor": SENSOR_2,
+                "actuator": actuator_b.entity_id,
+            },
+        )
+        await hass.async_block_till_done()
+        runtime = entry.runtime_data
+        b_subentry_id = next(iter(entry.subentries))
+        b_record_id = runtime.bindings[b_subentry_id].safety_record_id
+        await runtime.controllers[b_subentry_id].async_set_enabled(False)
+        assert hass.config_entries.async_remove_subentry(entry, b_subentry_id)
+        await hass.async_block_till_done()
+
+        b_record = runtime.store.data.safety_records[b_record_id]
+        b_history = runtime.store.data.zone_histories[b_record.zone_history_id]
+        await runtime.store.async_reconcile(
+            lambda data: (
+                dict(data.safety_records),
+                {
+                    **data.zone_histories,
+                    b_history.zone_history_id: b_history.evolve(
+                        zone_runtime=replace(
+                            b_history.zone_runtime,
+                            enabled=False,
+                            state=ControllerState.FAULT,
+                            zone_fault=FaultCode.SENSOR_STALE,
+                        )
+                    ),
+                },
+            )
+        )
+
+        hass.states.async_set(SENSOR, current_sensor_state)
+        await run_zone_add_flow(
+            hass, entry, identity={**IDENTITY, "actuator": actuator_a.entity_id}
+        )
+        await hass.async_block_till_done()
+        runtime = entry.runtime_data
+        a_subentry_id = next(iter(entry.subentries))
+        a_history_id = runtime.bindings[a_subentry_id].zone_history_id
+        assert runtime.controllers[a_subentry_id].enabled
+
+        _, result = await self.start_reconfigure(hass, entry)
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {**IDENTITY, "actuator": actuator_b.entity_id}
+        )
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], THRESHOLDS)
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], LIMITS)
+        assert result["type"] is FlowResultType.ABORT
+        await hass.async_block_till_done()
+
+        runtime = entry.runtime_data
+        binding = runtime.bindings[a_subentry_id]
+        assert binding.safety_record_id == b_record_id
+        assert binding.zone_history_id == a_history_id
+        controller = binding.controller
+        assert controller.enabled
+        assert controller.session is None
+        assert controller.active_fault is expected_fault
+        assert controller.state is (
+            ControllerState.IDLE if expected_fault is None else ControllerState.FAULT
+        )
+        history = runtime.store.data.zone_histories[a_history_id]
+        assert history.zone_runtime.enabled
+        assert history.zone_runtime.zone_fault is expected_fault
+        assert history.zone_runtime.sensor_identity.last_known_entity_id == SENSOR
+
+    async def test_ar15_retained_b_watering_is_closed_and_never_adopted_as_current_session(
+        self, hass, entities
+    ) -> None:
+        registry = er.async_get(hass)
+        actuator_a = registry.async_get_or_create(
+            "switch", "test", "session-a", suggested_object_id="session_a"
+        )
+        actuator_b = registry.async_get_or_create(
+            "switch", "test", "session-b", suggested_object_id="session_b"
+        )
+        hass.states.async_set(actuator_a.entity_id, "off")
+        hass.states.async_set(actuator_b.entity_id, "off")
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(
+            hass,
+            entry,
+            identity={
+                "name": "Historical session B",
+                "moisture_sensor": SENSOR_2,
+                "actuator": actuator_b.entity_id,
+            },
+        )
+        await hass.async_block_till_done()
+        runtime = entry.runtime_data
+        b_subentry_id = next(iter(entry.subentries))
+        b_record_id = runtime.bindings[b_subentry_id].safety_record_id
+        assert hass.config_entries.async_remove_subentry(entry, b_subentry_id)
+        await hass.async_block_till_done()
+        await run_zone_add_flow(
+            hass, entry, identity={**IDENTITY, "actuator": actuator_a.entity_id}
+        )
+        await hass.async_block_till_done()
+        runtime = entry.runtime_data
+        a_subentry_id = next(iter(entry.subentries))
+        a_history_id = runtime.bindings[a_subentry_id].zone_history_id
+        b_record = runtime.store.data.safety_records[b_record_id]
+        b_history = runtime.store.data.zone_histories[b_record.zone_history_id]
+        instant = hass.states.get(SENSOR).last_reported
+        session = SessionContext(
+            session_id="retained-b-open-session",
+            owner_run_id="crashed-run",
+            config_fingerprint=b_record.applied_config.config_fingerprint,
+            mode=SessionMode.AUTO,
+            started_at_utc=instant - timedelta(minutes=3),
+            cycle=1,
+            session_runtime_s=0.0,
+            pulse_intent_at_utc=instant - timedelta(minutes=2),
+            pulse_commanded_at_utc=instant - timedelta(minutes=2),
+            pulse_confirmed_at_utc=instant - timedelta(minutes=2),
+            pulse_ends_at_utc=instant + timedelta(minutes=3),
+            moisture_at_start=20.0,
+        )
+        await runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    b_record_id: data.safety_records[b_record_id].evolve(
+                        runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+                        blocker_reasons=(BlockerReason.INTEGRATION_OFF_UNCONFIRMED,),
+                        possible_flow_owner=PossibleFlowOwner.INTEGRATION,
+                    ),
+                },
+                {
+                    **data.zone_histories,
+                    b_history.zone_history_id: b_history.evolve(
+                        zone_runtime=replace(
+                            b_history.zone_runtime,
+                            state=ControllerState.WATERING,
+                            session=PersistedSession(b_record_id, session),
+                        )
+                    ),
+                },
+            )
+        )
+
+        _, result = await self.start_reconfigure(hass, entry)
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {**IDENTITY, "actuator": actuator_b.entity_id}
+        )
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], THRESHOLDS)
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], LIMITS)
+        assert result["type"] is FlowResultType.ABORT
+        await hass.async_block_till_done()
+
+        runtime = entry.runtime_data
+        binding = runtime.bindings[a_subentry_id]
+        assert binding.safety_record_id == b_record_id
+        assert binding.zone_history_id == a_history_id
+        assert binding.controller.session is None
+        assert binding.controller.state is ControllerState.IDLE
+        merged = runtime.store.data.zone_histories[a_history_id]
+        assert merged.zone_runtime.session is None
+        assert merged.daily is not None and merged.daily.runtime_s > 0
+        assert b_history.zone_history_id not in runtime.store.data.zone_histories
 
     async def test_same_uuid_entity_rename_reconfigures_without_false_conflict(
         self, hass, entities
@@ -784,6 +1001,56 @@ class TestZoneReconfigureFlow:
 
 
 class TestNativeSubentryDeletion:
+    async def test_rapid_two_zone_native_deletion_materializes_both_without_reload(
+        self, hass, entities, hass_access_token, socket_enabled
+    ) -> None:
+        registry = er.async_get(hass)
+        actuator_a = registry.async_get_or_create(
+            "switch", "test", "native-delete-a", suggested_object_id="native_delete_a"
+        )
+        actuator_b = registry.async_get_or_create(
+            "switch", "test", "native-delete-b", suggested_object_id="native_delete_b"
+        )
+        hass.states.async_set(actuator_a.entity_id, "off")
+        hass.states.async_set(actuator_b.entity_id, "off")
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(
+            hass, entry, identity={**IDENTITY, "actuator": actuator_a.entity_id}
+        )
+        await hass.async_block_till_done()
+        await run_zone_add_flow(
+            hass,
+            entry,
+            identity={
+                "name": "Second bed",
+                "moisture_sensor": SENSOR_2,
+                "actuator": actuator_b.entity_id,
+            },
+        )
+        await hass.async_block_till_done()
+        runtime = entry.runtime_data
+        record_ids = {binding.safety_record_id for binding in runtime.bindings.values()}
+        subentry_ids = tuple(entry.subentries)
+        assert len(record_ids) == len(subentry_ids) == 2
+
+        with patch.object(hass.config_entries, "async_reload") as reload_entry:
+            for subentry_id in subentry_ids:
+                response = await native_delete_via_websocket(
+                    hass, hass_access_token, entry, subentry_id
+                )
+                assert response["success"]
+            assert entry.subentries == {}
+            await hass.async_block_till_done()
+
+        reload_entry.assert_not_awaited()
+        assert runtime.controllers == {}
+        assert record_ids <= set(runtime.store.data.safety_records)
+        assert all(
+            runtime.store.data.safety_records[record_id].runtime_lifecycle
+            is RuntimeLifecycle.RETIRED
+            for record_id in record_ids
+        )
+
     async def test_idle_delete_uses_real_websocket_path_without_reload_and_keeps_safety_record(
         self, hass, entities, hass_access_token, socket_enabled
     ) -> None:
@@ -863,6 +1130,75 @@ class TestNativeSubentryDeletion:
         retained = runtime.store.data.safety_records[record_id]
         assert retained.runtime_lifecycle is RuntimeLifecycle.RETIRED
         history = runtime.store.data.zone_histories[retained.zone_history_id]
+        assert history.zone_runtime.last_session_summary is not None
+        assert history.zone_runtime.last_session_summary.reason is CompletionReason.CONFIG_CHANGED
+
+    async def test_watering_manual_native_delete_uses_one_off_and_never_resumes(
+        self, hass, entities, hass_access_token, socket_enabled
+    ) -> None:
+        (
+            entry,
+            runtime,
+            subentry_id,
+            calls,
+        ) = await TestZoneReconfigureFlow().make_loaded_watering_valve(hass)
+        controller = runtime.controllers[subentry_id]
+        await hass.async_block_till_done()
+        await controller.async_stop_watering()
+        await hass.async_block_till_done()
+        assert controller.state is ControllerState.IDLE
+        decision = await controller.async_manual_start(120)
+        assert decision.guard_result is not None
+        assert decision.guard_result.failed_guards == ("G-SLOT",)
+        await hass.async_block_till_done()
+        assert controller.session is not None
+        assert controller.session.mode is SessionMode.MANUAL
+        assert controller.state is ControllerState.WATERING
+        before_on = calls["on"]
+        before_off = calls["off"]
+
+        response = await native_delete_via_websocket(hass, hass_access_token, entry, subentry_id)
+        assert response["success"]
+        assert subentry_id not in entry.subentries
+        await hass.async_block_till_done()
+
+        assert calls == {"on": before_on, "off": before_off + 1}
+        assert runtime.controllers == {}
+        record = runtime.store.data.safety_records[controller.safety_record_id]
+        history = runtime.store.data.zone_histories[record.zone_history_id]
+        assert record.runtime_lifecycle is RuntimeLifecycle.RETIRED
+        assert history.zone_runtime.session is None
+        assert history.zone_runtime.last_session_summary is not None
+        assert history.zone_runtime.last_session_summary.reason is CompletionReason.CONFIG_CHANGED
+
+    async def test_soaking_native_delete_revokes_later_pulse_without_extra_off(
+        self, hass, entities, hass_access_token, socket_enabled
+    ) -> None:
+        (
+            entry,
+            runtime,
+            subentry_id,
+            calls,
+        ) = await TestZoneReconfigureFlow().make_loaded_watering_valve(hass)
+        controller = runtime.controllers[subentry_id]
+        await hass.async_block_till_done()
+        decision = await controller.async_dispatch(PulseDeadlineReached())
+        assert not decision.no_op
+        await hass.async_block_till_done()
+        assert controller.state is ControllerState.SOAKING
+        before = dict(calls)
+
+        response = await native_delete_via_websocket(hass, hass_access_token, entry, subentry_id)
+        assert response["success"]
+        assert subentry_id not in entry.subentries
+        await hass.async_block_till_done()
+
+        assert calls == before
+        assert runtime.controllers == {}
+        record = runtime.store.data.safety_records[controller.safety_record_id]
+        history = runtime.store.data.zone_histories[record.zone_history_id]
+        assert record.runtime_lifecycle is RuntimeLifecycle.RETIRED
+        assert history.zone_runtime.session is None
         assert history.zone_runtime.last_session_summary is not None
         assert history.zone_runtime.last_session_summary.reason is CompletionReason.CONFIG_CHANGED
 

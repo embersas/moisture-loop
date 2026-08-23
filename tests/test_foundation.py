@@ -68,6 +68,8 @@ def test_production_source_uses_no_prohibited_config_entry_internals() -> None:
         "_async_dispatch",
         "SIGNAL_CONFIG_ENTRY_CHANGED",
         "async_dispatcher_send_internal",
+        "async_prepare_delete",
+        "websocket_intercept",
     }
     integration = REPO_ROOT / "custom_components" / "moisture_loop"
     for file in integration.glob("*.py"):
@@ -76,3 +78,104 @@ def test_production_source_uses_no_prohibited_config_entry_internals() -> None:
             node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
         }
         assert not (used & prohibited), f"{file.name} uses {sorted(used & prohibited)}"
+
+
+def test_local_only_and_no_recorder_dependency() -> None:
+    """I28: production safety has no cloud/network/Recorder dependency."""
+    prohibited_imports = {
+        "aiohttp",
+        "httpx",
+        "requests",
+        "socket",
+        "urllib",
+        "homeassistant.components.recorder",
+    }
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    for file in integration.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        imports: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imports.add(node.module or "")
+        assert not any(
+            imported == prohibited or imported.startswith(prohibited + ".")
+            for imported in imports
+            for prohibited in prohibited_imports
+        ), file.name
+
+
+def test_schema1_compatibility_is_migration_only() -> None:
+    """ZoneRecord/schema 1 cannot be current watering or reconciliation authority."""
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    allowed = {"models.py", "storage.py"}
+    for file in integration.glob("*.py"):
+        text = file.read_text(encoding="utf-8")
+        if file.name not in allowed:
+            assert "ZoneRecord" not in text
+            assert "Schema1StoreData" not in text
+            assert "migrate_schema1_to_schema2" not in text
+
+    models_tree = ast.parse((integration / "models.py").read_text(encoding="utf-8"))
+    store_data = next(
+        node
+        for node in models_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "StoreData"
+    )
+    assert not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "zones"
+        for node in store_data.body
+    )
+    storage_text = (integration / "storage.py").read_text(encoding="utf-8")
+    for obsolete in (
+        "async_update_zone",
+        "async_update_record_runtime",
+        "legacy_record_for",
+        "to_legacy_record",
+        "async_rebase_soaking_owner(",
+    ):
+        assert obsolete not in storage_text
+
+
+def test_blocker_ownership_is_safety_record_only() -> None:
+    """I19: physical hazard calls never key blockers by zone/subentry ID."""
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    calls = 0
+    for file in integration.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr not in {"async_add_blocker", "async_remove_blocker"}:
+                continue
+            calls += 1
+            assert node.args
+            first = ast.unparse(node.args[0])
+            assert not first.endswith(".zone_id"), (file.name, node.lineno, first)
+            assert not first.endswith(".subentry_id"), (file.name, node.lineno, first)
+    assert calls > 0
+
+
+def test_one_shared_off_implementation() -> None:
+    """I16: flow exits converge on the controller's one OFF future."""
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    callers: list[tuple[str, int]] = []
+    for file in integration.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "async_turn_off"
+            ):
+                callers.append((file.name, node.lineno))
+    # One normal controller implementation plus startup-only defensive
+    # reconciliation when no live session owner can exist.
+    assert [name for name, _line in callers].count("zone_controller.py") == 1
+    assert [name for name, _line in callers].count("runtime.py") == 1
+    assert len(callers) == 2
+    controller = (integration / "zone_controller.py").read_text(encoding="utf-8")
+    assert "def begin_off_operation(" in controller
+    assert "async def _ensure_off_operation(" in controller
+    assert "self._off_operation" in controller

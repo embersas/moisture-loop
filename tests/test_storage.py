@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -24,6 +25,7 @@ from custom_components.moisture_loop.models import (
     PossibleFlowOwner,
     RunIds,
     RuntimeLifecycle,
+    SafetyRecord,
     Schema1StoreData,
     SensorIdentity,
     SessionContext,
@@ -31,8 +33,9 @@ from custom_components.moisture_loop.models import (
     StoreData,
     ZoneConfig,
     ZoneDailyRuntime,
+    ZoneHistory,
     ZoneRecord,
-    migrate_schema1_to_schema2,
+    ZoneRuntime,
     schema1_store_data_to_dict,
     store_data_to_dict,
 )
@@ -149,12 +152,52 @@ def legacy_snapshot(
 def schema2_snapshot(
     *, generation: str = GENERATION, revision: int = 9, zone_ids: tuple[str, ...] = ("zone-a",)
 ) -> StoreData:
-    legacy = legacy_snapshot(
-        generation=generation,
-        revision=revision - 1,
-        zones={zone_id: ZoneRecord(ControllerState.IDLE, True) for zone_id in zone_ids},
+    histories: dict[str, ZoneHistory] = {}
+    records: dict[str, SafetyRecord] = {}
+    for zone_id in zone_ids:
+        current = context(zone_id)
+        history_id = f"history-{zone_id}"
+        histories[history_id] = ZoneHistory(
+            zone_history_id=history_id,
+            active_subentry_id=zone_id,
+            previous_subentry_ids=(),
+            last_session_end_utc=None,
+            last_auto_session_start_utc=None,
+            zone_runtime=ZoneRuntime(
+                enabled=True,
+                state=ControllerState.IDLE,
+                zone_fault=None,
+                secondary_fault=None,
+                sensor_identity=current.sensor_identity,
+                last_session_summary=None,
+                session=None,
+            ),
+            daily=None,
+        )
+        records[zone_id] = SafetyRecord(
+            safety_record_id=zone_id,
+            zone_id=zone_id,
+            active_subentry_id=zone_id,
+            previous_subentry_ids=(),
+            safety_lineage_id=f"lineage-{zone_id}",
+            zone_history_id=history_id,
+            historical_zone_history_ids=(),
+            runtime_lifecycle=RuntimeLifecycle.ACTIVE,
+            applied_config=current.applied_config,
+            actuator_identity=current.actuator_identity,
+            blocker_reasons=(),
+            possible_flow_owner=None,
+            identity_incident=None,
+            actuator_fault=None,
+            acknowledgement_required=False,
+        )
+    return StoreData(
+        generation_id=generation,
+        store_revision=revision,
+        run=RunIds("run-a", "run-a"),
+        zone_histories=histories,
+        safety_records=records,
     )
-    return migrate_schema1_to_schema2(legacy, {zone_id: context(zone_id) for zone_id in zone_ids})
 
 
 def seed_schema1(hass_storage: dict, data: Schema1StoreData) -> None:
@@ -173,6 +216,23 @@ def seed_schema2(hass_storage: dict, data: StoreData) -> None:
         "key": KEY,
         "data": store_data_to_dict(data),
     }
+
+
+async def update_zone_runtime(store: SafetyStore, zone_id: str, **changes: object) -> None:
+    """Mutate one canonical ZoneHistory without a schema-1 projection."""
+
+    def mutate(data):
+        records = [record for record in data.safety_records.values() if record.zone_id == zone_id]
+        assert len(records) == 1
+        record = records[0]
+        history = data.zone_histories[record.zone_history_id]
+        histories = dict(data.zone_histories)
+        histories[history.zone_history_id] = history.evolve(
+            zone_runtime=replace(history.zone_runtime, **changes)
+        )
+        return dict(data.safety_records), histories
+
+    await store.async_reconcile(mutate)
 
 
 def async_raise(error: Exception):
@@ -404,8 +464,8 @@ class TestVerifiedWritesAndRuns:
         await store.async_classify_setup(True)
         store._store.async_save = async_raise(OSError("interrupted"))  # type: ignore[method-assign]
         with pytest.raises(StoreWriteVerificationError):
-            await store.async_update_zone(
-                "zone-a", lambda _old: ZoneRecord(ControllerState.DISABLED, False)
+            await update_zone_runtime(
+                store, "zone-a", state=ControllerState.DISABLED, enabled=False
             )
         assert store.data == previous
         fresh = make_store(hass)
@@ -463,9 +523,7 @@ class TestVerifiedWritesAndRuns:
 
         store._store.async_save = tamper  # type: ignore[method-assign]
         with pytest.raises(StoreWriteVerificationError, match="payload mismatch"):
-            await store.async_update_zone(
-                "zone-a", lambda _old: ZoneRecord(ControllerState.IDLE, True)
-            )
+            await update_zone_runtime(store, "zone-a", state=ControllerState.IDLE, enabled=True)
         assert store.data == previous
 
     async def test_revisions_increase_monotonically(self, hass, hass_storage) -> None:
@@ -473,9 +531,7 @@ class TestVerifiedWritesAndRuns:
         store = make_store(hass)
         await store.async_classify_setup(True)
         for expected in (10, 11, 12):
-            await store.async_update_zone(
-                "zone-a", lambda _old: ZoneRecord(ControllerState.IDLE, True)
-            )
+            await update_zone_runtime(store, "zone-a", state=ControllerState.IDLE, enabled=True)
             assert store.data.store_revision == expected
 
     async def test_run_id_protocol_and_clean_marking(self, hass, hass_storage) -> None:
@@ -508,29 +564,43 @@ class TestVerifiedWritesAndRuns:
             await store.async_begin_new_run("run-b")
         assert store.data.run == RunIds("run-a", "run-a")
 
-    async def test_pi20_compatibility_writes_serialize_without_loss(
-        self, hass, hass_storage
-    ) -> None:
+    async def test_pi20_canonical_writes_serialize_without_loss(self, hass, hass_storage) -> None:
         seed_schema2(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b", "zone-c")))
         store = make_store(hass)
         await store.async_classify_setup(True)
 
         async def write(zone_id: str, enabled: bool) -> None:
-            await store.async_update_zone(
-                zone_id, lambda _old: ZoneRecord(ControllerState.IDLE, enabled)
-            )
+            await update_zone_runtime(store, zone_id, state=ControllerState.IDLE, enabled=enabled)
 
         await asyncio.gather(write("zone-a", True), write("zone-b", False), write("zone-c", True))
-        assert set(store.data.zones) == {"zone-a", "zone-b", "zone-c"}
-        assert store.data.zones["zone-b"].enabled is False
+        assert {record.zone_id for record in store.data.safety_records.values()} == {
+            "zone-a",
+            "zone-b",
+            "zone-c",
+        }
+        record_b = next(
+            record for record in store.data.safety_records.values() if record.zone_id == "zone-b"
+        )
+        assert not store.data.zone_histories[record_b.zone_history_id].zone_runtime.enabled
         assert store.data.store_revision == 12
 
-    async def test_projection_cannot_create_identityless_record(self, hass) -> None:
+    async def test_canonical_runtime_write_cannot_create_identityless_record(self, hass) -> None:
         store = make_store(hass)
         await store.async_first_initialize()
-        with pytest.raises(StoreWriteVerificationError, match="cannot create"):
-            await store.async_update_zone(
-                "zone-a", lambda _old: ZoneRecord(ControllerState.IDLE, True)
+        with pytest.raises(StoreWriteVerificationError, match="unknown canonical"):
+            await store.async_update_controller_runtime(
+                "zone-a",
+                "history-a",
+                state=ControllerState.IDLE,
+                enabled=True,
+                active_fault=None,
+                secondary_fault=None,
+                last_session_end_utc=None,
+                last_auto_session_start_utc=None,
+                daily=None,
+                last_session_summary=None,
+                session=None,
+                possible_flow_owner=None,
             )
 
     async def test_rebase_changes_only_session_owner(self, hass, hass_storage) -> None:
@@ -538,9 +608,10 @@ class TestVerifiedWritesAndRuns:
         seed_schema1(hass_storage, legacy)
         store = make_store(hass)
         await store.async_classify_setup(True, {"zone-a": context("zone-a")})
-        before = store.data.zones["zone-a"].session
-        await store.async_rebase_soaking_owner("zone-a", "run-b")
-        after = store.data.zones["zone-a"].session
+        record = store.data.safety_records["zone-a"]
+        before = store.data.zone_histories[record.zone_history_id].zone_runtime.session.context
+        await store.async_rebase_soaking_owner_for_record("zone-a", "run-b")
+        after = store.data.zone_histories[record.zone_history_id].zone_runtime.session.context
         assert after == before.evolve(owner_run_id="run-b")
 
     async def test_rebase_without_session_rejects(self, hass, hass_storage) -> None:
@@ -548,7 +619,7 @@ class TestVerifiedWritesAndRuns:
         store = make_store(hass)
         await store.async_classify_setup(True)
         with pytest.raises(StoreNotLoadedError):
-            await store.async_rebase_soaking_owner("zone-a", "run-b")
+            await store.async_rebase_soaking_owner_for_record("zone-a", "run-b")
 
     async def test_rebase_write_failure_keeps_session(self, hass, hass_storage) -> None:
         seed_schema1(hass_storage, legacy_snapshot())
@@ -557,7 +628,7 @@ class TestVerifiedWritesAndRuns:
         previous = store.data
         store._store.async_save = async_raise(OSError("boom"))  # type: ignore[method-assign]
         with pytest.raises(StoreWriteVerificationError):
-            await store.async_rebase_soaking_owner("zone-a", "run-b")
+            await store.async_rebase_soaking_owner_for_record("zone-a", "run-b")
         assert store.data == previous
 
 
@@ -574,7 +645,7 @@ class TestIntegrityAndRetention:
         assert record.acknowledgement_required
         assert record.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
         assert history.daily.runtime_s == 3600.0
-        assert data.zones["zone-a"].state is ControllerState.FAULT
+        assert history.zone_runtime.state is ControllerState.FAULT
 
     async def test_pi27_tb11_retired_tombstone_never_auto_purged(self, hass, hass_storage) -> None:
         data = schema2_snapshot()

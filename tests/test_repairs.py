@@ -174,9 +174,17 @@ class TestRepairs:
 
         controller = env.runtime.controllers[env.subentry_id]
         record_id = controller.safety_record_id
-        await env.runtime.store.async_update_record_runtime(
-            record_id,
-            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        await env.runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    record_id: data.safety_records[record_id].evolve(
+                        actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                        acknowledgement_required=True,
+                    ),
+                },
+                dict(data.zone_histories),
+            )
         )
         env.runtime._sync_repairs_from_authority()
         issue_id = record_issue_id(env.entry.entry_id, record_id, ISSUE_OFF_UNCONFIRMED)
@@ -316,9 +324,16 @@ class TestEvents:
         assert env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)
         await settle(env.hass)
         assert dr.async_get(env.hass).async_get_device({(DOMAIN, env.subentry_id)}) is None
-        await env.runtime.store.async_update_record_runtime(
-            record_id,
-            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_UNAVAILABLE),
+        await env.runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    record_id: data.safety_records[record_id].evolve(
+                        actuator_fault=FaultCode.ACTUATOR_UNAVAILABLE,
+                    ),
+                },
+                dict(data.zone_histories),
+            )
         )
         env.runtime._make_emitter(env.subentry_id, record_id)(
             "fault_set", {"fault": FaultCode.ACTUATOR_UNAVAILABLE.value}

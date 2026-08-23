@@ -40,6 +40,7 @@ from .models import (
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
     BlockerReason,
+    CompletionReason,
     ConfigChangedPrepare,
     ConfigEntryReload,
     ControllerState,
@@ -51,6 +52,7 @@ from .models import (
     IdentityStatus,
     MigrationRecordContext,
     MoistureClassification,
+    PersistedSession,
     PossibleFlowOwner,
     RunIds,
     RuntimeLifecycle,
@@ -63,7 +65,6 @@ from .models import (
     ZoneConfig,
     ZoneDailyRuntime,
     ZoneHistory,
-    ZoneRecord,
     config_fingerprint,
     merge_zone_history_continuity,
 )
@@ -875,6 +876,39 @@ class EntryRuntime:
             record = self.store.data.safety_records.get(persisted.owner_safety_record_id)
             if record is None or record.applied_config is None:
                 continue
+            if (
+                persisted.context.pending_termination_reason is None
+                and history.zone_runtime.state is ControllerState.FAULT
+                and record.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+            ):
+                # ``pending_termination_reason`` is deliberately live-only in
+                # schema 2. T15 makes ACTUATOR_FAULT authoritative whenever
+                # OFF exhaustion supersedes the original request, so restore
+                # that deterministic reason before a post-restart OFF can
+                # close the retained accounting record.
+                restored = PersistedSession(
+                    persisted.owner_safety_record_id,
+                    persisted.context.evolve(
+                        pending_termination_reason=CompletionReason.ACTUATOR_FAULT
+                    ),
+                )
+
+                def _restore_terminal_reason(
+                    data,
+                    history_id=history.zone_history_id,
+                    restored_session=restored,
+                ):
+                    histories = dict(data.zone_histories)
+                    current = histories[history_id]
+                    histories[history_id] = current.evolve(
+                        zone_runtime=replace(current.zone_runtime, session=restored_session)
+                    )
+                    return dict(data.safety_records), histories
+
+                await self.store.async_reconcile(_restore_terminal_reason)
+                history = self.store.data.zone_histories[history.zone_history_id]
+                persisted = history.zone_runtime.session
+                assert persisted is not None
             current = (
                 zones.get(record.active_subentry_id)
                 if record.active_subentry_id is not None
@@ -912,13 +946,13 @@ class EntryRuntime:
                 safety_record_id=record.safety_record_id,
                 authorization=self,
             )
-            projected = self.store.legacy_record_for(record.safety_record_id)
+            history = self.store.data.zone_histories[record.zone_history_id]
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
-            if projected.state is ControllerState.SOAKING:
-                controller.async_attach(projected)
+            if history.zone_runtime.state is ControllerState.SOAKING:
+                controller.async_attach()
                 await controller.async_dispatch(StartupPersistedSoaking(trusted=False))
             else:
-                await self._reconcile_zone(controller, projected, assessment)
+                await self._reconcile_zone(controller, record, assessment)
             self.retained_controllers[record.safety_record_id] = controller
 
     def _plan_reconciled_store(
@@ -1117,6 +1151,16 @@ class EntryRuntime:
                 prior is not None
                 and selected.safety_record_id == prior.safety_record_id
                 and self._same_actuator(prior, zone)
+            ) or (
+                # A delete/re-add has no current subentry-owned ``prior``.
+                # Exact Registry UUID reactivation still owns the same open
+                # actuator accounting.  Do not extend this to A -> retained B:
+                # that path has a different current ``prior`` and must close
+                # B's historical operational session before handoff.
+                prior is None
+                and len(exact) == 1
+                and selected.safety_record_id == exact[0].safety_record_id
+                and self._same_actuator(selected, zone)
             )
             if history.zone_runtime.session is not None and not continuing_same_actuator:
                 conflicts.append(f"zone history {continuing_history_id} has unresolved session")
@@ -1141,7 +1185,7 @@ class EntryRuntime:
             ) and not (created_new and prior is None)
             zone_fault = history.zone_runtime.zone_fault
             secondary_zone_fault = history.zone_runtime.secondary_fault
-            if reevaluate_operational_state and persisted_session is None:
+            if reevaluate_operational_state:
                 zone_fault = self._current_zone_fault(zone)
                 secondary_zone_fault = None
                 runtime_state = (
@@ -1397,12 +1441,13 @@ class EntryRuntime:
             if not is_current():
                 return
             controller = self._create_controller(zone, record)
-            projected = self.store.legacy_record_for(record.safety_record_id)
+            history = self.store.data.zone_histories[record.zone_history_id]
             assessment = ActuatorAdapter(self.hass, zone.config.actuator).current()
             watering_recovery = (
-                projected.state is ControllerState.WATERING and projected.session is not None
+                history.zone_runtime.state is ControllerState.WATERING
+                and history.zone_runtime.session is not None
             )
-            await self._reconcile_zone(controller, projected, assessment)
+            await self._reconcile_zone(controller, record, assessment)
             if assessment.observed_on and not watering_recovery:
                 from .models import ExternalActuatorOn
 
@@ -1471,13 +1516,16 @@ class EntryRuntime:
                 safety_record_id=record.safety_record_id,
                 authorization=self,
             )
-            projected = self.store.legacy_record_for(record.safety_record_id)
+            history = self.store.data.zone_histories[record.zone_history_id]
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
-            if projected.state is ControllerState.SOAKING and projected.session is not None:
-                controller.async_attach(projected)
+            if (
+                history.zone_runtime.state is ControllerState.SOAKING
+                and history.zone_runtime.session is not None
+            ):
+                controller.async_attach()
                 await controller.async_dispatch(StartupPersistedSoaking(trusted=False))
             else:
-                await self._reconcile_zone(controller, projected, assessment)
+                await self._reconcile_zone(controller, record, assessment)
             self.retained_controllers[record.safety_record_id] = controller
 
         await self._refresh_tombstone_lifecycles()
@@ -1914,16 +1962,16 @@ class EntryRuntime:
     async def _reconcile_zone(
         self,
         controller: ZoneController,
-        record: ZoneRecord | None,
+        record: SafetyRecord,
         assessment,
     ) -> None:
         """Persisted WATERING/SOAKING/resting reconciliation (§25.2-§25.4)."""
-        if record is None:
-            controller.async_attach(None)
-            return
-        record = self._maybe_clear_configuration_fault(controller, record)
-        if record.state is ControllerState.WATERING and record.session is not None:
-            controller.async_attach(record)
+        await self._maybe_clear_configuration_fault(controller, record)
+        record = self.store.data.safety_records[record.safety_record_id]
+        history = self.store.data.zone_histories[record.zone_history_id]
+        persisted_session = history.zone_runtime.session
+        if history.zone_runtime.state is ControllerState.WATERING and persisted_session is not None:
+            controller.async_attach()
             if assessment.observed_on:
                 finding = ActuatorFinding.ON
             elif assessment.proven_off:
@@ -1932,17 +1980,15 @@ class EntryRuntime:
                 finding = ActuatorFinding.UNPROVEN
             await controller.async_dispatch(StartupPersistedWatering(finding))
             return
-        if record.state is ControllerState.SOAKING and record.session is not None:
-            await self._reconcile_soaking(controller, record, assessment)
+        if history.zone_runtime.state is ControllerState.SOAKING and persisted_session is not None:
+            await self._reconcile_soaking(controller, persisted_session.context, assessment)
             return
-        controller.async_attach(record)
+        controller.async_attach()
 
     async def _reconcile_soaking(
-        self, controller: ZoneController, record: ZoneRecord, assessment
+        self, controller: ZoneController, session: SessionContext, assessment
     ) -> None:
         """§25.3 trust checks, then atomic owner rebase before activation."""
-        session = record.session
-        assert session is not None
         previous = self.previous_run
         assert previous is not None
         trusted = (
@@ -1965,7 +2011,7 @@ class EntryRuntime:
             except StoreWriteVerificationError as err:
                 # LC9: watering-capable setup is prohibited; fail safe.
                 raise ConfigEntryNotReady(f"soaking owner rebase failed: {err}") from err
-            controller.async_attach(record)
+            controller.async_attach()
             await controller.async_dispatch(
                 StartupPersistedSoaking(trusted=True, current_run_id=self.run_id)
             )
@@ -1984,30 +2030,47 @@ class EntryRuntime:
                 controller._observation = controller._adapter.scan_current()
                 await controller.async_dispatch(GraceDeadlineReached())
             return
-        controller.async_attach(record)
+        controller.async_attach()
         await controller.async_dispatch(StartupPersistedSoaking(trusted=False))
         self.soaking_adoptions[controller.zone_id] = False
 
-    def _maybe_clear_configuration_fault(
-        self, controller: ZoneController, record: ZoneRecord
-    ) -> ZoneRecord:
+    async def _maybe_clear_configuration_fault(
+        self, controller: ZoneController, record: SafetyRecord
+    ) -> None:
         """§26.1: CONFIGURATION_INVALID clears via successful reconfigure.
 
         After a reload, if the persisted fault was CONFIGURATION_INVALID and
         both configured entities now exist, the reconfiguration resolved it:
         clear the fault and its Repairs.
         """
-        from .models import ControllerState as CS
-        from .models import FaultCode
-
-        if record.active_fault is not FaultCode.CONFIGURATION_INVALID:
-            return record
+        history = self.store.data.zone_histories[record.zone_history_id]
+        runtime = history.zone_runtime
+        if runtime.zone_fault is not FaultCode.CONFIGURATION_INVALID:
+            return
         config = controller.config
         if (
             self.hass.states.get(config.moisture_sensor) is None
             or self.hass.states.get(config.actuator) is None
         ):
-            return record
+            return
+
+        def _clear(data):
+            current_record = data.safety_records[record.safety_record_id]
+            current_history = data.zone_histories[current_record.zone_history_id]
+            current_runtime = current_history.zone_runtime
+            if current_runtime.zone_fault is not FaultCode.CONFIGURATION_INVALID:
+                return dict(data.safety_records), dict(data.zone_histories)
+            histories = dict(data.zone_histories)
+            histories[current_history.zone_history_id] = current_history.evolve(
+                zone_runtime=replace(
+                    current_runtime,
+                    state=ControllerState.IDLE,
+                    zone_fault=None,
+                )
+            )
+            return dict(data.safety_records), histories
+
+        await self.store.async_reconcile(_clear)
         from . import repairs
 
         repairs.async_delete_entity_missing_issues(self.hass, controller.zone_id)
@@ -2015,7 +2078,6 @@ class EntryRuntime:
             "Zone %s: configuration fault cleared after reconfiguration",
             controller.zone_id,
         )
-        return record.evolve(state=CS.IDLE, active_fault=None)
 
     @staticmethod
     def _session_structure_valid(session: SessionContext) -> bool:

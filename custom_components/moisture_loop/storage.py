@@ -18,6 +18,7 @@ entry-wide lock.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime
@@ -28,11 +29,15 @@ from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, LEGACY_STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION
 from .models import (
+    AccountingContribution,
+    ActuatorIdentity,
     BlockerReason,
     ControllerState,
     DailyRuntime,
     FaultCode,
     FutureStoreVersion,
+    IdentityIncident,
+    IdentityIncidentKind,
     IdentityStatus,
     MigrationRecordContext,
     PersistedSession,
@@ -40,14 +45,13 @@ from .models import (
     RunIds,
     RuntimeLifecycle,
     SafetyRecord,
-    Schema1StoreData,
+    SensorIdentity,
     SessionContext,
     SessionSummary,
     StoreData,
     StoreDataError,
     ZoneDailyRuntime,
     ZoneHistory,
-    ZoneRecord,
     ZoneRuntime,
     merge_zone_history_continuity,
     migrate_schema1_to_schema2,
@@ -213,22 +217,79 @@ class SafetyStore:
         Actuator reconciliation and the Repair are the lifecycle's part.
         """
         async with self._lock:
-            legacy_zones = {
-                zone_id: ZoneRecord(
-                    state=ControllerState.FAULT,
-                    enabled=True,
-                    active_fault=FaultCode.RESTORED_FROM_UNSAFE_STATE,
-                    daily=DailyRuntime(date_local=detection_date_local, runtime_s=float(max_daily)),
+            records: dict[str, SafetyRecord] = {}
+            histories: dict[str, ZoneHistory] = {}
+            for zone_id, max_daily in zone_budgets.items():
+                history_id = _integrity_id(self._generation_id, zone_id, "zone-history")
+                contribution = AccountingContribution(
+                    accounting_contribution_id=_integrity_id(
+                        self._generation_id,
+                        zone_id,
+                        f"integrity-daily:{detection_date_local.isoformat()}",
+                    ),
+                    source_safety_record_id=zone_id,
+                    start_utc=None,
+                    end_utc=None,
+                    runtime_s=float(max_daily),
+                    runtime_estimated=True,
+                    local_date=detection_date_local,
                 )
-                for zone_id, max_daily in zone_budgets.items()
-            }
-            legacy = Schema1StoreData(
+                histories[history_id] = ZoneHistory(
+                    zone_history_id=history_id,
+                    active_subentry_id=None,
+                    previous_subentry_ids=(zone_id,),
+                    last_session_end_utc=None,
+                    last_auto_session_start_utc=None,
+                    zone_runtime=ZoneRuntime(
+                        enabled=True,
+                        state=ControllerState.FAULT,
+                        zone_fault=None,
+                        secondary_fault=None,
+                        sensor_identity=SensorIdentity(None, None),
+                        last_session_summary=None,
+                        session=None,
+                    ),
+                    daily=ZoneDailyRuntime(
+                        date_local=detection_date_local,
+                        runtime_s=float(max_daily),
+                        conservative_unattributed_runtime_s=0.0,
+                        contributions=(contribution,),
+                    ),
+                )
+                records[zone_id] = SafetyRecord(
+                    safety_record_id=zone_id,
+                    zone_id=zone_id,
+                    active_subentry_id=None,
+                    previous_subentry_ids=(zone_id,),
+                    safety_lineage_id=_integrity_id(self._generation_id, zone_id, "safety-lineage"),
+                    zone_history_id=history_id,
+                    historical_zone_history_ids=(),
+                    runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+                    applied_config=None,
+                    actuator_identity=ActuatorIdentity(
+                        registry_entry_id=None,
+                        last_known_entity_id=None,
+                        domain=None,
+                        identity_status=IdentityStatus.MISSING,
+                        off_service=None,
+                        confirm_timeout_s=None,
+                    ),
+                    blocker_reasons=(BlockerReason.ACTUATOR_NOT_PROVEN_OFF,),
+                    possible_flow_owner=None,
+                    identity_incident=IdentityIncident(
+                        IdentityIncidentKind.MIGRATION_UNRESOLVED,
+                        "runtime Store integrity was reconstructed without durable identity",
+                    ),
+                    actuator_fault=FaultCode.RESTORED_FROM_UNSAFE_STATE,
+                    acknowledgement_required=True,
+                )
+            data = StoreData(
                 generation_id=self._generation_id,
-                store_revision=0,
+                store_revision=1,
                 run=RunIds(active_run_id=None, last_clean_shutdown_run_id=None),
-                zones=legacy_zones,
+                zone_histories=histories,
+                safety_records=records,
             )
-            data = migrate_schema1_to_schema2(legacy).evolve(store_revision=1)
             await self._save_and_verify_locked(data)
             return data
 
@@ -264,50 +325,6 @@ class SafetyStore:
                 ),
             )
             await self._save_and_verify_locked(new_data)
-
-    # -- zone safety writes ---------------------------------------------------
-
-    async def async_update_zone(
-        self, zone_id: str, mutator: Callable[[ZoneRecord | None], ZoneRecord]
-    ) -> StoreData:
-        """Temporary spec.3 projection seam for untouched runtime callers.
-
-        It may mutate only an already canonical schema-2 record/history. It
-        cannot create a clean record because the legacy call lacks durable
-        identity and an applied shadow. Stage 3 replaces this seam.
-        """
-        async with self._lock:
-            matches = [
-                record for record in self.data.safety_records.values() if record.zone_id == zone_id
-            ]
-            if len(matches) > 1:
-                raise StoreWriteVerificationError(
-                    "legacy zone projection is ambiguous across canonical records"
-                )
-            match = matches[0] if matches else None
-            if match is None:
-                raise StoreWriteVerificationError(
-                    "legacy zone projection cannot create a canonical schema-2 safety record"
-                )
-            return await self._update_record_runtime_locked(match, mutator)
-
-    async def async_update_record_runtime(
-        self,
-        safety_record_id: str,
-        mutator: Callable[[ZoneRecord], ZoneRecord],
-    ) -> StoreData:
-        """Update logical runtime through one exact canonical record.
-
-        Stage 3 runtime consumers use this API so an A -> B handoff never
-        falls back to ambiguous ``zone_id`` safety authority.
-        """
-        async with self._lock:
-            match = self.data.safety_records.get(safety_record_id)
-            if match is None:
-                raise StoreWriteVerificationError(
-                    f"unknown canonical safety_record_id {safety_record_id}"
-                )
-            return await self._update_record_runtime_locked(match, mutator)
 
     async def async_update_controller_runtime(
         self,
@@ -345,7 +362,7 @@ class SafetyStore:
                     "controller safety-record/zone-history ownership mismatch"
                 )
 
-            actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
+            actuator_fault, zone_fault, secondary_zone_fault = _partition_controller_faults(
                 active_fault, secondary_fault
             )
             zone_runtime = ZoneRuntime(
@@ -364,7 +381,7 @@ class SafetyStore:
                 last_session_end_utc=last_session_end_utc,
                 last_auto_session_start_utc=last_auto_session_start_utc,
                 zone_runtime=zone_runtime,
-                daily=_project_daily_runtime(history.daily, daily, safety_record_id),
+                daily=_merge_controller_daily_runtime(history.daily, daily),
             )
             records = dict(self.data.safety_records)
             records[safety_record_id] = record.evolve(
@@ -437,60 +454,6 @@ class SafetyStore:
             await self._save_and_verify_locked(new_data)
             return new_data
 
-    async def _update_record_runtime_locked(
-        self,
-        match: SafetyRecord,
-        mutator: Callable[[ZoneRecord | None], ZoneRecord],
-    ) -> StoreData:
-        history = self.data.zone_histories[match.zone_history_id]
-        current = history.zone_runtime.to_legacy_record(
-            actuator_fault=match.actuator_fault,
-            last_session_end_utc=history.last_session_end_utc,
-            last_auto_session_start_utc=history.last_auto_session_start_utc,
-            daily=history.daily,
-        )
-        replacement = mutator(current)
-        actuator_fault, zone_fault, secondary_zone_fault = _split_projection_faults(
-            replacement.active_fault, replacement.secondary_fault
-        )
-        old_daily = history.daily
-        new_daily = _project_daily_runtime(old_daily, replacement.daily, match.safety_record_id)
-        zone_runtime = history.zone_runtime
-        zone_runtime = replace(
-            zone_runtime,
-            enabled=replacement.enabled,
-            state=replacement.state,
-            zone_fault=zone_fault,
-            secondary_fault=secondary_zone_fault,
-            last_session_summary=replacement.last_session_summary,
-            session=(
-                PersistedSession(match.safety_record_id, replacement.session)
-                if replacement.session
-                else None
-            ),
-        )
-        histories = dict(self.data.zone_histories)
-        histories[history.zone_history_id] = history.evolve(
-            last_session_end_utc=replacement.last_session_end_utc,
-            last_auto_session_start_utc=replacement.last_auto_session_start_utc,
-            zone_runtime=zone_runtime,
-            daily=new_daily,
-        )
-        records = dict(self.data.safety_records)
-        records[match.safety_record_id] = match.evolve(
-            actuator_fault=actuator_fault,
-            acknowledgement_required=(
-                actuator_fault.requires_user_ack if actuator_fault is not None else False
-            ),
-        )
-        new_data = self.data.evolve(
-            store_revision=self.data.store_revision + 1,
-            zone_histories=histories,
-            safety_records=records,
-        )
-        await self._save_and_verify_locked(new_data)
-        return new_data
-
     async def async_reconcile(
         self,
         mutator: Callable[[StoreData], tuple[dict[str, SafetyRecord], dict[str, ZoneHistory]]],
@@ -510,17 +473,6 @@ class SafetyStore:
             )
             await self._save_and_verify_locked(new_data)
             return new_data
-
-    def legacy_record_for(self, safety_record_id: str) -> ZoneRecord:
-        """Project one exact canonical record for the current controller seam."""
-        record = self.data.safety_records[safety_record_id]
-        history = self.data.zone_histories[record.zone_history_id]
-        return history.zone_runtime.to_legacy_record(
-            actuator_fault=record.actuator_fault,
-            last_session_end_utc=history.last_session_end_utc,
-            last_auto_session_start_utc=history.last_auto_session_start_utc,
-            daily=history.daily,
-        )
 
     async def async_set_record_blocker(
         self,
@@ -630,31 +582,6 @@ class SafetyStore:
             await self._save_and_verify_locked(new_data)
             return new_data
 
-    async def async_rebase_soaking_owner(self, zone_id: str, new_run_id: str) -> StoreData:
-        """§23.3/§25.3: adopt a trusted SOAKING session for the current run.
-
-        Changes only ``session.owner_run_id``; every other session field is
-        preserved bit-for-bit. Atomically persisted and read-back verified
-        before any controller activation may proceed.
-        """
-        async with self._lock:
-            record = next(
-                (
-                    item
-                    for item in self.data.safety_records.values()
-                    if item.active_subentry_id == zone_id
-                ),
-                None,
-            )
-            if record is None:
-                matches = [
-                    item for item in self.data.safety_records.values() if item.zone_id == zone_id
-                ]
-                record = matches[0] if len(matches) == 1 else None
-            if record is None:
-                raise StoreNotLoadedError(f"zone {zone_id} has no persisted session")
-            return await self._rebase_soaking_owner_locked(record, new_run_id)
-
     async def async_rebase_soaking_owner_for_record(
         self, safety_record_id: str, new_run_id: str
     ) -> StoreData:
@@ -755,13 +682,13 @@ _ZONE_FAULTS = {
 }
 
 
-def _split_projection_faults(
+def _partition_controller_faults(
     primary: FaultCode | None, secondary: FaultCode | None
 ) -> tuple[FaultCode | None, FaultCode | None, FaultCode | None]:
     actuator_faults = [fault for fault in (primary, secondary) if fault in _ACTUATOR_FAULTS]
     if len(actuator_faults) > 1:
         raise StoreWriteVerificationError(
-            "legacy projection contains two actuator faults and cannot be represented safely"
+            "controller state contains two actuator faults and cannot be represented safely"
         )
     return (
         actuator_faults[0] if actuator_faults else None,
@@ -770,10 +697,9 @@ def _split_projection_faults(
     )
 
 
-def _project_daily_runtime(
+def _merge_controller_daily_runtime(
     current: ZoneDailyRuntime | None,
     replacement: DailyRuntime | None,
-    _safety_record_id: str,
 ) -> ZoneDailyRuntime | None:
     if replacement is None:
         return None
@@ -790,3 +716,8 @@ def _project_daily_runtime(
         conservative_unattributed_runtime_s=max(0.0, replacement.runtime_s - known),
         contributions=current.contributions,
     )
+
+
+def _integrity_id(generation_id: str, zone_id: str, kind: str) -> str:
+    """Stable schema-2 identity for fail-closed integrity reconstruction."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{DOMAIN}:{generation_id}:{zone_id}:{kind}"))

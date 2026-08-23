@@ -957,7 +957,7 @@ class RunIds:
 
 @dataclass(frozen=True, slots=True)
 class ZoneRecord:
-    """Historical schema-1 record / temporary runtime projection only."""
+    """Historical schema-1 record used only by the strict migration parser."""
 
     state: ControllerState
     enabled: bool
@@ -1705,31 +1705,6 @@ class ZoneRuntime:
         if self.zone_fault is not None and self.zone_fault == self.secondary_fault:
             raise ValueError("zone primary and secondary fault must not duplicate")
 
-    def to_legacy_record(
-        self,
-        *,
-        actuator_fault: FaultCode | None,
-        last_session_end_utc: datetime | None,
-        last_auto_session_start_utc: datetime | None,
-        daily: ZoneDailyRuntime | None,
-    ) -> ZoneRecord:
-        """Temporary spec.3 runtime projection; never serialized as authority."""
-        active = actuator_fault or self.zone_fault
-        secondary = self.zone_fault if actuator_fault is not None else self.secondary_fault
-        if actuator_fault is not None and self.secondary_fault is not None:
-            secondary = self.secondary_fault
-        return ZoneRecord(
-            state=self.state,
-            enabled=self.enabled,
-            active_fault=active,
-            secondary_fault=secondary,
-            last_session_end_utc=last_session_end_utc,
-            last_auto_session_start_utc=last_auto_session_start_utc,
-            daily=(DailyRuntime(daily.date_local, daily.runtime_s) if daily else None),
-            last_session_summary=self.last_session_summary,
-            session=self.session.context if self.session else None,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class ZoneHistory:
@@ -1851,21 +1826,6 @@ class StoreData:
 
     def evolve(self, **changes: object) -> StoreData:
         return replace(self, **changes)  # type: ignore[arg-type]
-
-    @property
-    def zones(self) -> dict[str, ZoneRecord]:
-        """Temporary read-only spec.3 projection for later remediation stages."""
-        projected: dict[str, ZoneRecord] = {}
-        for record_id in sorted(self.safety_records):
-            record = self.safety_records[record_id]
-            history = self.zone_histories[record.zone_history_id]
-            projected[record.zone_id] = history.zone_runtime.to_legacy_record(
-                actuator_fault=record.actuator_fault,
-                last_session_end_utc=history.last_session_end_utc,
-                last_auto_session_start_utc=history.last_auto_session_start_utc,
-                daily=history.daily,
-            )
-        return projected
 
 
 @dataclass(frozen=True, slots=True)

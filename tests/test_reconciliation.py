@@ -27,10 +27,10 @@ from custom_components.moisture_loop.models import (
     BlockerReason,
     CompletionReason,
     ControllerState,
-    DailyRuntime,
     FaultCode,
     RuntimeLifecycle,
     ZoneConfig,
+    ZoneDailyRuntime,
 )
 from custom_components.moisture_loop.reconciliation import (
     ConfigurationReconciliationCoordinator,
@@ -601,9 +601,17 @@ class TestRuntimeReconciliation:
         runtime.hass.states.async_set(actuator_a.entity_id, "on")
         await settle(runtime.hass)
         assert (record_a_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
-        await runtime.store.async_update_record_runtime(
-            record_a_id,
-            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        await runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    record_a_id: data.safety_records[record_a_id].evolve(
+                        actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                        acknowledgement_required=True,
+                    ),
+                },
+                dict(data.zone_histories),
+            )
         )
         runtime._sync_repairs_from_authority()
         repair_a_id = record_issue_id(entry.entry_id, record_a_id, ISSUE_OFF_UNCONFIRMED)
@@ -655,17 +663,34 @@ class TestRuntimeReconciliation:
         record_id = binding.safety_record_id
         history_id = binding.zone_history_id
         ended = dt_util.utcnow()
-        await runtime.store.async_update_record_runtime(
-            record_id,
-            lambda record: record.evolve(
-                last_session_end_utc=ended,
-                daily=DailyRuntime(ended.astimezone(runtime._local_tz).date(), 123.0),
-            ),
+        await runtime.store.async_reconcile(
+            lambda data: (
+                dict(data.safety_records),
+                {
+                    **data.zone_histories,
+                    history_id: data.zone_histories[history_id].evolve(
+                        last_session_end_utc=ended,
+                        daily=ZoneDailyRuntime(
+                            ended.astimezone(runtime._local_tz).date(),
+                            123.0,
+                            conservative_unattributed_runtime_s=123.0,
+                        ),
+                    ),
+                },
+            )
         )
         await runtime.slots.async_add_blocker(record_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
-        await runtime.store.async_update_record_runtime(
-            record_id,
-            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        await runtime.store.async_reconcile(
+            lambda data: (
+                {
+                    **data.safety_records,
+                    record_id: data.safety_records[record_id].evolve(
+                        actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+                        acknowledgement_required=True,
+                    ),
+                },
+                dict(data.zone_histories),
+            )
         )
         runtime._sync_repairs_from_authority()
         repair_id = record_issue_id(entry.entry_id, record_id, ISSUE_OFF_UNCONFIRMED)

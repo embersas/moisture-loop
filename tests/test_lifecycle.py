@@ -7,6 +7,8 @@ and the ER12 subscribe-before-snapshot interleaving. HA-harness suite.
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -38,20 +40,25 @@ from custom_components.moisture_loop.models import (
     DailyRuntime,
     FaultCode,
     IdentityStatus,
-    MigrationRecordContext,
     NormalizedZoneSettings,
+    PersistedSession,
+    PossibleFlowOwner,
     RunIds,
     RuntimeEstimationReason,
-    Schema1StoreData,
+    RuntimeLifecycle,
+    SafetyRecord,
     SensorIdentity,
     SessionContext,
     SessionMode,
+    SessionSummary,
     StoreData,
-    ZoneRecord,
+    ZoneDailyRuntime,
+    ZoneHistory,
+    ZoneRuntime,
     config_fingerprint,
-    migrate_schema1_to_schema2,
     store_data_to_dict,
 )
+from custom_components.moisture_loop.reconciliation import normalized_zone_fingerprint
 from custom_components.moisture_loop.storage import (
     SafetyStore,
     SetupClassification,
@@ -135,33 +142,131 @@ def zone_subentry_id(entry: MockConfigEntry) -> str:
 def seed_store(hass_storage, entry, data: StoreData) -> None:
     key = f"{DOMAIN}.{entry.entry_id}"
     hass_storage[key] = {
-        "version": 1,
+        "version": 2,
         "minor_version": 1,
         "key": key,
         "data": store_data_to_dict(data),
     }
 
 
+def canonical_history(data: StoreData, zone_id: str):
+    """Return the schema-2 ZoneHistory for one logical zone test fixture."""
+    records = [record for record in data.safety_records.values() if record.zone_id == zone_id]
+    assert len(records) == 1
+    return data.zone_histories[records[0].zone_history_id]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSeed:
+    """Test-only canonical runtime input; never a schema-1 projection."""
+
+    state: ControllerState
+    enabled: bool
+    active_fault: FaultCode | None = None
+    secondary_fault: FaultCode | None = None
+    last_session_end_utc: datetime | None = None
+    last_auto_session_start_utc: datetime | None = None
+    daily: DailyRuntime | None = None
+    last_session_summary: SessionSummary | None = None
+    session: SessionContext | None = None
+
+    def evolve(self, **changes: object) -> RuntimeSeed:
+        return replace(self, **changes)  # type: ignore[arg-type]
+
+
 def store_snapshot(
-    zones: dict[str, ZoneRecord],
+    zones: dict[str, RuntimeSeed],
     active: str | None = "run-a",
     clean: str | None = "run-a",
     revision: int = 5,
 ) -> StoreData:
     config = zone_config_from_subentry(ZONE_DATA)
-    contexts: dict[str, MigrationRecordContext] = {}
-    for zone_id in zones:
+    histories: dict[str, ZoneHistory] = {}
+    records: dict[str, SafetyRecord] = {}
+    for zone_id, seed in zones.items():
+        history_id = f"{zone_id}-history"
         shadow = AppliedConfigurationShadow(
             subentry_id=zone_id,
-            config_fingerprint="test-migration-shadow",
-            entry_snapshot_fingerprint="test-migration-entry",
+            config_fingerprint=normalized_zone_fingerprint(
+                zone_id,
+                config,
+                AppliedEntityIdentity(None, SENSOR, "sensor"),
+                AppliedEntityIdentity(None, SWITCH, "switch"),
+                str(dt_util.get_default_time_zone()),
+            ),
+            entry_snapshot_fingerprint="test-canonical-entry",
             applied_generation=1,
             normalized_settings=NormalizedZoneSettings.from_config(config),
             sensor_identity=AppliedEntityIdentity(None, SENSOR, "sensor"),
             actuator_identity=AppliedEntityIdentity(None, SWITCH, "switch"),
         )
-        contexts[zone_id] = MigrationRecordContext(
+        persisted_session = (
+            PersistedSession(zone_id, seed.session) if seed.session is not None else None
+        )
+        possible_flow = bool(
+            seed.session is not None
+            and seed.session.pulse_intent_at_utc is not None
+            and seed.session.off_confirmed_at_utc is None
+        )
+        zone_faults = tuple(
+            fault
+            for fault in (seed.active_fault, seed.secondary_fault)
+            if fault
+            in (
+                FaultCode.SENSOR_UNAVAILABLE,
+                FaultCode.SENSOR_INVALID,
+                FaultCode.SENSOR_STALE,
+                FaultCode.CONFIGURATION_INVALID,
+            )
+        )
+        actuator_fault = next(
+            (
+                fault
+                for fault in (seed.active_fault, seed.secondary_fault)
+                if fault
+                in (
+                    FaultCode.ACTUATOR_UNAVAILABLE,
+                    FaultCode.ACTUATOR_OFF_TIMEOUT,
+                    FaultCode.RESTORED_FROM_UNSAFE_STATE,
+                )
+            ),
+            None,
+        )
+        daily = (
+            ZoneDailyRuntime(
+                seed.daily.date_local,
+                seed.daily.runtime_s,
+                conservative_unattributed_runtime_s=seed.daily.runtime_s,
+            )
+            if seed.daily is not None
+            else None
+        )
+        histories[history_id] = ZoneHistory(
+            zone_history_id=history_id,
             active_subentry_id=zone_id,
+            previous_subentry_ids=(),
+            last_session_end_utc=seed.last_session_end_utc,
+            last_auto_session_start_utc=seed.last_auto_session_start_utc,
+            zone_runtime=ZoneRuntime(
+                enabled=seed.enabled,
+                state=seed.state,
+                zone_fault=zone_faults[0] if zone_faults else None,
+                secondary_fault=zone_faults[1] if len(zone_faults) > 1 else None,
+                sensor_identity=SensorIdentity(None, SENSOR),
+                last_session_summary=seed.last_session_summary,
+                session=persisted_session,
+            ),
+            daily=daily,
+        )
+        records[zone_id] = SafetyRecord(
+            safety_record_id=zone_id,
+            zone_id=zone_id,
+            active_subentry_id=zone_id,
+            previous_subentry_ids=(),
+            safety_lineage_id=f"{zone_id}-lineage",
+            zone_history_id=history_id,
+            historical_zone_history_ids=(),
+            runtime_lifecycle=RuntimeLifecycle.ACTIVE,
             applied_config=shadow,
             actuator_identity=ActuatorIdentity(
                 registry_entry_id=None,
@@ -171,26 +276,25 @@ def store_snapshot(
                 off_service="switch.turn_off",
                 confirm_timeout_s=config.actuator_confirm_timeout_s,
             ),
-            sensor_identity=SensorIdentity(None, SENSOR),
+            blocker_reasons=((BlockerReason.INTEGRATION_OFF_UNCONFIRMED,) if possible_flow else ()),
+            possible_flow_owner=(PossibleFlowOwner.INTEGRATION if possible_flow else None),
+            identity_incident=None,
+            actuator_fault=actuator_fault,
+            acknowledgement_required=(
+                actuator_fault.requires_user_ack if actuator_fault is not None else False
+            ),
         )
-    migrated = migrate_schema1_to_schema2(
-        Schema1StoreData(
-            generation_id=GEN,
-            store_revision=max(1, revision - 1),
-            run=RunIds(active_run_id=active, last_clean_shutdown_run_id=clean),
-            zones=zones,
-        ),
-        contexts,
-    )
-    return migrated.evolve(
+    return StoreData(
         generation_id=GEN,
         store_revision=revision,
         run=RunIds(active_run_id=active, last_clean_shutdown_run_id=clean),
+        zone_histories=histories,
+        safety_records=records,
     )
 
 
-def watering_record(intent_at: datetime) -> ZoneRecord:
-    return ZoneRecord(
+def watering_record(intent_at: datetime) -> RuntimeSeed:
+    return RuntimeSeed(
         state=ControllerState.WATERING,
         enabled=True,
         daily=DailyRuntime(intent_at.date(), 0.0),
@@ -213,10 +317,10 @@ def soaking_record(
     fingerprint: str,
     owner: str = "run-a",
     soak_ends: datetime | None = None,
-) -> ZoneRecord:
+) -> RuntimeSeed:
     soak = soak_ends if soak_ends is not None else NOW + timedelta(minutes=10)
     off = soak - timedelta(seconds=1200)
-    return ZoneRecord(
+    return RuntimeSeed(
         state=ControllerState.SOAKING,
         enabled=True,
         daily=DailyRuntime(NOW.date(), 300.0),
@@ -513,8 +617,8 @@ class TestSoakingAdoption:
         assert session.recheck_grace_deadline_at_utc == original.recheck_grace_deadline_at_utc
         assert session.config_fingerprint == original.config_fingerprint
         # The rebase was persisted before activation.
-        persisted = runtime.store.data.zones[zone_id].session
-        assert persisted is not None and persisted.owner_run_id == runtime.run_id
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime.session
+        assert persisted is not None and persisted.context.owner_run_id == runtime.run_id
         assert env.switch.on_calls == 0  # adoption never creates a pulse
         await runtime.async_unload()
 
@@ -567,7 +671,7 @@ class TestSoakingAdoption:
         runtime = await start_runtime(env.hass, entry)
         assert runtime.soaking_adoptions[zone_id] is False
         # No rebase was persisted: the session was terminated instead.
-        persisted = runtime.store.data.zones[zone_id]
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
         assert persisted.session is None
         await runtime.async_unload()
 
@@ -699,7 +803,7 @@ class TestShutdownAndReload:
         runtime = await start_runtime(env.hass, entry)
         await runtime.async_handle_ha_stop(None)
         await settle(env.hass)
-        persisted = runtime.store.data.zones[zone_id]
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
         assert persisted.state is ControllerState.SOAKING  # T37 preserved
         assert persisted.session is not None
         assert runtime.store.data.run.previous_run_was_clean
@@ -713,12 +817,89 @@ class TestShutdownAndReload:
         run_before = runtime.store.data.run
         await runtime.async_unload()
         await settle(env.hass)
-        controller_summary = runtime.store.data.zones[zone_id].last_session_summary
+        controller_summary = canonical_history(
+            runtime.store.data, zone_id
+        ).zone_runtime.last_session_summary
         assert controller_summary is not None
         assert controller_summary.reason is CompletionReason.CONFIG_RELOAD
         # §24.2: entry reload never changes run IDs or marks clean.
         assert runtime.store.data.run == run_before
         assert not runtime.store.data.run.previous_run_was_clean
+
+    async def test_rc5_delete_vs_generic_reload_persists_tombstone_and_never_resumes(
+        self, env
+    ) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
+        await self._start_watering(env, runtime, zone_id)
+
+        assert env.hass.config_entries.async_remove_subentry(entry, zone_id)
+        reload_unload = asyncio.create_task(runtime.async_unload())
+        await reload_unload
+        await settle(env.hass)
+        assert env.switch.off_calls == 1
+        assert env.switch.on_calls == 1
+
+        restarted = await start_runtime(env.hass, entry)
+        retained = restarted.store.data.safety_records[record_id]
+        history = restarted.store.data.zone_histories[retained.zone_history_id]
+        assert retained.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert retained.active_subentry_id is None
+        assert retained.identity_incident is not None
+        assert history.active_subentry_id is None
+        assert history.zone_runtime.session is None
+        assert history.zone_runtime.state not in (
+            ControllerState.WATERING,
+            ControllerState.SOAKING,
+        )
+        assert restarted.controllers == {}
+        assert env.switch.on_calls == 1
+        await restarted.async_unload()
+
+    async def test_rc6_delete_vs_shutdown_reconstructs_unresolved_tombstone(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
+        await self._start_watering(env, runtime, zone_id)
+        env.switch.off_behavior = "silent"
+        runtime.shutdown_off_budget_s = 0
+
+        assert env.hass.config_entries.async_remove_subentry(entry, zone_id)
+        shutdown = asyncio.create_task(runtime.async_handle_ha_stop(None))
+        await shutdown
+        await settle(env.hass)
+
+        unresolved = runtime.store.data.safety_records[record_id]
+        unresolved_history = runtime.store.data.zone_histories[unresolved.zone_history_id]
+        assert unresolved.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in unresolved.blocker_reasons
+        assert unresolved_history.zone_runtime.session is not None
+        assert env.switch.on_calls == 1
+        await runtime.async_unload()
+
+        restarted = await start_runtime(env.hass, entry)
+        retained = restarted.store.data.safety_records[record_id]
+        history = restarted.store.data.zone_histories[retained.zone_history_id]
+        assert retained.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert retained.active_subentry_id is None
+        assert history.zone_runtime.session is not None
+        assert restarted.controllers == {}
+        assert env.switch.on_calls == 1
+
+        env.switch.set_state("off")
+        await settle(env.hass)
+        closed = restarted.store.data.safety_records[record_id]
+        closed_history = restarted.store.data.zone_histories[closed.zone_history_id]
+        # This fixture has no Entity Registry UUID. Exact OFF closes the
+        # accounting, while identity ambiguity correctly keeps the record
+        # fail-closed rather than treating matching text as retirement proof.
+        assert closed.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert closed_history.zone_runtime.session is None
+        assert env.switch.on_calls == 1
+        await restarted.async_unload()
 
     async def test_lc3_reconfigure_prepares_with_config_changed(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)
@@ -848,7 +1029,7 @@ class TestRuntimeEdges:
             entry,
             store_snapshot(
                 {
-                    zone_id: ZoneRecord(ControllerState.IDLE, True),
+                    zone_id: RuntimeSeed(ControllerState.IDLE, True),
                     "orphan-zone": watering_record(NOW - timedelta(minutes=5)),
                 }
             ),
@@ -953,7 +1134,7 @@ class TestRuntimeEdges:
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
         await runtime.async_handle_ha_stop(None)
-        persisted = runtime.store.data.zones[zone_id]
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
         assert persisted.state is ControllerState.IDLE
         assert runtime.store.data.run.previous_run_was_clean
         await runtime.async_unload()

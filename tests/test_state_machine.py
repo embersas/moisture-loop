@@ -2,14 +2,18 @@
 
 Table-driven coverage for every formal transition T1-T59, every guard
 branch, exact threshold/time equality, watchdog token semantics, race
-arbitration, and the I1-I31 traceability matrix. Pure layer: runs with no
-homeassistant installed, controlled time inputs, no real sleeps.
+arbitration, with the Stage-7 I1-I37 matrix maintained in the mechanical
+traceability layer. Pure layer: runs with no homeassistant installed,
+controlled time inputs, no real sleeps.
 """
 
 from __future__ import annotations
 
+import ast
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -567,6 +571,55 @@ class TestTransitionTable:
     def test_inventory_is_exactly_t1_to_t59(self) -> None:
         assert set(CANONICAL) == {f"T{i}" for i in range(1, 60)}
         assert set(EXPECTED_DESTINATION) == set(CANONICAL)
+
+    def test_spec_table_implementation_and_diagram_have_exact_t1_t59_parity(self) -> None:
+        spec = (Path(__file__).resolve().parents[1] / "SPECIFICATION.md").read_text(
+            encoding="utf-8"
+        )
+        table_text = spec.split("| ID | From | Trigger | Guard | Action | To | Reason/fault |", 1)[
+            1
+        ].split("The normative table contains **59 transitions**", 1)[0]
+        rows: dict[str, tuple[str, ...]] = {}
+        for raw in table_text.splitlines():
+            match = re.match(r"\| (T\d+) \|(.+)\|$", raw)
+            if match is None:
+                continue
+            transition_id = match.group(1)
+            assert transition_id not in rows
+            columns = tuple(part.strip() for part in match.group(2).split("|"))
+            assert len(columns) == 6
+            assert all(columns)
+            rows[transition_id] = columns
+
+        expected = {f"T{i}" for i in range(1, 60)}
+        assert set(rows) == expected
+        implementation = Path(__file__).resolve().parents[1] / (
+            "custom_components/moisture_loop/state_machine.py"
+        )
+        tree = ast.parse(implementation.read_text(encoding="utf-8"))
+        implementation_ids = {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and re.fullmatch(r"T\d+", node.value)
+        }
+        assert implementation_ids == expected
+
+        diagram = spec.split("```mermaid", 1)[1].split("```", 1)[0]
+        assert set(re.findall(r"\bT\d+\b", diagram)) == expected
+
+        for transition_id, (_from, _trigger, _guard, action, destination, reason) in rows.items():
+            decision = decide(CANONICAL[transition_id]())
+            state_name = EXPECTED_DESTINATION[transition_id].value.upper()
+            assert state_name in destination or (
+                "POST(" in destination and state_name in {"IDLE", "FAULT"}
+            )
+            assert action != "—"
+            if decision.reason is not None:
+                assert decision.reason.value.upper() in reason or transition_id == "T49"
+            if decision.fault is not None:
+                assert decision.fault.value.upper() in reason or "retained" in reason
 
     @pytest.mark.parametrize("row", sorted(CANONICAL, key=lambda r: int(r[1:])))
     def test_row_produces_its_transition(self, row: str) -> None:
@@ -1999,6 +2052,17 @@ class TestStartupRecovery:
 
 
 class TestExternalOccupancy:
+    def test_t55_disabled_external_on_adds_blocker_without_off(self) -> None:
+        decision = decide(CANONICAL["T55"]())
+        assert decision.transition_id == "T55"
+        assert decision.new_state is ControllerState.DISABLED
+        assert any(
+            isinstance(action, AddBlocker) and action.reason is BlockerReason.EXTERNAL_FLOW
+            for action in decision.actions
+        )
+        assert any(isinstance(action, SetExternalOn) for action in decision.actions)
+        assert not any(isinstance(action, ExecuteOff) for action in decision.actions)
+
     """T54/T55/T58/T59 and keyed-blocker semantics (pure obligations)."""
 
     def test_t54_adds_external_flow_without_off(self) -> None:
@@ -2335,119 +2399,3 @@ class TestRemainingCommitAndBranchPaths:
             )
         )
         assert d.no_op
-
-
-# ---------------------------------------------------------------------------
-# I1-I31 traceability matrix (§39.3). Pure obligations name tests in this
-# module; obligations whose proof requires side effects name their future
-# slice explicitly instead of being falsely claimed here.
-# ---------------------------------------------------------------------------
-
-INVARIANT_EVIDENCE: dict[str, tuple[str, ...]] = {
-    "I1": (
-        "TestT1AutoStart::test_t2_records_each_failed_guard",
-        "TestHysteresis::test_start_boundary",
-    ),
-    "I2": ("tests/test_state_reported.py::TestStateReportedMechanics (filtered reports)",),
-    "I3": ("TestPostSoakEquality::test_old_report_after_deadline_cannot_decide",),
-    "I4": (
-        "TestPostSoakEquality::test_report_exactly_at_soak_end_qualifies",
-        "TestPostSoakEquality::test_report_one_microsecond_before_does_not_qualify",
-    ),
-    "I5": (
-        "TestWateringSensorFaults::test_invalid_commits_sensor_invalid",
-        "TestWateringSensorFaults::test_unavailable_commits_sensor_unavailable",
-    ),
-    "I6": (
-        "TestWateringSensorFaults::test_manual_bookkeeping_never_terminates",
-        "TestWatchdog::test_manual_ignores_watchdog",
-    ),
-    "I7": (
-        "TestManualFaultMatrix::test_blocking_faults_refuse_manual",
-        "TestManualClamping::test_manual_refusals_from_idle",
-    ),
-    "I8": ("TestManualClamping::test_spec_35_5_example",),
-    "I9": (
-        "TestHysteresis::test_daily_whole_fit_equality",
-        "TestSoakingContinuation::test_session_fit_equality_continues",
-    ),
-    "I10": (
-        "TestOffEvidence::test_measured_accounting_command_to_off",
-        "tests/test_zone_controller.py::TestOffEvidence (AC4 overrun accounting)",
-    ),
-    "I11": (
-        "TestStartupRecovery::test_found_off_finalizes_with_intent_anchor",
-        "tests/test_lifecycle.py::TestPersistedWateringRecovery (PI12-PI15)",
-    ),
-    "I12": ("tests/test_storage_pure.py::TestDailySplitting (PI17 DST/midnight)",),
-    "I13": (
-        "TestStartupRecovery::test_found_off_finalizes_with_intent_anchor",
-        "tests/test_lifecycle.py (LC3-LC12 no-resume proof)",
-    ),
-    "I14": ("tests/test_storage.py::TestRunProtocol (PI18-PI19)",),
-    "I15": (
-        "TestT1AutoStart::test_t1_creates_auto_session_and_orders_actions",
-        "tests/test_zone_controller.py::TestOnSequence (write-ahead gate; PI11)",
-    ),
-    "I16": (
-        "TestTerminationArbitration::test_stop_vs_pulse_expiry_one_reason",
-        "tests/test_zone_controller.py::TestTerminationRaces (AC1-AC4)",
-    ),
-    "I17": (
-        "TestT1AutoStart::test_t2_records_each_failed_guard",
-        "tests/test_zone_controller.py::TestValveActuator (conservative OFF proof)",
-    ),
-    "I18": ("tests/test_slot_manager.py (ER1-ER8, ER12)",),
-    "I19": (
-        "TestExternalOccupancy::test_t58_removes_only_external_flow",
-        "tests/test_slot_manager.py::TestKeyedBlockers (ER4/ER7/ER8)",
-    ),
-    "I20": (
-        "TestManualClamping::test_manual_refused_while_disabled",
-        "TestTerminationArbitration::test_disable_still_controls_operational_state",
-    ),
-    "I21": ("tests/test_slot_manager.py::TestAdversarialInterleavings (single owner)",),
-    "I22": (
-        "TestTerminationArbitration::test_second_terminal_request_no_ops",
-        "tests/test_zone_controller.py::TestNormalAutoSession (no duplicate sessions)",
-    ),
-    "I23": (
-        "TestHysteresis::test_interval_equality_elapsed",
-        "tests/test_zone_controller.py (last_session_end on every closure)",
-    ),
-    "I24": ("tests/test_storage.py::TestIntegrityReconstruction (PI3-PI10)",),
-    "I25": ("tests/test_services.py::TestActionLifecycle (LC1) + TestDeviceResolution (LC2)",),
-    "I26": ("tests/test_config_flow.py::TestZoneReconfigureFlow + tests/test_lifecycle.py (LC3)",),
-    "I27": ("tests/test_entities.py::TestBinarySensors (needs_water isolation)",),
-    "I28": (
-        "tests/test_foundation.py::test_pure_modules_have_no_homeassistant_import",
-        "tests/test_foundation.py + Slice 12 audit (no recorder/network deps)",
-    ),
-    "I29": ("tests/test_storage.py::TestSetupMatrix (PI1-PI8)",),
-    "I30": (
-        "TestWatchdog::test_sr13_superseded_callback_no_ops",
-        "TestWatchdog::test_boundary_race_report_first_prevents_expiry",
-        "TestWatchdog::test_boundary_race_watchdog_first_terminates_permanently",
-    ),
-    "I31": (
-        "TestStartupRecovery::test_t50_rebases_owner_only",
-        "tests/test_lifecycle.py::TestSoakingAdoption (LC5-LC11)",
-    ),
-}
-
-
-class TestInvariantTraceability:
-    def test_all_31_invariants_mapped(self) -> None:
-        assert set(INVARIANT_EVIDENCE) == {f"I{i}" for i in range(1, 32)}
-        assert all(INVARIANT_EVIDENCE[key] for key in INVARIANT_EVIDENCE)
-
-    def test_pure_evidence_references_exist(self) -> None:
-        """Every non-deferred reference must name a real test in this module."""
-        module = globals()
-        for refs in INVARIANT_EVIDENCE.values():
-            for ref in refs:
-                if ref.startswith("SLICE") or "/" in ref:
-                    continue  # explicitly assigned to a later slice/module
-                cls_name, test_name = ref.split("::")
-                cls = module[cls_name]
-                assert hasattr(cls, test_name), ref

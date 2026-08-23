@@ -8,7 +8,7 @@ the same command envelope but retain their distinct terminal states/services.
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -17,7 +17,7 @@ pytest.importorskip("homeassistant")
 from aiohttp import TCPConnector
 from aiohttp.resolver import ThreadedResolver
 from aiohttp.test_utils import TestClient, TestServer
-from homeassistant.config_entries import ConfigSubentryData
+from homeassistant.config_entries import ConfigSubentry, ConfigSubentryData
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
@@ -1161,3 +1161,95 @@ class TestTerminalAndOffRaces:
         assert history.zone_runtime.session is None
         assert env.runtime.slots.owner is None
         assert env.runtime.slots.blockers() == frozenset()
+
+    async def test_same_record_reactivation_retains_unconfirmed_open_accounting(
+        self, command_env
+    ) -> None:
+        env = command_env
+        await start_auto_inflight(env)
+        record_id = env.controller.safety_record_id
+        original = env.runtime.store.data.safety_records[record_id]
+        lineage_id = original.safety_lineage_id
+        history_id = original.zone_history_id
+        old_subentry_id = env.subentry_id
+        config = dict(env.entry.subentries[old_subentry_id].data)
+
+        env.runtime.shutdown_off_budget_s = 1_000
+        env.actuator.off_behavior = "silent"
+        assert env.hass.config_entries.async_remove_subentry(env.entry, old_subentry_id)
+        env.actuator.allow_on.set()
+        await spin_until(lambda: env.actuator.off_calls == 1)
+        for expected_calls in (2, 3):
+            env.freezer.tick(30)
+            async_fire_time_changed(env.hass, dt_util.utcnow())
+            await spin_until(lambda expected=expected_calls: env.actuator.off_calls == expected)
+        env.freezer.tick(30)
+        async_fire_time_changed(env.hass, dt_util.utcnow())
+        await spin_until(
+            lambda: (
+                (record_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+                in env.runtime.slots.blockers()
+            ),
+            turns=200,
+        )
+        await settle(env.hass)
+
+        tombstone = env.runtime.store.data.safety_records[record_id]
+        tombstone_history = env.runtime.store.data.zone_histories[history_id]
+        assert tombstone.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert tombstone.acknowledgement_required
+        assert tombstone.possible_flow_owner is not None
+        assert tombstone_history.zone_runtime.session is not None
+        open_session_id = tombstone_history.zone_runtime.session.context.session_id
+
+        env.hass.states.async_set(SENSOR, "35")
+        readded_id = f"stage4-reactivated-{env.actuator.domain}"
+        assert env.hass.config_entries.async_add_subentry(
+            env.entry,
+            ConfigSubentry(
+                data=MappingProxyType(config),
+                subentry_id=readded_id,
+                subentry_type="zone",
+                title="Reactivated safety record",
+                unique_id=None,
+            ),
+        )
+        await settle(env.hass)
+
+        active = env.runtime.store.data.safety_records[record_id]
+        history = env.runtime.store.data.zone_histories[history_id]
+        reactivated = env.runtime.controllers[readded_id]
+        assert active.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+        assert active.active_subentry_id == readded_id
+        assert active.safety_record_id == record_id
+        assert active.safety_lineage_id == lineage_id
+        assert active.zone_history_id == history_id
+        assert active.acknowledgement_required
+        assert active.possible_flow_owner is not None
+        assert (
+            record_id,
+            BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
+        ) in env.runtime.slots.blockers()
+        assert history.zone_runtime.session is not None
+        assert history.zone_runtime.session.context.session_id == open_session_id
+        assert history.zone_runtime.sensor_identity.last_known_entity_id == SENSOR
+        assert history.zone_runtime.zone_fault is None
+        assert history.zone_runtime.state not in (
+            ControllerState.WATERING,
+            ControllerState.SOAKING,
+        )
+        assert reactivated.state not in (
+            ControllerState.WATERING,
+            ControllerState.SOAKING,
+        )
+        assert reactivated.off_operation is None
+
+        env.actuator.prove_off()
+        await spin_until(
+            lambda: (
+                (record_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+                not in env.runtime.slots.blockers()
+            ),
+            turns=200,
+        )
+        assert env.runtime.store.data.safety_records[record_id].acknowledgement_required

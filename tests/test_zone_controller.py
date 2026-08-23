@@ -463,11 +463,8 @@ class TestNormalAutoSession:
 
 class TestOnSequence:
     async def test_stage4_live_session_uses_only_canonical_schema2_writes(self, env) -> None:
-        async def legacy_write_forbidden(*args, **kwargs):
-            raise AssertionError("live command path used a ZoneRecord compatibility API")
-
-        env.store.async_update_record_runtime = legacy_write_forbidden  # type: ignore[method-assign]
-        env.store.async_update_zone = legacy_write_forbidden  # type: ignore[method-assign]
+        assert not hasattr(env.store, "async_update_record_runtime")
+        assert not hasattr(env.store, "async_update_zone")
         await set_moisture(env, "27")
         assert env.actuator.on_calls == 1
         await env.ctrl.async_stop_watering()
@@ -1005,23 +1002,28 @@ class TestControllerEdges:
         )
 
     async def test_attach_adopts_persisted_record(self, hass, hass_storage, freezer) -> None:
+        from dataclasses import replace
         from datetime import date, datetime
 
-        from custom_components.moisture_loop.models import DailyRuntime, ZoneRecord
+        from custom_components.moisture_loop.models import ZoneDailyRuntime
 
         e = await build_env(hass, freezer)
         await e.ctrl.async_detach()
-        record = ZoneRecord(
-            state=ControllerState.FAULT,
-            enabled=True,
-            active_fault=FaultCode.SENSOR_STALE,
-            secondary_fault=None,
-            last_session_end_utc=datetime(2026, 8, 21, 6, 0, tzinfo=UTC),
+        safety_record = e.store.data.safety_records[e.ctrl.safety_record_id]
+        history = e.store.data.zone_histories[safety_record.zone_history_id]
+        last_end = datetime(2026, 8, 21, 6, 0, tzinfo=UTC)
+        histories = dict(e.store.data.zone_histories)
+        histories[history.zone_history_id] = history.evolve(
+            last_session_end_utc=last_end,
             last_auto_session_start_utc=datetime(2026, 8, 21, 5, 0, tzinfo=UTC),
-            daily=DailyRuntime(date(2026, 8, 21), 123.0),
-            last_session_summary=None,
-            session=None,
+            daily=ZoneDailyRuntime(date(2026, 8, 21), 123.0),
+            zone_runtime=replace(
+                history.zone_runtime,
+                state=ControllerState.FAULT,
+                zone_fault=FaultCode.SENSOR_STALE,
+            ),
         )
+        await e.store.async_reconcile(lambda data: (dict(data.safety_records), histories))
         ctrl2 = ZoneController(
             hass,
             ZONE,
@@ -1032,11 +1034,11 @@ class TestControllerEdges:
             local_tz=UTC,
             authorization=e.authorization,
         )
-        ctrl2.async_attach(record)
+        ctrl2.async_attach()
         assert ctrl2.state is ControllerState.FAULT
         assert ctrl2.active_fault is FaultCode.SENSOR_STALE
         assert ctrl2.daily.runtime_s == 123.0
-        assert ctrl2.last_session_end == record.last_session_end_utc
+        assert ctrl2.last_session_end == last_end
         assert not ctrl2.external_on
         assert ctrl2.secondary_fault is None
         assert ctrl2.observation is not None
@@ -1208,10 +1210,13 @@ class TestControllerEdges:
         assert env.ctrl.last_summary is None
 
     async def test_attach_record_without_daily(self, hass, hass_storage, freezer) -> None:
-        from custom_components.moisture_loop.models import ZoneRecord
-
         e = await build_env(hass, freezer)
         await e.ctrl.async_detach()
+        safety_record = e.store.data.safety_records[e.ctrl.safety_record_id]
+        history = e.store.data.zone_histories[safety_record.zone_history_id]
+        histories = dict(e.store.data.zone_histories)
+        histories[history.zone_history_id] = history.evolve(daily=None)
+        await e.store.async_reconcile(lambda data: (dict(data.safety_records), histories))
         ctrl2 = ZoneController(
             hass,
             ZONE,
@@ -1222,7 +1227,7 @@ class TestControllerEdges:
             local_tz=UTC,
             authorization=e.authorization,
         )
-        ctrl2.async_attach(ZoneRecord(state=ControllerState.IDLE, enabled=True))
+        ctrl2.async_attach()
         assert ctrl2.daily.runtime_s == 0.0  # controller keeps its fresh counter
         await ctrl2.async_detach()
 

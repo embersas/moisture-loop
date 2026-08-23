@@ -105,7 +105,6 @@ from .models import (
     WatchdogFired,
     WatchdogToken,
     ZoneConfig,
-    ZoneRecord,
     config_fingerprint,
     current_day_charge,
 )
@@ -549,24 +548,42 @@ class ZoneController:
 
     # -- lifecycle -----------------------------------------------------------
 
-    def async_attach(self, record: ZoneRecord | None = None) -> None:
-        """Adopt persisted resting state and install listeners.
+    def async_attach(self) -> None:
+        """Adopt canonical schema-2 state and install listeners.
 
         Startup reconciliation ordering (which events to dispatch for
-        persisted WATERING/SOAKING) is the entry runtime's job (Slice 8);
-        this only restores fields and subscribes.
+        persisted WATERING/SOAKING) is the entry runtime's job; this only
+        restores the exact SafetyRecord/ZoneHistory owners and subscribes.
         """
-        if record is not None:
-            self._state = record.state
-            self._enabled = record.enabled
-            self._active_fault = record.active_fault
-            self._secondary_fault = record.secondary_fault
-            self._last_session_end = record.last_session_end_utc
-            self._last_auto_session_start = record.last_auto_session_start_utc
-            self._last_summary = record.last_session_summary
-            if record.daily is not None:
-                self._daily = record.daily
-            self._session = record.session
+        safety_record = self._store.data.safety_records.get(self.safety_record_id)
+        if safety_record is None or safety_record.zone_history_id != self.zone_history_id:
+            raise StoreWriteVerificationError("controller canonical ownership is unavailable")
+        history = self._store.data.zone_histories.get(self.zone_history_id)
+        if history is None:
+            raise StoreWriteVerificationError("controller zone history is unavailable")
+        runtime = history.zone_runtime
+        persisted_session = runtime.session
+        if (
+            persisted_session is not None
+            and persisted_session.owner_safety_record_id != self.safety_record_id
+        ):
+            raise StoreWriteVerificationError("persisted session owner does not match controller")
+        self._state = runtime.state
+        self._enabled = runtime.enabled
+        self._active_fault = safety_record.actuator_fault or runtime.zone_fault
+        self._secondary_fault = (
+            runtime.secondary_fault
+            if safety_record.actuator_fault is not None and runtime.secondary_fault is not None
+            else runtime.zone_fault
+            if safety_record.actuator_fault is not None
+            else runtime.secondary_fault
+        )
+        self._last_session_end = history.last_session_end_utc
+        self._last_auto_session_start = history.last_auto_session_start_utc
+        self._last_summary = runtime.last_session_summary
+        if history.daily is not None:
+            self._daily = DailyRuntime(history.daily.date_local, history.daily.runtime_s)
+        self._session = persisted_session.context if persisted_session is not None else None
         self._assessment = self._actuator.current()
         # Seed the observation from the stored report (§10.3 fallback-scan
         # semantics: the stored last_reported, never the scan time).
@@ -1269,20 +1286,6 @@ class ZoneController:
             )
 
     # -- persistence -------------------------------------------------------------
-
-    def build_record(self) -> ZoneRecord:
-        """Return the remaining Stage-7 compatibility projection."""
-        return ZoneRecord(
-            state=self._state,
-            enabled=self._enabled,
-            active_fault=self._active_fault,
-            secondary_fault=self._secondary_fault,
-            last_session_end_utc=self._last_session_end,
-            last_auto_session_start_utc=self._last_auto_session_start,
-            daily=self._current_daily(),
-            last_session_summary=self._last_summary,
-            session=self._session,
-        )
 
     async def async_persist_current_state(self, reason: str) -> None:
         """Persist current controller state through canonical schema-2 IDs."""

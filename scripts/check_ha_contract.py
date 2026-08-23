@@ -85,6 +85,37 @@ def main() -> int:
         subentry_model,
     )
 
+    def native_subentry_removal_ordering() -> None:
+        from homeassistant.config_entries import ConfigEntries
+
+        remove_source = inspect.getsource(ConfigEntries.async_remove_subentry)
+        pop = remove_source.index("subentries.pop(subentry_id)")
+        update = remove_source.index("self._async_update_entry(entry, subentries=subentries)")
+        device_cleanup = remove_source.index("dev_reg.async_clear_config_subentry")
+        entity_cleanup = remove_source.index("ent_reg.async_clear_config_subentry")
+        _assert(
+            pop < update < device_cleanup < entity_cleanup,
+            "subentry mutation/update/registry-cleanup ordering changed",
+        )
+
+        update_source = inspect.getsource(ConfigEntries._async_update_entry)
+        _assert(
+            update_source.index('_setter(entry, "subentries"')
+            < update_source.index("self._async_save_and_notify(entry)"),
+            "public subentry mapping is not changed before notification",
+        )
+        notify_source = inspect.getsource(ConfigEntries._async_save_and_notify)
+        _assert(
+            "self.hass.async_create_task(" in notify_source
+            and "listener(self.hass, entry)" in notify_source,
+            "update listeners are no longer scheduled as unawaited tasks",
+        )
+
+    check(
+        "native subentry removal mutates mapping then schedules unawaited listeners",
+        native_subentry_removal_ordering,
+    )
+
     def event_helpers() -> None:
         from homeassistant.helpers.event import (  # noqa: F401
             async_track_entity_registry_updated_event,
