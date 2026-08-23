@@ -8,15 +8,15 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
-- Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-7 are complete. The user has authorized the remaining Stage 8 privacy, publication, and hosted-CI gates. The sanitized final candidate will remain Stage 8-pending until GitHub-hosted hassfest and HACS Action pass its exact SHA. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite.`
+- Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite. Public SHA 43f24b12fc162412b534851b9c1b3762ca57cd98 passed all six GitHub-hosted jobs.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `No implementation slice is authorized after this final Stage 8 publication task. The exact final candidate must be published at embersas/moisture-loop and pass all six hosted jobs without a later tracking-only commit. Slice 13 is not automatically authorized.`
-- Release gates: `Local hassfest passes with zero invalid integrations and local HACS metadata/schema preflight passes. GitHub-hosted HACS and hassfest results are required against the exact final candidate SHA. These are publication gates, not specification contradictions. All §46 prototype validations remain outstanding.`
-- Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Stage 8 publication is in progress. Local/current-HA remediation passes, including HA 2025.9.0 at 92.74% overall branch and HA 2026.8.3 at 92.63%; documentation, metadata, CI, package, local-only, Recorder, traceability, and local hassfest audits pass. The final candidate still requires all six exact-SHA GitHub-hosted jobs. Slice 13 remains unstarted; historical spec.3 and Stage 1-7 evidence is preserved.`
+- Next implementation work: `Only the unfinished live/physical portions of Slice 13 listed below remain. No later slice, release, submission, or specification stage is authorized.`
+- Release gates: `All six GitHub-hosted jobs passed public SHA 43f24b12fc162412b534851b9c1b3762ca57cd98: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
+- Slice 13: `[~] Partial on 2026-08-23. The live HA/HACS baseline and an 82.525-minute deployed-sensor cadence sample were recorded. The full UI lifecycle, physical valve matrix, real Registry rename, shutdown timing, ten-zone exercise, longer cadence window, and HACS presentation/install remain incomplete; automated evidence is not substituted.`
+- Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial because the required operator UI sequence did not progress past opening HACS Custom repositories, all identified irrigation actuators were unavailable, and the mandatory physical-water checkpoint was never reached. No prototype absence is recorded as a pass.`
 
-On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, and 7 in sequence, then explicitly authorized Stage 8. The user subsequently authorized complete author/committer privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. The committed closeout returns authorization to `None`; Slice 13 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
+On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
 ## Status Legend
 
@@ -46,10 +46,10 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 9 | Config flow and zone subentries | [x] |
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
-| 12 | Distribution and documentation | [~] Exact-final-commit GitHub-hosted gates pending |
-| 13 | Prototype validations | [ ] |
+| 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
+| 13 | Prototype validations | [~] Partial live evidence; required items remain blocked/incomplete |
 
-Slices 0-11 are `[x]` after Stage 8 local/current-HA evidence. Slice 0 now has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 remains `[~]`: documentation, metadata, local hassfest, current HA, package, and traceability gates pass, but GitHub-hosted hassfest and HACS Action have no result for the exact final commit. Slice 13 remains `[ ]`; harness results are not prototype evidence.
+Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
 
 ## Specification Traceability
 
@@ -80,11 +80,11 @@ These are implementation-wide targets. Their definitions remain authoritative in
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-7 implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, and deleted-safe events. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Stage 8 has completed its local/documentation/supported-current scope; authorized publication and exact-final-commit hosted distribution gates are in progress.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-8 implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, deleted-safe events, documentation, supported-current compatibility, distribution metadata, and exact-public-SHA hosted gates. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Slice 13 now has partial live evidence but remains incomplete.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
-| 0 | `[x] Stage 8 quality/current-HA foundation complete` | Reproducible pure, exact HA 2025.9.0, and exact supported-current HA 2026.8.3 environments pass; HA1/HA2, traceability, coverage, source audits, lint, formatting, and six separated CI jobs are current. Hosted distribution execution remains a Slice 12 blocker. |
+| 0 | `[x] Stage 8 quality/current-HA foundation complete` | Reproducible pure, exact HA 2025.9.0, and exact supported-current HA 2026.8.3 environments pass; HA1/HA2, traceability, coverage, source audits, lint, formatting, and all six hosted CI jobs are current. |
 | 1 | `[x]` | Canonical identity/ownership models and conservative history continuity are fully consumed and evidenced without a current schema-1 projection. |
 | 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
 | 3 | `[x]` | Mechanical executed-evidence traceability covers all 134 named IDs and I1-I37; T1-T59 implementation/table/diagram/test parity and 100% branch coverage pass. |
@@ -96,12 +96,12 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 9 | `[x]` | Config flow uses `async_update_and_abort`, owns no reload/application state, enforces durable identity, and native HA deletion passes IDLE/AUTO/MANUAL/SOAKING/rapid-delete evidence with zero delete-only reload. |
 | 10 | `[x]` | Schema-2 entities/actions and all lifecycle/reconciliation refusal surfaces pass final traceability. |
 | 11 | `[x]` | Exact-record Repairs, incidents, diagnostics, deleted-safe events, delayed closure, and logging pass final traceability. |
-| 12 | `[~] Local/current-HA complete; hosted gates pending final SHA` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, local hassfest, package, local-only, Recorder, and metadata audits pass. Exact-final-commit GitHub-hosted hassfest and HACS Action evidence are the remaining automated publication gates. |
-| 13 | `[ ] Not started` | All seven real §46 validations remain outstanding. Existing mocks and harness tests do not satisfy them. |
+| 12 | `[x] Exact-public-SHA hosted gates complete` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, package, local-only, Recorder, metadata, hosted hassfest, and hosted HACS gates pass SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`. |
+| 13 | `[~] Partial live evidence` | Real HA/HACS baseline and deployed-sensor cadence evidence exist; full UI, physical valve, Registry rename, shutdown, ten-zone, longer cadence, and HACS presentation obligations remain incomplete. Existing mocks and harness tests do not satisfy them. |
 
 ## Spec.4 Implementation Remediation Plan
 
-Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was explicitly authorized on 2026-08-23, including a later authorization for privacy history rewriting, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI. Its local/current-HA scope passes; its final candidate remains pending until every hosted gate actually runs and passes. The committed closeout sets current authorization to `None`. A later stage may be marked complete only after its named evidence is implemented and actually run.
+Stages 1-8 were explicitly authorized in sequence and are complete. Stage 8 included privacy history rewriting, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI; all six hosted jobs passed the exact public candidate. Slice 13 was later explicitly authorized and closed `[~]` with the dated live evidence below. Current authorization is `None`. A later stage may be marked complete only after its named evidence is implemented and actually run.
 
 ### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
 
@@ -182,14 +182,14 @@ Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was 
 
 ### Stage 8 - Post-remediation documentation, supported-current HA, and distribution CI
 
-- **Status:** `[~] Publication in progress on 2026-08-23`; local/current-HA work and privacy sanitization pass. The exact final candidate still requires all six GitHub-hosted jobs, including hassfest and HACS Action. This document intentionally records those hosted gates as pending the final SHA so their later run identifiers can be reported without creating an unvalidated tracking-only commit. Authorization in the committed candidate is `None`; Slice 13 was not begun.
+- **Status:** `[x] Complete on 2026-08-23`; local/current-HA work, privacy sanitization, public publication, and all six exact-SHA GitHub-hosted jobs pass. Public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` is the validated candidate. No release or external store/Brands submission occurred.
 
 - **Objective:** align user/developer documentation with safe native deletion and schema 2, then execute the separately pinned supported-current HA job and GitHub-hosted hassfest/HACS release gates without publishing.
 - **Affected existing slices/files:** Slices 0 and 12; `README.md`, `DEVELOPMENT.md`, manifest/HACS metadata if accuracy changes are required, `.github/workflows/ci.yml`, `scripts/check_ha_contract.py`, and tracking/release documentation.
 - **Specification sections:** §§39.1, 41-43, 45-46.
 - **Required named tests:** HA1-HA2 and the full 134-ID suite as the release regression; hassfest and HACS Action are additional distribution gates, not behavioural test IDs.
 - **Prerequisite stages:** Stage 7.
-- **Completion evidence:** supported-current HA version/command/count is recorded; mandatory 2025.9.0 remains green; GitHub-hosted hassfest and HACS Action results are recorded; docs no longer describe the spec.3 deletion limitation; Slice 13 remains separately unstarted until explicitly authorized.
+- **Completion evidence:** supported-current HA version/command/count is recorded; mandatory 2025.9.0 remains green; GitHub-hosted lint/format, pure, both HA jobs, hassfest, and HACS Action passed exact SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`; docs no longer describe the spec.3 deletion limitation. Slice 13 remained separate and was later explicitly authorized.
 
 ## Rules for Codex
 
@@ -1389,7 +1389,7 @@ Spec.4 remediation is required for exact-record tombstone/identity/reconciliatio
 
 ### Status
 
-`[~] Exact-final-commit GitHub-hosted gates pending` — Stage 8 documentation, supported-current HA, metadata, CI, package, local-only/Recorder, traceability, local hassfest, privacy sanitization, and repository hygiene work passes. All six hosted jobs must pass the exact final candidate before this becomes `[x]`.
+`[x] Complete` — Stage 8 documentation, supported-current HA, metadata, CI, package, local-only/Recorder, traceability, local hassfest, privacy sanitization, and repository hygiene work pass. Public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six GitHub-hosted jobs.
 
 ### Objective
 
@@ -1417,7 +1417,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Dependencies
 
-- Implementations and current automated evidence exist through Slice 11; Spec.4 Remediation Stages 1-7 are complete and Stage 8 local/current-HA work passes. Only the external hosted release-gate dependency remains.
+- Implementations and current automated evidence exist through Slice 11; Spec.4 Remediation Stages 1-8 are complete and the exact public candidate passed its hosted release gates.
 
 ### Expected files
 
@@ -1460,9 +1460,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Remaining work
 
-- Place the exact final sanitized repository state on the now-authorized public `embersas/moisture-loop` repository and obtain all six passing GitHub-hosted jobs, including `home-assistant/actions/hassfest@master` and `hacs/action@main`, for that exact commit.
-- Verify the manifest `documentation` and `issue_tracker` targets resolve after publication.
-- Release publication and any HACS default-store or centralized-brand submission remain separately authorized (§41/§46) and were not begun.
+- None within Slice 12. Release publication and any HACS default-store or centralized-brand submission remain separately authorized (§41/§46) and were not begun.
 
 ### Tests actually run
 
@@ -1477,6 +1475,8 @@ All on 2026-08-21 (local machine):
 
 Historical 2026-08-21 statement: the supported-current HA harness was **not run** in that session. This is superseded by the Stage 8 exact HA 2026.8.3 execution evidence above and in the Stage 8 session log; the historical planning pin alone was never treated as evidence.
 
+On 2026-08-23 GitHub workflow run `32630108774` passed all six jobs for exact public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS.
+
 ### Decisions / implementation notes
 
 - The `venv-ha` local harness runs the exact 2025.9.0 release, so "release gates" here means every automated §45 gate except the two GitHub-hosted actions.
@@ -1488,14 +1488,13 @@ None.
 
 ### Blockers
 
-- No specification or local-validation blocker is known. Publication remains incomplete until the exact final sanitized SHA is present on both remotes and all six GitHub-hosted jobs pass.
-- Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`). Local metadata/schema checks are not represented as a hosted HACS pass; GitHub-hosted HACS Action validation remains mandatory.
+None. Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`) and the hosted HACS/hassfest jobs passed the exact public candidate.
 
 ## Slice 13 - Prototype validations
 
 ### Status
 
-`[ ] Not started`
+`[~] Partial — authorized and attempted on 2026-08-23; required live/physical evidence remains incomplete`
 
 ### Objective
 
@@ -1527,7 +1526,7 @@ The exact current §46 validation list is:
 
 ### Dependencies
 
-- Slices 0-12 complete and a working release-candidate integration available.
+- Slices 0-12 complete and public candidate SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` available.
 - Appropriate real Home Assistant 2025.9+ environments, physical/test actuators, representative sensors, and any required publication authority available for the relevant item.
 
 ### Expected files
@@ -1558,27 +1557,63 @@ The exact current §46 validation list is:
 
 ### Completed work
 
-None.
+- The user explicitly authorized **Slice 13 prototype validation only**, using GPT-5.6 Sol with extra-high reasoning. No later stage, release, submission, version bump, tag, or specification change was authorized.
+- The mandatory pre-live review was completed: `SPECIFICATION.md` `0.1.0-spec.4` (including §46), `PROGRESS.md`, `README.md`, `DEVELOPMENT.md`, the current public repository, and local git/remotes were read or inspected before live-system work.
+- Live baseline: Home Assistant Core `2026.7.2`, Home Assistant Container on Docker with host networking; HACS `2.0.5`; Moisture Loop was not installed and had no config entry; candidate version `0.1.0`, SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`; a recent full HA backup was confirmed. The private LAN address and credentials are not recorded.
+- Reachability was proved on the configured HA endpoint; the frontend returned HTTP 200 and the unauthenticated API correctly returned 401. A configured trusted-network auth flow correctly refused this workstation (`not_allowed`), so authentication was not bypassed. Legitimate SSH/Docker host control was available separately.
+- Read-only live inventory identified one deployed valve, separate deployed irrigation switches, a representative deployed Zigbee/MQTT soil sensor, and unrelated irrigation automations/scripts. Every candidate irrigation actuator was unavailable. No actuator command was issued, no automation was disabled, and the physical-water checkpoint was never reached.
+- The operator confirmed through the real HA UI that HACS 2.0.5 and its Custom repositories dialog were available. No controllable browser session was available to Codex. The next one-step instruction—to add `https://github.com/embersas/moisture-loop` as category Integration—did not produce an operator result before closeout; live HACS storage and `custom_components` still showed no Moisture Loop repository/install.
+- A seven-day live Recorder cadence query and an 82.525-minute read-only MQTT observation were completed for the deployed soil sensor. Recorder showed 198 rows, 196 numeric changed rows, two availability rows, and 193 within-availability intervals (median 870.742 s, p90 5012.61 s, maximum 79464.4 s). Direct observation captured 20 messages in eight bursts; burst-gap median was 994.638 s and maximum 1116.047 s, with six unchanged-value transitions and two approximately 30-second gaps. Because the direct observation was shorter than the two-hour default, the default was not declared validated and was not changed.
+- Structured public-safe evidence for each item is in `PROTOTYPE_VALIDATION.md`.
+
+| §46 item | Result | Evidence class | Live result |
+|---|---|---|---|
+| 1. UI/UX lifecycle | `BLOCKED` | `NOT VALIDATED` | Real HACS UI was reachable, but no Moisture Loop installation/controller/zone/action/delete/Repair/diagnostic/reload/restart UI lifecycle was run. HACS navigation is not substituted for integration UI evidence. |
+| 2. Physical valve matrix | `BLOCKED` | `NOT VALIDATED` | All identified physical candidates unavailable; no physical state sequence, interference test, or OFF proof. |
+| 3. Entity Registry rename | `BLOCKED` | `NOT VALIDATED` | No configured prototype zone, so supported real Registry rename/restore and identity continuity were not run. |
+| 4. Shutdown OFF timing | `BLOCKED` | `NOT VALIDATED` | Real container-control path exists, but safe active physical flow could not be established; no T0-T4 timings. |
+| 5. Approximately ten dry zones | `BLOCKED` | `NOT VALIDATED` | Integration not installed; no temporary live synthetic entities/zones were created and no FIFO/fairness result exists. |
+| 6. Deployment sensor cadence | `PARTIAL` | `LIVE PHYSICAL` | Multiple live changed and unchanged reports measured, but direct continuous observation did not exceed the two-hour default. |
+| 7. HACS/brand presentation | `PARTIAL` | `LIVE HOME ASSISTANT` | HACS/custom-repository capability confirmed; repository card/install/version/icon/README/restart presentation not observed. No default-store or Brands submission occurred. |
+- No live/physical implementation defect was discovered. The unavailable hardware and incomplete operator/UI steps are evidence gaps, not product defects or specification contradictions.
+- Cleanup: watering was never started; physical actuators remained uncommanded/unavailable; no helper, prototype zone, Registry rename, automation disable, restart, or shutdown was performed; the bounded observer was stopped and its exact temporary log removed; HA remained in normal operation with no test-only Moisture Loop blocker/fault because Moisture Loop was never installed.
 
 ### Remaining work
 
-Perform and document all seven exact §46 prototype validations using real implementation/platform/hardware evidence as applicable.
+- Install the public candidate through the real HACS custom-repository UI and complete the full §46 native UI lifecycle with screenshots/observations.
+- Restore availability of a positively identified safe physical valve, confirm manual shutoff and interference controls, then pass the explicit operator water checkpoint before the valve matrix or shutdown test.
+- Perform and reverse a supported real Entity Registry rename after a prototype zone exists, recording Registry identity, safety-record/lineage/history continuity, and cleanup.
+- Run the real container shutdown while Moisture Loop owns safe physical flow and record T0-T4 plus restart/no-resume evidence.
+- Create approximately ten isolated live-HA synthetic sensor/actuator pairs and zones, run the FIFO/slot/fairness exercise, and remove them.
+- Observe the deployed sensor continuously for longer than the two-hour default, retaining report-burst/unchanged-report evidence, before closing the cadence conclusion.
+- Complete real HACS card/README/icon/version/download/install/restart presentation validation. Centralized Brands and HACS default-store submissions remain separately unauthorized.
 
 ### Tests actually run
 
-None.
+- Read-only live endpoint checks: TCP 8123 reachable; frontend HTTP 200; unauthenticated API HTTP 401.
+- Read-only live HA/container/component/config-entry/Entity Registry/device/Recorder/automation/HACS/backup inventory.
+- Public/local git comparison: local `HEAD`, `origin/main`, and `github/main` all `43f24b12fc162412b534851b9c1b3762ca57cd98` at baseline; public workflow run `32630108774` had six successful jobs.
+- Seven-day Recorder cadence query and 82.525-minute direct read-only MQTT observation, summarized above.
+- No production/test/config code changed, so the established automated suites were not gratuitously rerun. Documentation-only evidence changes pass `git diff --check` at closeout.
 
 ### Decisions / implementation notes
 
-None.
+- The physical valve candidate's implementation reports no position support; a future physical result cannot be claimed as position evidence. §46's template cases and any unavailable-hardware limitation must be reported separately.
+- Real Docker host control is available, but it is not treated as shutdown evidence without the actual active-flow shutdown test.
+- Recorder history is observational cadence evidence only and remains no Moisture Loop runtime safety dependency.
+- No successful single hardware sample would justify weakening blockers, the final ON fence, durable identity, OFF proof, Store persistence, or conservative accounting.
 
 ### Deviations from specification
 
-None.
+None. No live result contradicted `0.1.0-spec.4`; `SPECIFICATION.md` remained unchanged.
 
 ### Blockers
 
-None.
+- UI/operator evidence stopped after opening HACS Custom repositories; browser automation was unavailable and the instructed repository-add result was not returned.
+- Every identified irrigation actuator was unavailable, so safe hardware identity/availability, manual fallback, operator water confirmation, physical valve semantics, and real shutdown OFF timing remain blocked.
+- Integration setup was therefore absent, blocking the real Registry rename and ten-zone live scale exercise in this run.
+- The direct cadence window was shorter than the two-hour default and is retained only as partial evidence.
+- Current authorized slice returned to `None` at closeout.
 
 ## Implementation Session Log
 
@@ -2350,3 +2385,26 @@ PROGRESS.md updated:
 - `PROGRESS.md` deliberately records all hosted gates as pending the exact final candidate SHA. The final response will carry the exact SHA, GitHub workflow/run evidence, and public URL checks so no post-validation tracking commit invalidates the evidence.
 - Slice 0 remains `[x]`. Slice 12 becomes `[x]` only if the exact final SHA passes all six hosted jobs and the public/security checks; until then it remains `[~]`. Slice 13 remains `[ ]` and unstarted.
 - Current authorized slice: `None`. `SPECIFICATION.md` remains unchanged at `0.1.0-spec.4`.
+
+## Session Log — 2026-08-23 (Slice 13 prototype validation)
+
+### Authorization and completed automated baseline
+
+- The user explicitly authorized Slice 13 only, using GPT-5.6 Sol with extra-high reasoning. The required specification, progress, user/developer documentation, public repository, and local git/remotes were reviewed completely before any live action.
+- The public closeout preceding this run is SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`. Local `HEAD`, `origin/main`, and `github/main` matched it at the baseline. GitHub workflow run `32630108774` passed lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS, closing Slice 12 `[x]`.
+
+### Live environment and evidence
+
+- Live deployment: Home Assistant Core `2026.7.2`, Home Assistant Container on Docker host networking, HACS `2.0.5`, legitimate authenticated operator UI plus SSH/Docker host control. A recent full HA backup was confirmed. No credential or private LAN address is recorded.
+- Moisture Loop `0.1.0` was not installed and had no config entry. The operator opened HACS Custom repositories, but the instructed repository-add result was not returned before closeout; live HACS/component inventory remained absent. Item 1 is `BLOCKED`, `NOT VALIDATED`; item 7 is `PARTIAL`, `LIVE HOME ASSISTANT`. HACS navigation is not treated as Moisture Loop lifecycle evidence.
+- Physical inventory identified deployed valve/switch irrigation hardware but every candidate was unavailable. No hardware was commanded, the physical-water checkpoint was not reached, and the physical valve matrix and shutdown timing are `BLOCKED`, `NOT VALIDATED`. The real Docker shutdown path exists but is not evidence without the actual active-flow test.
+- With no integration/zone setup, the real Entity Registry rename and ten-zone scale exercise are `BLOCKED`, `NOT VALIDATED`; no temporary HA helper or zone was created.
+- Deployed-sensor cadence is `PARTIAL`, `LIVE PHYSICAL`: seven days of Recorder changed-state/availability history plus 82.525 minutes of direct read-only MQTT observation. The direct sample captured 20 messages/eight bursts, median burst gap 994.638 s, maximum 1116.047 s, and six unchanged-value transitions. Because it did not continuously exceed the two-hour default, no default change or complete validation is claimed.
+- No implementation defect or specification contradiction was found. Production/test/config code did not change, so existing automated suites were not rerun. Only `PROTOTYPE_VALIDATION.md` and this progress record changed locally.
+
+### Cleanup and closeout
+
+- Watering was never started; physical actuators remained uncommanded and unavailable.
+- No temporary live helper/zone, Registry rename, automation disable, shutdown, or restart existed to revert. The read-only cadence observer was stopped and its exact temporary log removed. HA remained in normal operation with no test-only Moisture Loop blocker/fault.
+- No HACS default-store submission, Brands submission, GitHub Release, version bump, release tag, or specification edit occurred.
+- Slice 13 remains `[~]` because the exact §46 completion rule requires all seven live/physical items. Current authorized slice returned to `None`.
