@@ -12,6 +12,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry, ConfigSubentryData
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -27,6 +28,7 @@ from custom_components.moisture_loop.models import (
     CompletionReason,
     ControllerState,
     DailyRuntime,
+    FaultCode,
     RuntimeLifecycle,
     ZoneConfig,
 )
@@ -37,6 +39,12 @@ from custom_components.moisture_loop.reconciliation import (
     immutable_entry_snapshot,
     normalized_zone_fingerprint,
     stable_batch_requires_reload,
+)
+from custom_components.moisture_loop.repairs import (
+    ISSUE_IDENTITY_CONFLICT,
+    ISSUE_OFF_UNCONFIRMED,
+    ISSUE_RECONCILIATION_FAILED,
+    record_issue_id,
 )
 from custom_components.moisture_loop.slot_manager import SlotManager
 
@@ -551,6 +559,16 @@ class TestRuntimeReconciliation:
         assert set(runtime.store.data.safety_records) == {old_record_id}
         incident = runtime.store.data.safety_records[old_record_id].identity_incident
         assert incident is not None
+        identity_issue = ir.async_get(runtime.hass).async_get_issue(
+            DOMAIN,
+            record_issue_id(entry.entry_id, old_record_id, ISSUE_IDENTITY_CONFLICT),
+        )
+        assert identity_issue is not None
+        assert identity_issue.severity is ir.IssueSeverity.ERROR
+        reconciliation_issue = ir.async_get(runtime.hass).async_get_issue(
+            DOMAIN, f"{ISSUE_RECONCILIATION_FAILED}_{entry.entry_id}"
+        )
+        assert reconciliation_issue is not None
 
     async def test_native_delete_watering_uses_config_changed_and_no_resurrection(
         self, runtime_env
@@ -583,6 +601,14 @@ class TestRuntimeReconciliation:
         runtime.hass.states.async_set(actuator_a.entity_id, "on")
         await settle(runtime.hass)
         assert (record_a_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
+        await runtime.store.async_update_record_runtime(
+            record_a_id,
+            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        )
+        runtime._sync_repairs_from_authority()
+        repair_a_id = record_issue_id(entry.entry_id, record_a_id, ISSUE_OFF_UNCONFIRMED)
+        issue_registry = ir.async_get(runtime.hass)
+        assert issue_registry.async_get_issue(DOMAIN, repair_a_id) is not None
 
         registry = er.async_get(runtime.hass)
         actuator_b = registry.async_get_or_create(
@@ -606,6 +632,17 @@ class TestRuntimeReconciliation:
         assert (record_a_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
         assert BlockerReason.EXTERNAL_FLOW in record_a.blocker_reasons
         assert BlockerReason.EXTERNAL_FLOW not in record_b.blocker_reasons
+        assert record_a.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+        assert record_b.actuator_fault is None
+        repair_b_id = record_issue_id(
+            entry.entry_id,
+            record_b.safety_record_id,
+            ISSUE_OFF_UNCONFIRMED,
+        )
+        assert issue_registry.async_get_issue(DOMAIN, repair_a_id) is not None
+        assert issue_registry.async_get_issue(DOMAIN, repair_b_id) is None
+        await binding_b.controller.async_clear_fault()
+        assert issue_registry.async_get_issue(DOMAIN, repair_a_id) is not None
         assert len(runtime.store.data.safety_records) == 2
         assert not runtime.retained_controllers[record_a_id].runtime_eligible
 
@@ -626,11 +663,20 @@ class TestRuntimeReconciliation:
             ),
         )
         await runtime.slots.async_add_blocker(record_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+        await runtime.store.async_update_record_runtime(
+            record_id,
+            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        )
+        runtime._sync_repairs_from_authority()
+        repair_id = record_issue_id(entry.entry_id, record_id, ISSUE_OFF_UNCONFIRMED)
+        issue_registry = ir.async_get(runtime.hass)
+        assert issue_registry.async_get_issue(DOMAIN, repair_id) is not None
 
         assert runtime.hass.config_entries.async_remove_subentry(entry, old_subentry_id)
         await settle(runtime.hass)
         tombstone = runtime.store.data.safety_records[record_id]
         assert tombstone.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
+        assert issue_registry.async_get_issue(DOMAIN, repair_id) is not None
 
         readded_id = "stage3-hazard-readd"
         assert runtime.hass.config_entries.async_add_subentry(
@@ -647,6 +693,7 @@ class TestRuntimeReconciliation:
         active = runtime.store.data.safety_records[record_id]
         history = runtime.store.data.zone_histories[history_id]
         assert active.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+        assert active.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
         assert active.zone_history_id == history_id
         assert history.last_session_end_utc == ended
         assert history.daily is not None and history.daily.runtime_s == 123.0
@@ -654,6 +701,8 @@ class TestRuntimeReconciliation:
             record_id,
             BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
         ) in runtime.slots.blockers()
+        assert issue_registry.async_get_issue(DOMAIN, repair_id) is not None
+        assert sum(problem.issue_id == repair_id for problem in issue_registry.issues.values()) == 1
 
     async def test_registry_rename_reuses_same_record(self, runtime_env) -> None:
         runtime, entry, actuator_entry, _freezer = runtime_env

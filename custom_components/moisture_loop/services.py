@@ -11,6 +11,7 @@ translated ``ServiceValidationError``s.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import voluptuous as vol
@@ -23,6 +24,7 @@ from homeassistant.helpers import device_registry as dr
 from .const import DOMAIN
 
 if TYPE_CHECKING:
+    from .runtime import EntryRuntime
     from .zone_controller import ZoneController
 
 SERVICE_START_MANUAL = "start_manual_watering"
@@ -31,6 +33,8 @@ SERVICE_EVALUATE = "evaluate_zone"
 SERVICE_CLEAR_FAULT = "clear_fault"
 
 _DEVICE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.string})
+
+
 _MANUAL_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): cv.string,
@@ -47,7 +51,7 @@ def _error(key: str, **placeholders: str) -> ServiceValidationError:
     )
 
 
-def _resolve_controller(hass: HomeAssistant, device_id: str) -> ZoneController:
+def _resolve_controller(hass: HomeAssistant, device_id: str) -> tuple[EntryRuntime, ZoneController]:
     """Authoritative backend zone-device resolution (§5.3, LC2)."""
     device_registry = dr.async_get(hass)
     device = device_registry.async_get(device_id)
@@ -57,11 +61,18 @@ def _resolve_controller(hass: HomeAssistant, device_id: str) -> ZoneController:
     if len(subentry_ids) != 1:
         raise _error("not_a_zone_device")
     subentry_id = subentry_ids[0]
-    entries = hass.config_entries.async_entries(DOMAIN)
-    entry = next((e for e in entries if e.entry_id in device.config_entries), None)
-    if entry is None:
+    owning_entries = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id in device.config_entries
+    ]
+    if len(owning_entries) != 1:
         raise _error("not_a_zone_device")
-    if subentry_id not in entry.subentries:
+    entry = owning_entries[0]
+    if (
+        subentry_id not in entry.subentries
+        or subentry_id not in device.config_entries_subentries.get(entry.entry_id, set())
+    ):
         raise _error("zone_deleted")
     if entry.state is not ConfigEntryState.LOADED:
         raise _error("entry_not_loaded")
@@ -69,7 +80,9 @@ def _resolve_controller(hass: HomeAssistant, device_id: str) -> ZoneController:
     controller = runtime.controllers.get(subentry_id) if runtime else None
     if controller is None:
         raise _error("zone_not_ready")
-    return controller
+    if (refusal := runtime.action_refusal_key(controller)) is not None:
+        raise _error(refusal)
+    return runtime, controller
 
 
 def _raise_for_refusal(decision, action: str) -> None:
@@ -104,23 +117,25 @@ def async_register_services(hass: HomeAssistant) -> None:
         return  # registered once; reloads never duplicate (LC1)
 
     async def start_manual_watering(call: ServiceCall) -> None:
-        controller = _resolve_controller(hass, call.data["device_id"])
+        _, controller = _resolve_controller(hass, call.data["device_id"])
         duration = float(call.data["duration"])
+        if not math.isfinite(duration):
+            raise _error("invalid_duration")
         # Validity is enforced by the pure G-MANUAL-SAFE guard; the refusal
         # is translated below (finite, strictly positive).
         decision = await controller.async_manual_start(duration)
         _raise_for_refusal(decision, SERVICE_START_MANUAL)
 
     async def stop_watering(call: ServiceCall) -> None:
-        controller = _resolve_controller(hass, call.data["device_id"])
+        _, controller = _resolve_controller(hass, call.data["device_id"])
         await controller.async_stop_watering()
 
     async def evaluate_zone(call: ServiceCall) -> None:
-        controller = _resolve_controller(hass, call.data["device_id"])
+        _, controller = _resolve_controller(hass, call.data["device_id"])
         await controller.async_evaluate()
 
     async def clear_fault(call: ServiceCall) -> None:
-        controller = _resolve_controller(hass, call.data["device_id"])
+        _, controller = _resolve_controller(hass, call.data["device_id"])
         decision = await controller.async_clear_fault()
         if decision.transition_id == "T44":
             raise _error("fault_not_clearable")

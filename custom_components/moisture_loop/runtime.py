@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import uuid
@@ -87,6 +88,14 @@ _LOGGER = logging.getLogger(__name__)
 SHUTDOWN_OFF_BUDGET_S = 8.0
 
 
+class SafetyRecordAcknowledgementError(RuntimeError):
+    """Translated fail-closed reason from an exact-record Repair operation."""
+
+    def __init__(self, translation_key: str) -> None:
+        super().__init__(translation_key)
+        self.translation_key = translation_key
+
+
 def zone_config_from_subentry(data: dict) -> ZoneConfig:
     """Build the pure ZoneConfig from config-subentry data (§9 keys)."""
     return ZoneConfig(
@@ -164,6 +173,8 @@ class EntryRuntime:
         self._local_tz = dt_util.get_default_time_zone()
         self._listener_registered = False
         self._on_authorizations: dict[str, FinalOnAuthorizationToken] = {}
+        self._reconciliation_issue_active = False
+        self._known_identity_incidents: set[str] = set()
         self.coordinator = ConfigurationReconciliationCoordinator(
             self.slots,
             self._build_immutable_snapshot,
@@ -171,6 +182,80 @@ class EntryRuntime:
             self._async_reload_after_reconciliation,
             self.hass.async_create_task,
         )
+
+    # ------------------------------------------------------------------
+    # Stage-6 presentation/action authority (§§28, 31, 33)
+    # ------------------------------------------------------------------
+
+    def canonical_zone_authority(
+        self, controller: ZoneController
+    ) -> tuple[SafetyRecord, ZoneHistory] | None:
+        """Return the exact schema-2 authorities for one current controller."""
+        if not self.store.loaded:
+            return None
+        record = self.store.data.safety_records.get(controller.safety_record_id)
+        history = self.store.data.zone_histories.get(controller.zone_history_id)
+        if record is None or history is None or record.zone_history_id != history.zone_history_id:
+            return None
+        return record, history
+
+    def action_refusal_key(self, controller: ZoneController) -> str | None:
+        """Return the translated reason normal zone control is unavailable."""
+        authority = self.canonical_zone_authority(controller)
+        binding = self.bindings.get(controller.zone_id)
+        if authority is None or binding is None or binding.controller is not controller:
+            return "zone_not_ready"
+        record, history = authority
+        if (
+            controller.zone_id not in self.entry.subentries
+            or record.runtime_lifecycle is not RuntimeLifecycle.ACTIVE
+            or record.active_subentry_id != controller.zone_id
+            or history.active_subentry_id != controller.zone_id
+            or binding.lifecycle is not RuntimeLifecycle.ACTIVE
+            or binding.quiescing
+            or controller.runtime_lifecycle is not RuntimeLifecycle.ACTIVE
+            or not controller.runtime_eligible
+        ):
+            return "zone_not_active"
+        if self.coordinator.failed or self.slots.snapshot().reconciliation_failed:
+            return "reconciliation_failed"
+        slots = self.slots.snapshot()
+        if (
+            self.process_stopping
+            or self.coordinator.stopping
+            or self.coordinator.dirty
+            or self.coordinator.reconciling
+            or self.coordinator.reload_pending
+            or self.coordinator.observed_generation != self.coordinator.applied_generation
+            or not slots.admission_open
+        ):
+            return "reconciliation_busy"
+        return None
+
+    def entity_runtime_active(self, controller: ZoneController) -> bool:
+        """Whether an entity still represents a current ACTIVE configured zone."""
+        authority = self.canonical_zone_authority(controller)
+        if authority is None:
+            return False
+        record, history = authority
+        return (
+            record.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+            and record.active_subentry_id == controller.zone_id
+            and history.active_subentry_id == controller.zone_id
+            and self.controllers.get(controller.zone_id) is controller
+            and controller.zone_id in self.entry.subentries
+        )
+
+    def control_entity_available(self, controller: ZoneController) -> bool:
+        """Availability for controls/needs-water; direct calls still validate."""
+        return self.action_refusal_key(controller) is None
+
+    def controller_for_safety_record(self, safety_record_id: str) -> ZoneController | None:
+        """Resolve a live ACTIVE or retained controller by exact record identity."""
+        for controller in self._all_controllers():
+            if controller.safety_record_id == safety_record_id:
+                return controller
+        return None
 
     # ------------------------------------------------------------------
     # Stage-4 final actuator-ON authorization (§11.2, I32, I36)
@@ -491,7 +576,10 @@ class EntryRuntime:
         try:
             await self.coordinator.async_start()
         except ReconciliationError as err:
+            self._sync_repairs_from_authority()
             raise ConfigEntryNotReady(str(err)) from err
+
+        self._sync_repairs_from_authority()
 
         self._install_periodic_triggers()
         await self.slots.async_enable_grants()
@@ -503,15 +591,34 @@ class EntryRuntime:
 
         def _entry_updated(_hass: HomeAssistant, _entry: ConfigEntry):
             self.coordinator.observe_current()
-            return self.coordinator.async_reconcile()
+            return self._async_reconcile_and_sync_repairs()
 
         unsubscribe = self.entry.add_update_listener(_entry_updated)
         self.entry.async_on_unload(unsubscribe)
         self._listener_registered = True
 
+    async def _async_reconcile_and_sync_repairs(self) -> None:
+        """Join authoritative reconciliation and mirror incidents to Repairs."""
+        was_failed = self._reconciliation_issue_active
+        try:
+            await self.coordinator.async_reconcile()
+        finally:
+            self._sync_repairs_from_authority()
+        if was_failed and not self.coordinator.failed:
+            _LOGGER.info(
+                "Configuration reconciliation recovered for entry %s at generation %s",
+                self.entry.entry_id,
+                self.coordinator.applied_generation,
+            )
+
     async def _async_reload_after_reconciliation(self) -> bool:
         """Apply platform reconstruction through HA's supported reload API."""
-        return await self.hass.config_entries.async_reload(self.entry.entry_id)
+        try:
+            return await self.hass.config_entries.async_reload(self.entry.entry_id)
+        finally:
+            # Reload success/failure is classified by the coordinator after
+            # this callback returns. Mirror that final state next loop turn.
+            asyncio.get_running_loop().call_soon(self._sync_repairs_from_authority)
 
     def _migration_contexts(
         self, snapshot: ImmutableEntrySnapshot
@@ -605,6 +712,7 @@ class EntryRuntime:
     ) -> None:
         """Consume one snapshot through the canonical schema-2 authorities."""
         zones = snapshot.by_subentry_id()
+        prior_records = dict(self.store.data.safety_records) if self.store.loaded else {}
 
         # Removed and changed applied controllers quiesce before Store
         # ownership changes.  Supersession may conservatively end a session,
@@ -644,6 +752,7 @@ class EntryRuntime:
             )
 
         await self.store.async_reconcile(_mutate)
+        self._log_record_lifecycle_changes(prior_records)
         if not is_current():
             return
 
@@ -693,6 +802,30 @@ class EntryRuntime:
                 await self.slots.async_add_blocker(
                     binding.safety_record_id,
                     BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
+                )
+
+    def _log_record_lifecycle_changes(self, prior_records: dict[str, SafetyRecord]) -> None:
+        """Log canonical tombstone/reactivation transitions at useful levels."""
+        for record_id, current in self.store.data.safety_records.items():
+            prior = prior_records.get(record_id)
+            if prior is None or prior.runtime_lifecycle is current.runtime_lifecycle:
+                continue
+            if current.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+                _LOGGER.info(
+                    "Safety record %s reactivated for subentry %s",
+                    record_id,
+                    current.active_subentry_id,
+                )
+            elif prior.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+                _LOGGER.warning(
+                    "Safety record %s retained as %s after configuration removal/change",
+                    record_id,
+                    current.runtime_lifecycle.value,
+                )
+            elif current.runtime_lifecycle is RuntimeLifecycle.RETIRED:
+                _LOGGER.info(
+                    "Safety record %s retired after exact OFF/accounting closure",
+                    record_id,
                 )
 
     def _actuator_assessments(self, snapshot: ImmutableEntrySnapshot) -> dict[str, object]:
@@ -749,6 +882,15 @@ class EntryRuntime:
             )
             if current is not None and self._same_actuator(record, current):
                 continue
+            # A live binding already owns this exact session and its event
+            # subscriptions. The normal synchronization path below transfers
+            # that controller to retained ownership. Materializing a second
+            # observer here would duplicate delayed OFF/fault/finish events.
+            if any(
+                binding.safety_record_id == record.safety_record_id
+                for binding in self.bindings.values()
+            ):
+                continue
             if record.safety_record_id in self.retained_controllers:
                 continue
             identity = record.actuator_identity
@@ -766,7 +908,7 @@ class EntryRuntime:
                 self.slots,
                 run_id=self.run_id,
                 local_tz=self._local_tz,
-                emit=self._make_emitter(record.zone_id),
+                emit=self._make_emitter(record.zone_id, record.safety_record_id),
                 safety_record_id=record.safety_record_id,
                 authorization=self,
             )
@@ -1325,7 +1467,7 @@ class EntryRuntime:
                 self.slots,
                 run_id=self.run_id,
                 local_tz=self._local_tz,
-                emit=self._make_emitter(record.zone_id),
+                emit=self._make_emitter(record.zone_id, record.safety_record_id),
                 safety_record_id=record.safety_record_id,
                 authorization=self,
             )
@@ -1507,24 +1649,53 @@ class EntryRuntime:
             self.slots,
             run_id=self.run_id,
             local_tz=self._local_tz,
-            emit=self._make_emitter(zone.subentry_id),
+            emit=self._make_emitter(zone.subentry_id, record.safety_record_id),
             safety_record_id=record.safety_record_id,
             authorization=self,
         )
 
-    def _make_emitter(self, zone_id: str):
+    def _make_emitter(self, zone_id: str, safety_record_id: str | None = None):
         def emit(kind: str, payload: dict) -> None:
-            # Common identity fields (§32): subentry ID, zone name, device.
+            # Common identity fields (§32) come from the exact schema-2
+            # record. A deleted device/subentry is optional presentation
+            # metadata and is never required to emit delayed safety evidence.
             controller = self.controllers.get(zone_id)
+            if safety_record_id is None and controller is not None:
+                record_id = controller.safety_record_id
+            else:
+                record_id = safety_record_id
+            record = (
+                self.store.data.safety_records.get(record_id)
+                if self.store.loaded and record_id is not None
+                else None
+            )
+            history = (
+                self.store.data.zone_histories.get(record.zone_history_id)
+                if record is not None
+                else None
+            )
             enriched = dict(payload)
-            enriched["zone_id"] = zone_id
+            enriched.setdefault("zone_id", zone_id)
             if controller is not None:
                 enriched.setdefault("zone_name", controller.config_name)
                 if "mode" not in enriched and controller.session is not None:
                     enriched["mode"] = controller.session.mode.value
-            enriched["device_id"] = self._device_id(zone_id)
+            elif record is not None and record.applied_config is not None:
+                enriched.setdefault("zone_name", record.applied_config.normalized_settings.name)
+            if record is not None:
+                enriched["safety_record_id"] = record.safety_record_id
+                enriched["safety_lineage_id"] = record.safety_lineage_id
+                enriched["zone_history_id"] = record.zone_history_id
+                enriched["runtime_lifecycle"] = record.runtime_lifecycle.value
+                enriched["subentry_id"] = record.active_subentry_id
+                enriched["previous_subentry_ids"] = list(record.previous_subentry_ids)
+            elif history is not None:
+                enriched["zone_history_id"] = history.zone_history_id
+            device_id = self._device_id(zone_id)
+            if device_id is not None:
+                enriched["device_id"] = device_id
             self.hass.bus.async_fire(f"{DOMAIN}_{kind}", enriched)
-            self._update_repairs(kind, zone_id, enriched)
+            self._update_repairs(kind, zone_id, record_id, enriched)
 
         return emit
 
@@ -1534,7 +1705,13 @@ class EntryRuntime:
         device = dr.async_get(self.hass).async_get_device({(DOMAIN, zone_id)})
         return device.id if device else None
 
-    def _update_repairs(self, kind: str, zone_id: str, payload: dict) -> None:
+    def _update_repairs(
+        self,
+        kind: str,
+        zone_id: str,
+        safety_record_id: str | None,
+        payload: dict,
+    ) -> None:
         """§34 Repairs follow fault transitions."""
         from . import repairs
         from .models import FaultCode
@@ -1543,8 +1720,15 @@ class EntryRuntime:
         zone_name = controller.config_name if controller else zone_id
         if kind == "fault_set":
             fault = payload.get("fault")
-            if fault == FaultCode.ACTUATOR_OFF_TIMEOUT.value:
-                repairs.async_create_off_unconfirmed_issue(self.hass, zone_id, zone_name)
+            if fault == FaultCode.ACTUATOR_OFF_TIMEOUT.value and safety_record_id is not None:
+                record = self.store.data.safety_records.get(safety_record_id)
+                if record is not None:
+                    repairs.async_create_off_unconfirmed_issue(
+                        self.hass,
+                        self.entry.entry_id,
+                        record,
+                        zone_name,
+                    )
             elif fault == FaultCode.CONFIGURATION_INVALID.value and controller is not None:
                 sensor = controller.config.moisture_sensor
                 actuator = controller.config.actuator
@@ -1560,8 +1744,13 @@ class EntryRuntime:
                 repairs.async_create_integrity_issue(self.hass, self.entry.entry_id)
         elif kind == "fault_cleared":
             fault = payload.get("fault")
-            if fault == FaultCode.ACTUATOR_OFF_TIMEOUT.value:
-                repairs.async_delete_off_unconfirmed_issue(self.hass, zone_id)
+            if fault == FaultCode.ACTUATOR_OFF_TIMEOUT.value and safety_record_id is not None:
+                repairs.async_delete_record_issue(
+                    self.hass,
+                    self.entry.entry_id,
+                    safety_record_id,
+                    repairs.ISSUE_OFF_UNCONFIRMED,
+                )
             elif fault == FaultCode.CONFIGURATION_INVALID.value:
                 repairs.async_delete_entity_missing_issues(self.hass, zone_id)
             elif fault == FaultCode.RESTORED_FROM_UNSAFE_STATE.value and not any(
@@ -1569,6 +1758,158 @@ class EntryRuntime:
                 for c in self.controllers.values()
             ):
                 repairs.async_delete_integrity_issue(self.hass, self.entry.entry_id)
+
+    def _sync_repairs_from_authority(self) -> None:
+        """Project canonical Store/reconciliation incidents into HA Repairs."""
+        from . import repairs
+
+        if not self.store.loaded:
+            return
+        current_identity_incidents: set[str] = set()
+        for record in self.store.data.safety_records.values():
+            name = (
+                record.applied_config.normalized_settings.name
+                if record.applied_config is not None
+                else record.zone_id
+            )
+            if (
+                record.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+                and record.acknowledgement_required
+            ):
+                repairs.async_create_off_unconfirmed_issue(
+                    self.hass,
+                    self.entry.entry_id,
+                    record,
+                    name,
+                )
+            else:
+                repairs.async_delete_record_issue(
+                    self.hass,
+                    self.entry.entry_id,
+                    record.safety_record_id,
+                    repairs.ISSUE_OFF_UNCONFIRMED,
+                )
+
+            if record.identity_incident is not None:
+                issue_type = (
+                    repairs.ISSUE_TOMBSTONE_ACTUATOR_MISSING
+                    if record.identity_incident.kind
+                    in (
+                        IdentityIncidentKind.IDENTITY_MISSING,
+                        IdentityIncidentKind.MIGRATION_UNRESOLVED,
+                    )
+                    else repairs.ISSUE_IDENTITY_CONFLICT
+                )
+                repairs.async_create_identity_issue(
+                    self.hass,
+                    self.entry.entry_id,
+                    record,
+                    issue_type,
+                    name,
+                )
+                identity_issue_id = repairs.record_issue_id(
+                    self.entry.entry_id,
+                    record.safety_record_id,
+                    issue_type,
+                )
+                current_identity_incidents.add(identity_issue_id)
+                if identity_issue_id not in self._known_identity_incidents:
+                    _LOGGER.error(
+                        "Actuator identity incident for safety record %s: %s",
+                        record.safety_record_id,
+                        record.identity_incident.detail,
+                    )
+
+        for issue_id in self._known_identity_incidents - current_identity_incidents:
+            repairs.async_delete_issue_id(self.hass, issue_id)
+        self._known_identity_incidents = current_identity_incidents
+
+        if self.coordinator.failed:
+            repairs.async_create_reconciliation_issue(
+                self.hass,
+                self.entry.entry_id,
+                self.coordinator.last_error or "configuration reconciliation failed",
+                self.coordinator.observed_generation,
+                self.coordinator.applied_generation,
+            )
+            if not self._reconciliation_issue_active:
+                _LOGGER.error(
+                    "Configuration reconciliation failed for entry %s: %s",
+                    self.entry.entry_id,
+                    self.coordinator.last_error,
+                )
+            self._reconciliation_issue_active = True
+        else:
+            repairs.async_delete_reconciliation_issue(self.hass, self.entry.entry_id)
+            self._reconciliation_issue_active = False
+
+    async def async_acknowledge_safety_record(
+        self,
+        safety_record_id: str,
+        safety_lineage_id: str,
+        issue_type: str,
+    ) -> None:
+        """Acknowledge exactly one retained record for a Repair fix flow."""
+        from . import repairs
+
+        if issue_type != repairs.ISSUE_OFF_UNCONFIRMED:
+            raise SafetyRecordAcknowledgementError("record_fault_not_acknowledgeable")
+        if not self.store.loaded:
+            raise SafetyRecordAcknowledgementError("record_not_found")
+        record = self.store.data.safety_records.get(safety_record_id)
+        if record is None or record.safety_lineage_id != safety_lineage_id:
+            raise SafetyRecordAcknowledgementError("record_not_found")
+        if record.actuator_fault is not FaultCode.ACTUATOR_OFF_TIMEOUT:
+            raise SafetyRecordAcknowledgementError("record_fault_changed")
+        if not record.acknowledgement_required:
+            raise SafetyRecordAcknowledgementError("record_fault_not_acknowledgeable")
+        if record.identity_incident is not None or record.actuator_identity.identity_status in (
+            IdentityStatus.MISSING,
+            IdentityStatus.CONFLICT,
+        ):
+            raise SafetyRecordAcknowledgementError("record_identity_unresolved")
+        history = self.store.data.zone_histories[record.zone_history_id]
+        if (
+            record.blocker_reasons
+            or record.possible_flow_owner is not None
+            or history.zone_runtime.session is not None
+        ):
+            raise SafetyRecordAcknowledgementError("record_off_not_proven")
+
+        controller = self.controller_for_safety_record(safety_record_id)
+        if controller is not None:
+            if not controller.refresh_actuator_for_final_gate().proven_off:
+                raise SafetyRecordAcknowledgementError("record_off_not_proven")
+            decision = await controller.async_clear_fault()
+            refreshed = self.store.data.safety_records.get(safety_record_id)
+            if (
+                decision.transition_id == "T44"
+                or refreshed is None
+                or refreshed.actuator_fault is not None
+                or refreshed.acknowledgement_required
+            ):
+                raise SafetyRecordAcknowledgementError("record_fault_changed")
+        else:
+            if record.runtime_lifecycle is not RuntimeLifecycle.RETIRED:
+                raise SafetyRecordAcknowledgementError("record_off_not_proven")
+            try:
+                await self.store.async_acknowledge_actuator_fault(
+                    safety_record_id,
+                    safety_lineage_id,
+                    FaultCode.ACTUATOR_OFF_TIMEOUT,
+                )
+            except StoreWriteVerificationError as err:
+                _LOGGER.error(
+                    "Exact-record acknowledgement failed for %s: %s",
+                    safety_record_id,
+                    err,
+                )
+                raise SafetyRecordAcknowledgementError("record_acknowledgement_failed") from err
+            self._make_emitter(record.zone_id, safety_record_id)(
+                "fault_cleared",
+                {"fault": FaultCode.ACTUATOR_OFF_TIMEOUT.value},
+            )
+        self._sync_repairs_from_authority()
 
     async def _reconcile_zone(
         self,

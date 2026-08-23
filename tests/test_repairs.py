@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 pytest.importorskip("homeassistant")
 
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
@@ -27,6 +29,11 @@ from test_entities import (
 from custom_components.moisture_loop.const import DOMAIN
 from custom_components.moisture_loop.diagnostics import (
     async_get_config_entry_diagnostics,
+)
+from custom_components.moisture_loop.repairs import (
+    ISSUE_OFF_UNCONFIRMED,
+    async_create_fix_flow,
+    record_issue_id,
 )
 
 EVENT_TYPES = (
@@ -45,6 +52,10 @@ def auto_enable(enable_custom_integrations):
 @pytest.fixture
 async def env(hass, freezer):
     freezer.move_to("2026-08-21 12:00:00+00:00")
+    actuator_entry = er.async_get(hass).async_get_or_create(
+        "valve", "test", "repairs-valve", suggested_object_id="valve_1"
+    )
+    assert actuator_entry.entity_id == ACTUATOR
     valve = ScriptedValve(hass)
     hass.states.async_set(SENSOR, "33")
     await hass.async_block_till_done()
@@ -102,19 +113,96 @@ class TestRepairs:
         await settle(env.hass)
         for _ in range(3):
             await advance(env, 30)
-        issue_id = f"actuator_off_unconfirmed_{env.subentry_id}"
+        issue_id = record_issue_id(
+            env.entry.entry_id,
+            controller.safety_record_id,
+            ISSUE_OFF_UNCONFIRMED,
+        )
         created = issue(env.hass, issue_id)
         assert created is not None
         assert created.severity is ir.IssueSeverity.CRITICAL  # §34 true panic
-        assert not created.is_fixable
+        assert created.is_fixable
+        assert env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)
+        await settle(env.hass)
+        retained = env.runtime.store.data.safety_records[controller.safety_record_id]
+        assert retained.runtime_lifecycle.value == "delete_pending"
+        assert issue(env.hass, issue_id) is not None
+        assert dr.async_get(env.hass).async_get_device({(DOMAIN, env.subentry_id)}) is None
         # Accounting continues until proven OFF; the issue clears only after
         # observed OFF plus acknowledgement (§26.1).
+        assert kinds(env).count("session_finished") == 0
         env.valve.set_state("closed", 0)
         await settle(env.hass)
         assert issue(env.hass, issue_id) is not None  # ack still required
-        await controller.async_clear_fault()
-        await settle(env.hass)
+        finished = [event for event in env.events if event.event_type.endswith("session_finished")]
+        assert len(finished) == 1
+        assert finished[0].data["safety_record_id"] == controller.safety_record_id
+        assert "device_id" not in finished[0].data
+        flow = await async_create_fix_flow(env.hass, issue_id, created.data)
+        flow.hass = env.hass
+        assert (await flow.async_step_init())["type"].value == "form"
+        assert (await flow.async_step_confirm({}))["type"].value == "create_entry"
         assert issue(env.hass, issue_id) is None
+
+    async def test_exact_record_fix_rejects_stale_lineage(self, env) -> None:
+        await set_moisture(env, "20")
+
+        async def silent_close(call) -> None:
+            env.valve.off_calls += 1
+
+        env.hass.services.async_register("valve", "close_valve", silent_close)
+        controller = env.runtime.controllers[env.subentry_id]
+        await controller.async_stop_watering()
+        await settle(env.hass)
+        for _ in range(3):
+            await advance(env, 30)
+        issue_id = record_issue_id(
+            env.entry.entry_id,
+            controller.safety_record_id,
+            ISSUE_OFF_UNCONFIRMED,
+        )
+        created = issue(env.hass, issue_id)
+        stale_data = {**created.data, "safety_lineage_id": "stale-lineage"}
+        flow = await async_create_fix_flow(env.hass, issue_id, stale_data)
+        flow.hass = env.hass
+        result = await flow.async_step_confirm({})
+        assert result["errors"]["base"] == "record_not_found"
+        assert issue(env.hass, issue_id) is not None
+
+    async def test_retired_tombstone_fix_without_controller_or_device(self, env) -> None:
+        from custom_components.moisture_loop.models import FaultCode
+
+        controller = env.runtime.controllers[env.subentry_id]
+        record_id = controller.safety_record_id
+        await env.runtime.store.async_update_record_runtime(
+            record_id,
+            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_OFF_TIMEOUT),
+        )
+        env.runtime._sync_repairs_from_authority()
+        issue_id = record_issue_id(env.entry.entry_id, record_id, ISSUE_OFF_UNCONFIRMED)
+        created = issue(env.hass, issue_id)
+        assert created is not None
+
+        assert env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)
+        await settle(env.hass)
+        record = env.runtime.store.data.safety_records[record_id]
+        assert record.runtime_lifecycle.value == "retired"
+        assert env.runtime.controller_for_safety_record(record_id) is None
+        assert dr.async_get(env.hass).async_get_device({(DOMAIN, env.subentry_id)}) is None
+        assert issue(env.hass, issue_id) is not None
+
+        flow = await async_create_fix_flow(env.hass, issue_id, created.data)
+        flow.hass = env.hass
+        assert (await flow.async_step_confirm({}))["type"].value == "create_entry"
+        await settle(env.hass)
+        acknowledged = env.runtime.store.data.safety_records[record_id]
+        assert acknowledged.actuator_fault is None
+        assert not acknowledged.acknowledgement_required
+        assert issue(env.hass, issue_id) is None
+        cleared = env.events[-1]
+        assert cleared.event_type.endswith("fault_cleared")
+        assert cleared.data["safety_record_id"] == record_id
+        assert "device_id" not in cleared.data
 
     async def test_sensor_missing_error_issue(self, env) -> None:
         from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
@@ -220,6 +308,28 @@ class TestEvents:
         await settle(env.hass)
         assert kinds(env).count("session_finished") == 1
 
+    async def test_deleted_record_fault_event_needs_no_device(self, env) -> None:
+        from custom_components.moisture_loop.models import FaultCode
+
+        controller = env.runtime.controllers[env.subentry_id]
+        record_id = controller.safety_record_id
+        assert env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)
+        await settle(env.hass)
+        assert dr.async_get(env.hass).async_get_device({(DOMAIN, env.subentry_id)}) is None
+        await env.runtime.store.async_update_record_runtime(
+            record_id,
+            lambda record: record.evolve(active_fault=FaultCode.ACTUATOR_UNAVAILABLE),
+        )
+        env.runtime._make_emitter(env.subentry_id, record_id)(
+            "fault_set", {"fault": FaultCode.ACTUATOR_UNAVAILABLE.value}
+        )
+        await settle(env.hass)
+        event = env.events[-1]
+        assert event.event_type.endswith("fault_set")
+        assert event.data["safety_record_id"] == record_id
+        assert event.data["subentry_id"] is None
+        assert "device_id" not in event.data
+
 
 class TestDiagnostics:
     async def test_diagnostics_content_and_redaction(self, env) -> None:
@@ -229,7 +339,7 @@ class TestDiagnostics:
         # The zone-add reload re-ran setup: the first pass was the first
         # install; this (second) run adopted the initialized store.
         assert diagnostics["store"]["setup_classification"] == "initialized_ok"
-        assert diagnostics["store"]["schema_version"] == 1
+        assert diagnostics["store"]["schema_version"] == 2
         assert diagnostics["store"]["store_revision"] >= 1
         assert diagnostics["store"]["previous_run_was_clean"] is False
         assert len(diagnostics["store"]["current_run_id_short"]) == 8
@@ -237,15 +347,31 @@ class TestDiagnostics:
         assert diagnostics["entry_data"]["runtime_store_generation_id"] == "**REDACTED**"
         assert diagnostics["raw_store"]["generation_id"] == "**REDACTED**"
         zone = diagnostics["zones"][env.subentry_id]
-        assert zone["state"] == "watering"
-        assert zone["config"]["actuator"] == ACTUATOR
-        assert zone["observation"]["classification"] == "valid"
-        assert zone["session"]["mode"] == "auto"
-        assert zone["session"]["pulse_intent_at_utc"] is not None
-        assert zone["actuator_classification"]["observed_on"] is True
+        assert zone["lifecycle"] == "active"
+        assert zone["safety_record_id"] == env.runtime.controllers[env.subentry_id].safety_record_id
+        assert zone["zone_history"]["zone_runtime"]["state"] == "watering"
+        assert zone["applied_shadow"]["actuator_identity"]["last_known_entity_id"] == ACTUATOR
+        assert zone["runtime"]["observation"]["classification"] == "valid"
+        session = zone["zone_history"]["zone_runtime"]["current_session"]["context"]
+        assert session["mode"] == "auto"
+        assert session["pulse_intent_at_utc"] is not None
+        assert zone["runtime"]["actuator_classification"]["observed_on"] is True
         assert diagnostics["slot_manager"]["owner"] == env.subentry_id
         # Measured vs estimated runtime is explicit.
-        assert zone["session"]["runtime_estimated"] is False
+        assert session["runtime_estimated"] is False
+
+    async def test_diagnostics_retained_tombstone_without_device(self, env) -> None:
+        record_id = env.runtime.controllers[env.subentry_id].safety_record_id
+        env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)
+        await settle(env.hass)
+        runtime = env.entry.runtime_data
+        diagnostics = await async_get_config_entry_diagnostics(env.hass, env.entry)
+        retained = diagnostics["retained_tombstones"][record_id]
+        assert retained["active_subentry_id"] is None
+        assert retained["lifecycle"] in ("delete_pending", "retired")
+        assert retained["safety_record_id"] == record_id
+        assert dr.async_get(env.hass).async_get_device({(DOMAIN, env.subentry_id)}) is None
+        assert runtime.store.data.safety_records[record_id].safety_record_id == record_id
 
     async def test_diagnostics_transitions_ring(self, env) -> None:
         await set_moisture(env, "20")
@@ -308,6 +434,59 @@ class TestLogging:
 
 
 class TestRepairEdges:
+    async def test_async_reload_failure_creates_reconciliation_issue(self, env) -> None:
+        from custom_components.moisture_loop.repairs import (
+            ISSUE_RECONCILIATION_FAILED,
+        )
+
+        subentry = env.entry.subentries[env.subentry_id]
+        changed = {**subentry.data, "name": "Reload failure"}
+        with patch.object(
+            env.hass.config_entries,
+            "async_reload",
+            AsyncMock(return_value=False),
+        ):
+            assert env.hass.config_entries.async_update_subentry(env.entry, subentry, data=changed)
+            await settle(env.hass)
+        assert env.runtime.coordinator.failed
+        created = issue(
+            env.hass,
+            f"{ISSUE_RECONCILIATION_FAILED}_{env.entry.entry_id}",
+        )
+        assert created is not None
+        assert created.severity is ir.IssueSeverity.ERROR
+        assert not env.runtime.slots.snapshot().admission_open
+
+    async def test_reconciliation_failure_issue_clears_only_after_recovery(self, env) -> None:
+        from custom_components.moisture_loop.models import BlockerReason
+        from custom_components.moisture_loop.reconciliation import ReconciliationError
+        from custom_components.moisture_loop.repairs import (
+            ISSUE_RECONCILIATION_FAILED,
+        )
+
+        runtime = env.runtime
+        record_id = runtime.controllers[env.subentry_id].safety_record_id
+        await runtime.slots.async_add_blocker(record_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED)
+        runtime.coordinator._fail(ReconciliationError("stage-6 injected failure"))
+        runtime._sync_repairs_from_authority()
+        issue_id = f"{ISSUE_RECONCILIATION_FAILED}_{env.entry.entry_id}"
+        created = issue(env.hass, issue_id)
+        assert created is not None
+        assert created.severity is ir.IssueSeverity.ERROR
+        assert not runtime.slots.snapshot().admission_open
+
+        subentry = env.entry.subentries[env.subentry_id]
+        assert env.hass.config_entries.async_update_subentry(
+            env.entry, subentry, title="Reconciled"
+        )
+        await settle(env.hass)
+        assert not runtime.coordinator.failed
+        assert issue(env.hass, issue_id) is None
+        assert (
+            record_id,
+            BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
+        ) in runtime.slots.blockers()
+
     async def test_configuration_fault_clears_after_reconfigure_reload(self, env) -> None:
         from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 

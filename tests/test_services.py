@@ -92,6 +92,45 @@ class TestActionLifecycle:
         for service in ALL_SERVICES:
             assert env.hass.services.has_service(DOMAIN, service), service
 
+    @pytest.mark.parametrize("lifecycle", ["delete_pending", "retired"])
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    async def test_non_active_runtime_refuses_actions(self, env, lifecycle, service) -> None:
+        from custom_components.moisture_loop.models import RuntimeLifecycle
+
+        controller = env.runtime.controllers[env.subentry_id]
+        controller.runtime_lifecycle = RuntimeLifecycle(lifecycle)
+        try:
+            with pytest.raises(ServiceValidationError) as excinfo:
+                data = {"device_id": env.device.id}
+                if service == "start_manual_watering":
+                    data["duration"] = 60
+                await call(env, service, **data)
+            assert raises_key(excinfo) == "zone_not_active"
+            assert env.valve.on_calls == 0
+        finally:
+            controller.runtime_lifecycle = RuntimeLifecycle.ACTIVE
+
+    @pytest.mark.parametrize(
+        ("attribute", "translation_key"),
+        [("dirty", "reconciliation_busy"), ("failed", "reconciliation_failed")],
+    )
+    @pytest.mark.parametrize("service", ALL_SERVICES)
+    async def test_reconciliation_barrier_refuses_actions(
+        self, env, attribute, translation_key, service
+    ) -> None:
+        coordinator = env.runtime.coordinator
+        setattr(coordinator, attribute, True)
+        try:
+            with pytest.raises(ServiceValidationError) as excinfo:
+                data = {"device_id": env.device.id}
+                if service == "start_manual_watering":
+                    data["duration"] = 60
+                await call(env, service, **data)
+            assert raises_key(excinfo) == translation_key
+            assert env.valve.on_calls == 0
+        finally:
+            setattr(coordinator, attribute, False)
+
 
 class TestDeviceResolution:
     async def test_lc2_unknown_device(self, env) -> None:
@@ -148,7 +187,7 @@ class TestManualAction:
         assert controller.session is not None
         assert controller.session.manual_effective_duration_s == 1800.0  # manual max
 
-    @pytest.mark.parametrize("duration", [0, -5])
+    @pytest.mark.parametrize("duration", [0, -5, float("nan"), float("inf")])
     async def test_invalid_duration_refused(self, env, duration) -> None:
         with pytest.raises(ServiceValidationError) as excinfo:
             await call(env, "start_manual_watering", device_id=env.device.id, duration=duration)
@@ -182,6 +221,17 @@ class TestManualAction:
         with pytest.raises(ServiceValidationError) as excinfo:
             await call(env, "start_manual_watering", device_id=env.device.id, duration=600)
         assert raises_key(excinfo) == "fault_blocks_manual"
+
+    async def test_manual_sensor_fault_remains_allowed(self, env) -> None:
+        env.hass.states.async_set(SENSOR, "20")
+        await settle(env.hass)
+        env.hass.states.async_set(SENSOR, "unavailable")
+        await settle(env.hass)
+        controller = env.runtime.controllers[env.subentry_id]
+        assert controller.active_fault.value == "sensor_unavailable"
+        await call(env, "start_manual_watering", device_id=env.device.id, duration=60)
+        assert controller.state.value == "watering"
+        assert controller.session.mode.value == "manual"
 
     async def test_manual_refused_when_daily_exhausted(self, env) -> None:
         controller = env.runtime.controllers[env.subentry_id]
@@ -296,7 +346,7 @@ class TestFinalCoverageEdges:
         )
 
         controller = env.runtime.controllers[env.subentry_id]
-        entity = ZoneNeedsWaterBinarySensor(controller, env.subentry_id)
+        entity = ZoneNeedsWaterBinarySensor(env.runtime, controller, env.subentry_id)
         env.hass.states.async_set(SENSOR, "unavailable")
         await settle(env.hass)
         assert entity.available is False

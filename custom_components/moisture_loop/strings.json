@@ -204,6 +204,15 @@
     "zone_not_ready": {
       "message": "The zone runtime is not ready."
     },
+    "zone_not_active": {
+      "message": "This zone no longer has an active configured runtime."
+    },
+    "reconciliation_busy": {
+      "message": "The configuration is being reconciled. Try again after the current configuration is safely applied."
+    },
+    "reconciliation_failed": {
+      "message": "Configuration reconciliation failed. Watering controls remain blocked until a current configuration is successfully applied."
+    },
     "zone_disabled": {
       "message": "The zone is disabled."
     },
@@ -241,9 +250,38 @@
       "title": "Irrigation actuator missing for {zone_name}",
       "description": "The configured irrigation actuator {entity_id} no longer exists. The zone is blocked until it is reconfigured, and any unresolved water-resource blocker is retained."
     },
+    "tombstone_actuator_missing": {
+      "title": "Retained actuator identity is unresolved for {zone_name}",
+      "description": "Safety record {safety_record_id} ({lifecycle}) cannot resolve its durable actuator identity ({entity_id}, Registry ID {registry_entry_id}). Reconfigure or restore the original entity identity; this issue cannot safely adopt a different entity. Details: {detail}"
+    },
+    "actuator_identity_conflict": {
+      "title": "Actuator identity conflict for {zone_name}",
+      "description": "Safety record {safety_record_id} has conflicting durable actuator identity evidence for {entity_id} (Registry ID {registry_entry_id}). Reconfigure or restore the original entity identity; a replacement actuator cannot inherit this record's hazard. Details: {detail}"
+    },
+    "configuration_reconciliation_failed": {
+      "title": "Moisture Loop configuration reconciliation failed",
+      "description": "Entry {entry_id} could not safely apply configuration generation {observed_generation}; the last applied generation is {applied_generation}. Watering admission remains closed. Details: {error}"
+    },
     "actuator_off_unconfirmed": {
       "title": "Water may still be flowing in {zone_name}",
-      "description": "The irrigation actuator could not be proven OFF after repeated commands. Water may be flowing uncontrolled: check the valve physically. The fault can be acknowledged only after the actuator is observed OFF."
+      "description": "Safety record {safety_record_id} could not prove actuator {entity_id} OFF after repeated commands. Check it physically. The exact-record blocker remains until OFF is proven; acknowledgement is separate.",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Acknowledge retained actuator fault",
+            "description": "Acknowledge only after actuator {entity_id} is physically OFF. This flow will revalidate exact safety record {safety_record_id}, lineage {safety_lineage_id}, blockers ({blockers}), and accounting ({accounting}) before clearing its acknowledgement-required fault."
+          }
+        },
+        "error": {
+          "record_entry_not_loaded": "The owning Moisture Loop entry is not loaded.",
+          "record_not_found": "The exact retained safety record is missing or has been superseded.",
+          "record_fault_changed": "The exact record no longer has the acknowledgement fault referenced by this Repair.",
+          "record_fault_not_acknowledgeable": "This fault cannot be acknowledged by this flow.",
+          "record_identity_unresolved": "The exact actuator identity is missing or conflicting.",
+          "record_off_not_proven": "The exact actuator is not proven OFF, or its blockers/accounting remain open.",
+          "record_acknowledgement_failed": "The acknowledgement could not be durably verified. The Repair remains open."
+        }
+      }
     },
     "runtime_store_integrity_lost": {
       "title": "Moisture Loop safety history lost",

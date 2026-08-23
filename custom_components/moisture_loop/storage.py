@@ -33,6 +33,7 @@ from .models import (
     DailyRuntime,
     FaultCode,
     FutureStoreVersion,
+    IdentityStatus,
     MigrationRecordContext,
     PersistedSession,
     PossibleFlowOwner,
@@ -376,6 +377,61 @@ class SafetyStore:
             new_data = self.data.evolve(
                 store_revision=self.data.store_revision + 1,
                 zone_histories=histories,
+                safety_records=records,
+            )
+            await self._save_and_verify_locked(new_data)
+            return new_data
+
+    async def async_acknowledge_actuator_fault(
+        self,
+        safety_record_id: str,
+        safety_lineage_id: str,
+        expected_fault: FaultCode,
+    ) -> StoreData:
+        """Acknowledge one exact retained actuator record, fail closed.
+
+        This is the Store-owned half of the §26.3 entry-level Repair flow.
+        It deliberately accepts stable actuator identity rather than a
+        subentry/device/entity identifier and refuses any unresolved physical
+        evidence.  The runtime proves live OFF state before calling this for a
+        live controller; a detached record is eligible only after the
+        reconciler has durably made it RETIRED.
+        """
+        async with self._lock:
+            record = self.data.safety_records.get(safety_record_id)
+            if record is None:
+                raise StoreWriteVerificationError(
+                    f"unknown canonical safety_record_id {safety_record_id}"
+                )
+            if record.safety_lineage_id != safety_lineage_id:
+                raise StoreWriteVerificationError("safety-record lineage mismatch")
+            if record.actuator_fault is not expected_fault:
+                raise StoreWriteVerificationError("safety-record fault changed")
+            if not record.acknowledgement_required or not expected_fault.requires_user_ack:
+                raise StoreWriteVerificationError("fault is not user-acknowledgeable")
+            if record.identity_incident is not None or record.actuator_identity.identity_status in (
+                IdentityStatus.MISSING,
+                IdentityStatus.CONFLICT,
+            ):
+                raise StoreWriteVerificationError("actuator identity is unresolved")
+            if (
+                record.blocker_reasons
+                or record.possible_flow_owner is not None
+                or self.data.zone_histories[record.zone_history_id].zone_runtime.session is not None
+            ):
+                raise StoreWriteVerificationError("physical OFF/accounting evidence is unresolved")
+            if record.runtime_lifecycle is not RuntimeLifecycle.RETIRED:
+                raise StoreWriteVerificationError(
+                    "detached acknowledgement requires a safely RETIRED record"
+                )
+
+            records = dict(self.data.safety_records)
+            records[safety_record_id] = record.evolve(
+                actuator_fault=None,
+                acknowledgement_required=False,
+            )
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
                 safety_records=records,
             )
             await self._save_and_verify_locked(new_data)

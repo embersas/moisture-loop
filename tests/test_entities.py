@@ -242,7 +242,12 @@ class TestBinarySensors:
         assert env.hass.states.get(watering_eid).state == "on"
         status_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
         blockers = env.hass.states.get(status_eid).attributes["water_resource_blockers"]
-        assert blockers == [{"safety_record_id": env.subentry_id, "reason": "external_flow"}]
+        assert blockers == [
+            {
+                "safety_record_id": env.runtime.controllers[env.subentry_id].safety_record_id,
+                "reason": "external_flow",
+            }
+        ]
 
 
 class TestControls:
@@ -257,6 +262,28 @@ class TestControls:
         await env.hass.services.async_call("switch", "turn_on", {"entity_id": eid}, blocking=True)
         await settle(env.hass)
         assert env.hass.states.get(status_eid).state == "idle"
+
+    async def test_controls_refuse_while_reconciliation_dirty(self, env) -> None:
+        from homeassistant.exceptions import HomeAssistantError
+
+        from custom_components.moisture_loop.button import ZoneEvaluateButton
+        from custom_components.moisture_loop.switch import ZoneEnabledSwitch
+
+        controller = env.runtime.controllers[env.subentry_id]
+        switch = ZoneEnabledSwitch(env.runtime, controller, env.subentry_id)
+        button = ZoneEvaluateButton(env.runtime, controller, env.subentry_id)
+        env.runtime.coordinator.dirty = True
+        try:
+            assert switch.available is False
+            assert button.available is False
+            with pytest.raises(HomeAssistantError) as excinfo:
+                await switch.async_turn_off()
+            assert excinfo.value.translation_key == "reconciliation_busy"
+            with pytest.raises(HomeAssistantError) as excinfo:
+                await button.async_press()
+            assert excinfo.value.translation_key == "reconciliation_busy"
+        finally:
+            env.runtime.coordinator.dirty = False
 
     async def test_stop_button_terminates_session(self, env) -> None:
         await set_moisture(env, "20")

@@ -25,9 +25,9 @@ async def async_setup_entry(
     for subentry_id, controller in runtime.controllers.items():
         async_add_entities(
             [
-                ZoneStopButton(controller, subentry_id),
-                ZoneEvaluateButton(controller, subentry_id),
-                ZoneClearFaultButton(controller, subentry_id),
+                ZoneStopButton(runtime, controller, subentry_id),
+                ZoneEvaluateButton(runtime, controller, subentry_id),
+                ZoneClearFaultButton(runtime, controller, subentry_id),
             ],
             config_subentry_id=subentry_id,
         )
@@ -36,28 +36,43 @@ async def async_setup_entry(
 class ZoneStopButton(MoistureLoopZoneEntity, ButtonEntity):
     """Cooperative Stop (§28.3); a no-op in inactive states."""
 
-    def __init__(self, controller: ZoneController, subentry_id: str) -> None:
-        super().__init__(controller, subentry_id, "stop")
+    def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
+        super().__init__(runtime, controller, subentry_id, "stop")
+
+    @property
+    def available(self) -> bool:
+        return self._runtime.control_entity_available(self._controller)
 
     async def async_press(self) -> None:
+        self._ensure_control_available()
         await self._controller.async_stop_watering()
 
 
 class ZoneEvaluateButton(MoistureLoopZoneEntity, ButtonEntity):
     """Normal guarded AUTO evaluation (§28.3); bypasses nothing."""
 
-    def __init__(self, controller: ZoneController, subentry_id: str) -> None:
-        super().__init__(controller, subentry_id, "evaluate_now")
+    def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
+        super().__init__(runtime, controller, subentry_id, "evaluate_now")
+
+    @property
+    def available(self) -> bool:
+        return self._runtime.control_entity_available(self._controller)
 
     async def async_press(self) -> None:
+        self._ensure_control_available()
         await self._controller.async_evaluate()
 
 
 class ZoneClearFaultButton(MoistureLoopZoneEntity, ButtonEntity):
     """Fault acknowledgement through the validated path (§26.1, §28.3)."""
 
-    def __init__(self, controller: ZoneController, subentry_id: str) -> None:
-        super().__init__(controller, subentry_id, "clear_fault")
+    def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
+        super().__init__(runtime, controller, subentry_id, "clear_fault")
+
+    @property
+    def available(self) -> bool:
+        return self._runtime.control_entity_available(self._controller)
 
     async def async_press(self) -> None:
+        self._ensure_control_available()
         await self._controller.async_clear_fault()
