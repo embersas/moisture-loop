@@ -9,14 +9,14 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-7 are complete. Stage 8 local/documentation/current-HA work is complete but the stage is blocked by unavailable GitHub-hosted hassfest and HACS Action results for the exact final commit. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-7 are complete. The user has authorized the remaining Stage 8 privacy, publication, and hosted-CI gates. The sanitized final candidate will remain Stage 8-pending until GitHub-hosted hassfest and HACS Action pass its exact SHA. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `No slice is currently authorized. Stage 8 can close only after an authorized external workflow places the exact final state on GitHub and both required hosted gates pass. Slice 13 is not automatically authorized.`
-- Release gates: `Local hassfest passes with zero invalid integrations. HACS metadata/schema preflight passes, but the official HACS Action cannot validate a nonexistent/private non-GitHub final repository state and no GitHub-hosted HACS or hassfest result exists for the exact final commit. These are release-gate blockers, not specification contradictions. All §46 prototype validations remain outstanding.`
+- Next implementation work: `No implementation slice is authorized after this final Stage 8 publication task. The exact final candidate must be published at embersas/moisture-loop and pass all six hosted jobs without a later tracking-only commit. Slice 13 is not automatically authorized.`
+- Release gates: `Local hassfest passes with zero invalid integrations and local HACS metadata/schema preflight passes. GitHub-hosted HACS and hassfest results are required against the exact final candidate SHA. These are publication gates, not specification contradictions. All §46 prototype validations remain outstanding.`
 - Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Not release-ready. Stage 8 local/current-HA remediation passes, including HA 2025.9.0 at 92.74% overall branch and HA 2026.8.3 at 92.63%; documentation, metadata, CI, package, local-only, Recorder, traceability, and local hassfest audits pass. Stage 8 remains blocked solely by the two exact-final-commit GitHub-hosted gates. Slice 13 remains unstarted; historical spec.3 and Stage 1-7 evidence is preserved.`
+- Overall status: `Stage 8 publication is in progress. Local/current-HA remediation passes, including HA 2025.9.0 at 92.74% overall branch and HA 2026.8.3 at 92.63%; documentation, metadata, CI, package, local-only, Recorder, traceability, and local hassfest audits pass. The final candidate still requires all six exact-SHA GitHub-hosted jobs. Slice 13 remains unstarted; historical spec.3 and Stage 1-7 evidence is preserved.`
 
-On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, and 7 in sequence, then explicitly authorized Stage 8 only. Stage 8 completed every authorized local/current-HA task but remains blocked by external GitHub-hosted gates that cannot be obtained without an unauthorized external write. Authorization has returned to `None`; Slice 13 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
+On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, and 7 in sequence, then explicitly authorized Stage 8. The user subsequently authorized complete author/committer privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. The committed closeout returns authorization to `None`; Slice 13 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
 ## Status Legend
 
@@ -46,7 +46,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 9 | Config flow and zone subentries | [x] |
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
-| 12 | Distribution and documentation | [~] Blocked by exact-final-commit GitHub-hosted hassfest/HACS evidence |
+| 12 | Distribution and documentation | [~] Exact-final-commit GitHub-hosted gates pending |
 | 13 | Prototype validations | [ ] |
 
 Slices 0-11 are `[x]` after Stage 8 local/current-HA evidence. Slice 0 now has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 remains `[~]`: documentation, metadata, local hassfest, current HA, package, and traceability gates pass, but GitHub-hosted hassfest and HACS Action have no result for the exact final commit. Slice 13 remains `[ ]`; harness results are not prototype evidence.
@@ -80,7 +80,7 @@ These are implementation-wide targets. Their definitions remain authoritative in
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-7 implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, and deleted-safe events. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Stage 8 has completed its local/documentation/supported-current scope and remains blocked only at the exact-final-commit GitHub-hosted distribution gates.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-7 implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, and deleted-safe events. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Stage 8 has completed its local/documentation/supported-current scope; authorized publication and exact-final-commit hosted distribution gates are in progress.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
@@ -96,12 +96,12 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 9 | `[x]` | Config flow uses `async_update_and_abort`, owns no reload/application state, enforces durable identity, and native HA deletion passes IDLE/AUTO/MANUAL/SOAKING/rapid-delete evidence with zero delete-only reload. |
 | 10 | `[x]` | Schema-2 entities/actions and all lifecycle/reconciliation refusal surfaces pass final traceability. |
 | 11 | `[x]` | Exact-record Repairs, incidents, diagnostics, deleted-safe events, delayed closure, and logging pass final traceability. |
-| 12 | `[~] Local/current-HA complete; hosted gates blocked` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, local hassfest, package, local-only, Recorder, and metadata audits pass. Exact-final-commit GitHub-hosted hassfest and HACS Action evidence remain absent. |
+| 12 | `[~] Local/current-HA complete; hosted gates pending final SHA` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, local hassfest, package, local-only, Recorder, and metadata audits pass. Exact-final-commit GitHub-hosted hassfest and HACS Action evidence are the remaining automated publication gates. |
 | 13 | `[ ] Not started` | All seven real §46 validations remain outstanding. Existing mocks and harness tests do not satisfy them. |
 
 ## Spec.4 Implementation Remediation Plan
 
-Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was explicitly authorized on 2026-08-23; its local/current-HA scope passes, but the stage remains blocked because exact-final-commit GitHub-hosted hassfest and HACS Action evidence is unavailable without an unauthorized external write. Current authorization is `None`. A later stage may be marked complete only after its named evidence is implemented and actually run.
+Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was explicitly authorized on 2026-08-23, including a later authorization for privacy history rewriting, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI. Its local/current-HA scope passes; its final candidate remains pending until every hosted gate actually runs and passes. The committed closeout sets current authorization to `None`. A later stage may be marked complete only after its named evidence is implemented and actually run.
 
 ### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
 
@@ -182,7 +182,7 @@ Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was 
 
 ### Stage 8 - Post-remediation documentation, supported-current HA, and distribution CI
 
-- **Status:** `[~] Blocked on 2026-08-23`; all authorized local/current-HA work passes. No GitHub remote or exact-final-state GitHub commit exists, so the mandatory GitHub-hosted hassfest and HACS Action results cannot be obtained without creating/mirroring/pushing externally, which this authorization prohibited. Authorization returned to `None`; Slice 13 was not begun.
+- **Status:** `[~] Publication in progress on 2026-08-23`; local/current-HA work and privacy sanitization pass. The exact final candidate still requires all six GitHub-hosted jobs, including hassfest and HACS Action. This document intentionally records those hosted gates as pending the final SHA so their later run identifiers can be reported without creating an unvalidated tracking-only commit. Authorization in the committed candidate is `None`; Slice 13 was not begun.
 
 - **Objective:** align user/developer documentation with safe native deletion and schema 2, then execute the separately pinned supported-current HA job and GitHub-hosted hassfest/HACS release gates without publishing.
 - **Affected existing slices/files:** Slices 0 and 12; `README.md`, `DEVELOPMENT.md`, manifest/HACS metadata if accuracy changes are required, `.github/workflows/ci.yml`, `scripts/check_ha_contract.py`, and tracking/release documentation.
@@ -1389,7 +1389,7 @@ Spec.4 remediation is required for exact-record tombstone/identity/reconciliatio
 
 ### Status
 
-`[~] Blocked by exact-final-commit GitHub-hosted hassfest/HACS evidence` — Stage 8 documentation, supported-current HA, metadata, CI, package, local-only/Recorder, traceability, and local hassfest work passes. Hosted hassfest and HACS Action evidence is unavailable for the final state.
+`[~] Exact-final-commit GitHub-hosted gates pending` — Stage 8 documentation, supported-current HA, metadata, CI, package, local-only/Recorder, traceability, local hassfest, privacy sanitization, and repository hygiene work passes. All six hosted jobs must pass the exact final candidate before this becomes `[x]`.
 
 ### Objective
 
@@ -1460,8 +1460,8 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Remaining work
 
-- Place the exact final repository state on an authorized public GitHub repository and obtain passing GitHub-hosted `home-assistant/actions/hassfest@master` and `hacs/action@main` results for that exact commit. The later explicit commit/push authorization covered only the existing self-hosted `origin`; it did not authorize repository creation, a GitHub mirror, or publication.
-- Once hosting exists, make the manifest `documentation` and `issue_tracker` targets resolve at their declared GitHub locations; they currently return 404 because that repository does not exist publicly.
+- Place the exact final sanitized repository state on the now-authorized public `embersas/moisture-loop` repository and obtain all six passing GitHub-hosted jobs, including `home-assistant/actions/hassfest@master` and `hacs/action@main`, for that exact commit.
+- Verify the manifest `documentation` and `issue_tracker` targets resolve after publication.
 - Release publication and any HACS default-store or centralized-brand submission remain separately authorized (§41/§46) and were not begun.
 
 ### Tests actually run
@@ -1488,9 +1488,8 @@ None.
 
 ### Blockers
 
-- The only remote is self-hosted `origin https://git.lukestanbury.com/luke/moisture-loop.git`; there is no GitHub remote, and public GitHub checks for the manifest repository path return 404. After the Stage 8 closeout, the user explicitly authorized commit/push: Stage 8 content commit `b2a9a8474e5d4ba219c87b4c1c5b64746901bb25` was pushed to self-hosted `origin/main`. This creates no GitHub-hosted result and does not satisfy either mandatory hosted gate.
-- Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`). The official HACS Action container reaches its mandatory token/repository preflight then stops with `No GitHub token found`; the action validates a GitHub repository rather than an offline directory. Local metadata/schema checks therefore are not represented as a hosted HACS pass.
-- Passing GitHub-hosted hassfest and HACS Action results for the exact final commit remain mandatory. Obtaining them requires an external repository/commit/workflow action outside this authorization.
+- No specification or local-validation blocker is known. Publication remains incomplete until the exact final sanitized SHA is present on both remotes and all six GitHub-hosted jobs pass.
+- Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`). Local metadata/schema checks are not represented as a hosted HACS pass; GitHub-hosted HACS Action validation remains mandatory.
 
 ## Slice 13 - Prototype validations
 
@@ -2322,3 +2321,30 @@ PROGRESS.md updated:
 - After the Stage 8 response, the user explicitly authorized `commit & push`.
 - Commit `b2a9a8474e5d4ba219c87b4c1c5b64746901bb25` (`Complete spec.4 remediation stage 8 local gates`) was created and pushed from `main` to the existing self-hosted `origin/main`; remote verification returned the same hash.
 - This tracking correction is a follow-up commit on the same existing remote. It does not create GitHub-hosted hassfest/HACS evidence, alter remotes, publish a release, submit to HACS/brands, or begin Slice 13.
+
+## Publication Closeout Candidate — 2026-08-23 (Spec.4 Remediation Stage 8)
+
+### Authorization and privacy decision
+
+- The user explicitly authorized the remaining Stage 8 history-sanitization, repository-hygiene, first-publication, self-hosted-history-replacement, and hosted-CI gates. No release, release tag, HACS default-store submission, Brands submission, specification change, or Slice 13 work is authorized.
+- The verified GitHub identity is account `embersas`, account ID `30363137`; the resulting ID-based noreply identity is `embersas <30363137+embersas@users.noreply.github.com>`. Repository-local Git configuration uses this identity for all future authors and committers.
+- A private pre-rewrite recovery bundle was created outside the repository at `%LOCALAPPDATA%\MoistureLoopBackups\moisture-loop-before-publication-8c92341e5c7a.bundle` and successfully verified. It is a private recovery artifact and must never be published.
+- `git-filter-repo` (`a40bce548d2c`) rewrote every one of the 13 reachable commits. Mechanical comparison with the recovery bundle proves commit count, tree/content, full messages, author dates, committer dates, and parent topology were preserved; only author/committer names and email metadata changed as intended. The sole reachable author and committer identity is now the verified `embersas` noreply identity.
+- Refs were inventoried before and after rewriting. The active repository has only local `main`; it has no tags, stashes, notes, abandoned branches, filter-repo original refs, or backup refs. Original history is absent from active refs and will not be pushed. Self-hosted `origin` remains `https://git.lukestanbury.com/luke/moisture-loop.git`; its `main` will be replaced only with the verified sanitized final history by an explicit lease-guarded force update.
+- Full email-shaped-string audits found historical private addresses only in commit author/committer metadata. Commit messages, tags/notes, current tracked content, and every historical tracked-file version contain no email address. After rewriting, the only email-shaped string in reachable commit metadata is the intentional verified GitHub noreply address.
+- Pre-rewrite Gitleaks full-history scanning and targeted credential/private-key/token/storage/database scans detected zero secrets. The rewritten exact final candidate must receive the same zero-finding full-history and targeted scans after its normal closeout commit and before either publication push.
+
+### Hygiene, metadata, and local evidence
+
+- `.gitignore` now precisely covers Python/build artifacts, all project virtual-environment variants, pytest caches/temp directories, coverage outputs, Stage evidence and root JUnit results, tool caches, local environment files while preserving `.env.example`, IDE/OS files, and generated logs/temp files. It does not ignore tests, scripts, CI, documentation, integration code, or metadata.
+- `git ls-files`, status, ignored-status, and `git check-ignore` audits confirm all 59 intended tracked files remain public candidates, including the complete `tests/` tree and traceability/migration evidence. Actual local environments, pytest/cache directories, coverage files, Stage evidence, and JUnit artifacts are ignored; no unwanted generated artifact is tracked.
+- Public metadata targets `https://github.com/embersas/moisture-loop` and its `/issues` tracker. The manifest domain remains `moisture_loop`; HACS minimum Home Assistant remains `2025.9.0`; README installation wording describes manual or HACS custom-repository installation and does not claim default-store inclusion.
+- Final pre-publication execution remains green: pure Python 3.14.5 = 436 passed, 0 skipped; mandatory HA 2025.9.0/Python 3.13.13 = 838 passed, 1 documented pure-boundary skip, 92.74% overall branch and 100% `state_machine.py`; supported-current HA 2026.8.3/Python 3.14.5/harness 0.13.357 = 838 passed, the same one skip, 92.63% overall branch and 100% `state_machine.py`. Both direct HA API contract checks pass.
+- Executed traceability remains 134/134 normative IDs, 37/37 invariants, and 59/59 transitions. Ruff lint/format, diff, JSON/YAML, metadata parity, package-content, local-only/Recorder, and official local hassfest gates must remain green at the final candidate.
+
+### Publication boundary
+
+- Public target: `embersas/moisture-loop`, with self-hosted `origin` preserved and GitHub added only as second remote `github`. Publish only sanitized `main`; never mirror arbitrary refs or the private recovery bundle.
+- `PROGRESS.md` deliberately records all hosted gates as pending the exact final candidate SHA. The final response will carry the exact SHA, GitHub workflow/run evidence, and public URL checks so no post-validation tracking commit invalidates the evidence.
+- Slice 0 remains `[x]`. Slice 12 becomes `[x]` only if the exact final SHA passes all six hosted jobs and the public/security checks; until then it remains `[~]`. Slice 13 remains `[ ]` and unstarted.
+- Current authorized slice: `None`. `SPECIFICATION.md` remains unchanged at `0.1.0-spec.4`.

@@ -79,19 +79,21 @@ blocker, and continues conservative accounting until exact OFF evidence exists.
 
 ## Installation
 
-This source tree is not yet a published HACS release. HACS custom-repository
-distribution requires a public GitHub repository and passing GitHub-hosted HACS
-Action and hassfest results for the release candidate.
+The public source and documentation repository is
+[`embersas/moisture-loop`](https://github.com/embersas/moisture-loop), and
+problems can be reported through its
+[issue tracker](https://github.com/embersas/moisture-loop/issues).
+
+No GitHub Release has been published, and Moisture Loop is not included in the
+HACS default store. It can be installed as a HACS custom repository:
+
+1. Open HACS → Integrations → ⋮ → Custom repositories.
+2. Add `https://github.com/embersas/moisture-loop` as category Integration.
+3. Install Moisture Loop and restart Home Assistant.
 
 For manual development installation, copy
 `custom_components/moisture_loop/` into the Home Assistant
 `config/custom_components/` directory and restart Home Assistant.
-
-Once an authorized public GitHub repository is available, HACS installation is:
-
-1. HACS → Integrations → ⋮ → Custom repositories.
-2. Add the public GitHub repository as category Integration.
-3. Install Moisture Loop and restart Home Assistant.
 
 ## Configure zones
 

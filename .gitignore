@@ -3,14 +3,29 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
+build/
+dist/
 
 # Virtual environments
 .venv/
-.venv-ha/
+.venv-*/
 venv/
 
-# Test / coverage artifacts
+# Test artifacts
 .pytest_cache/
+.pytest-cache-*/
+.pytest_cache_*/
+.pytest-temp-*/
+.pytest_temp_*/
+.stage*-evidence/
+/evidence/
+/pure.xml
+/ha-2025.9.xml
+/ha-current.xml
+/junit*.xml
+/*-junit.xml
+
+# Coverage artifacts
 .coverage
 .coverage.*
 coverage.xml
@@ -19,13 +34,31 @@ htmlcov/
 # Tooling caches
 .ruff_cache/
 .mypy_cache/
+.pyright/
+.tox/
+.nox/
+.hypothesis/
 .firecrawl/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
 
 # IDE / editor
 .idea/
 .vscode/
+.vs/
 *.swp
+*.swo
+*~
 
 # OS
 Thumbs.db
 .DS_Store
+Desktop.ini
+
+# Local logs / temporary files
+*.log
+*.tmp
+*.temp

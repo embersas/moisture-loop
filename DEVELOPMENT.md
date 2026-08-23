@@ -5,6 +5,10 @@
 remain tested separately from the explicitly pinned supported-current release.
 No environment may be upgraded in place from one HA line to the other.
 
+Public repository: [`embersas/moisture-loop`](https://github.com/embersas/moisture-loop).
+Use the repository [issue tracker](https://github.com/embersas/moisture-loop/issues)
+for reproducible defects; this project is not included in the HACS default store.
+
 ## Pinned environments
 
 | Environment | Python | Requirements | Exact HA/harness purpose |
