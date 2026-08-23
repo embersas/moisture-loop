@@ -3,10 +3,11 @@
 One top-level controller entry (single_config_entry) created with the
 immutable runtime-Store generation UUID and ``runtime_store_initialized:
 false`` (§23.1). Zones are config subentries with add/reconfigure flows.
-There is no options flow (§30) and no config-entry update listener (§5.1);
-reconfiguration uses ``ConfigSubentryFlow.async_update_reload_and_abort(...,
-reload_even_if_entry_is_unchanged=False)`` exactly once. Backend validation
-is authoritative; selector filtering is UI convenience only (§5.3).
+There is no options flow (§30). Core subentry mutations feed the one
+entry-owned update listener; reconfiguration uses
+``ConfigSubentryFlow.async_update_and_abort(...)`` after optional cooperative
+old-runtime preparation. Backend validation is authoritative; selector
+filtering is UI convenience only (§5.3).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from . import zone_config_from_subentry
@@ -254,14 +256,9 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
             candidate = self._normalize({**self._data, **user_input})
             errors = self._validate_full(candidate, reconfigure_id=None)
             if not errors:
-                # No update listener exists (§5.1); the running entry adopts
-                # the new zone through exactly one scheduled reload. Deferred
-                # with call_soon so the flow manager attaches the subentry
-                # (which happens synchronously after this step returns)
-                # before the eager reload task starts.
-                self.hass.loop.call_soon(
-                    self.hass.config_entries.async_schedule_reload, self._entry_id
-                )
+                # Core attaches the subentry and notifies the single
+                # entry-owned listener. The reconciler alone applies it and
+                # decides whether platform reconstruction needs one reload.
                 return self.async_create_entry(title=candidate[CONF_NAME], data=candidate)
         return self.async_show_form(
             step_id="limits",
@@ -317,21 +314,27 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
             errors = self._validate_full(candidate, reconfigure_id=subentry.subentry_id)
             if not errors:
                 entry = self._get_entry()
-                if candidate != dict(subentry.data):
-                    # §24.3: safely terminate the old session before the
-                    # data update; unnecessary pre-termination is avoided by
-                    # comparing proposed data first.
-                    runtime = getattr(entry, "runtime_data", None)
-                    if runtime is not None:
-                        await runtime.async_prepare_reconfigure(subentry.subentry_id)
-                # Exactly one reload, scheduled by the 2025.9.0 helper; no
-                # update listener exists (§5.1, HA1).
-                return self.async_update_reload_and_abort(
+                current = self._normalize(dict(subentry.data))
+                if candidate == current:
+                    # A normalized no-op does not mutate Core, advance the
+                    # observed generation, quiesce a session, or reload.
+                    return self.async_abort(reason="reconfigure_successful")
+
+                # §24.4: the flow owns only safe old-runtime preparation.
+                # It never publishes the candidate runtime or performs the
+                # same-record/A -> B handoff.
+                runtime = getattr(entry, "runtime_data", None)
+                prepare = getattr(runtime, "async_prepare_reconfigure", None)
+                if prepare is not None:
+                    await prepare(subentry.subentry_id)
+
+                # Core mutation -> existing ConfigEntry update listener ->
+                # Stage-3 reconciler -> optional reconciler-owned reload.
+                return self.async_update_and_abort(
                     entry,
                     subentry,
                     title=candidate[CONF_NAME],
                     data=candidate,
-                    reload_even_if_entry_is_unchanged=False,
                 )
         return self.async_show_form(
             step_id="reconfigure_limits",
@@ -364,10 +367,12 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any], reconfigure_id: str | None
     ) -> dict[str, str]:
         errors: dict[str, str] = {}
+        self._shared_sensor_warning = False
         name = str(user_input.get(CONF_NAME, "")).strip()
         sensor = user_input.get(CONF_MOISTURE_SENSOR)
         actuator = user_input.get(CONF_ACTUATOR)
         others = self._other_zones(reconfigure_id)
+        registry = er.async_get(self.hass)
 
         if not 1 <= len(name) <= 64:
             errors[CONF_NAME] = "invalid_name"
@@ -379,7 +384,9 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
             errors[CONF_MOISTURE_SENSOR] = "entity_not_found"
         elif not sensor.startswith("sensor."):
             errors[CONF_MOISTURE_SENSOR] = "wrong_domain"
-        elif any(o[CONF_MOISTURE_SENSOR] == sensor for o in others):
+        elif any(
+            self._same_registry_identity(registry, o[CONF_MOISTURE_SENSOR], sensor) for o in others
+        ):
             # Shared sensor is permitted with a warning (§9).
             self._shared_sensor_warning = True
 
@@ -393,9 +400,79 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
             if not (features & _VALVE_FEATURE_OPEN and features & _VALVE_FEATURE_CLOSE):
                 # A position-only valve is not accepted in v0.1 (§11.1).
                 errors[CONF_ACTUATOR] = "valve_features_missing"
-        if CONF_ACTUATOR not in errors and any(o[CONF_ACTUATOR] == actuator for o in others):
-            errors[CONF_ACTUATOR] = "duplicate_actuator"
+        if CONF_ACTUATOR not in errors:
+            if any(
+                self._same_registry_identity(registry, o[CONF_ACTUATOR], actuator) for o in others
+            ):
+                errors[CONF_ACTUATOR] = "duplicate_actuator"
+            else:
+                identity_error = self._retained_actuator_identity_error(
+                    registry, actuator, reconfigure_id
+                )
+                if identity_error is not None:
+                    errors[CONF_ACTUATOR] = identity_error
         return errors
+
+    @staticmethod
+    def _same_registry_identity(registry, first: str, second: str) -> bool:
+        """Compare Registry UUID first, retaining text only as fallback."""
+        if first == second:
+            return True
+        first_entry = registry.async_get(first)
+        second_entry = registry.async_get(second)
+        return (
+            first_entry is not None
+            and second_entry is not None
+            and first_entry.id == second_entry.id
+        )
+
+    def _retained_actuator_identity_error(
+        self, registry, actuator: str, reconfigure_id: str | None
+    ) -> str | None:
+        """Validate candidate identity against loaded canonical evidence.
+
+        Exact retained UUID matches are deliberately accepted: the Stage-3
+        reconciler reactivates that same canonical record. Conflicting or
+        ambiguous evidence fails before Core mutation. No record is created,
+        adopted, or altered here.
+        """
+        entry = self._get_entry()
+        runtime = getattr(entry, "runtime_data", None)
+        store = getattr(runtime, "store", None)
+        if store is None or not getattr(store, "loaded", False):
+            return None
+
+        candidate = registry.async_get(actuator)
+        candidate_uuid = candidate.id if candidate is not None else None
+        records = tuple(store.data.safety_records.values())
+        exact = [
+            record
+            for record in records
+            if candidate_uuid is not None
+            and record.actuator_identity.registry_entry_id == candidate_uuid
+        ]
+        if len(exact) > 1:
+            return "actuator_identity_conflict"
+        if exact:
+            owner = exact[0].active_subentry_id
+            if owner is not None and owner != reconfigure_id:
+                return "duplicate_actuator"
+
+        for record in records:
+            identity = record.actuator_identity
+            if identity.last_known_entity_id != actuator:
+                continue
+            if candidate_uuid is None:
+                if record not in exact and record.active_subentry_id != reconfigure_id:
+                    return "actuator_identity_conflict"
+            elif identity.registry_entry_id not in (
+                None,
+                candidate_uuid,
+            ) or (
+                identity.registry_entry_id is None and record.active_subentry_id != reconfigure_id
+            ):
+                return "actuator_identity_conflict"
+        return None
 
     @staticmethod
     def _normalize(data: dict[str, Any]) -> dict[str, Any]:

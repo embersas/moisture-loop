@@ -90,6 +90,7 @@
         "wrong_domain": "Unsupported entity type for this field.",
         "valve_features_missing": "This valve does not support both open and close commands; position-only valves are not supported.",
         "duplicate_actuator": "Another zone already controls this actuator.",
+        "actuator_identity_conflict": "This actuator conflicts with retained durable identity evidence. Restore or resolve the original actuator identity before continuing.",
         "target_not_above_start": "The target threshold must be strictly greater than the start threshold.",
         "invalid_configuration": "One or more values are outside their allowed ranges."
       },

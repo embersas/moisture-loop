@@ -9,14 +9,14 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-4 are complete. Canonical schema-2 authority, exact-record blockers, immutable entry snapshots, serialized latest-generation reconciliation, lifecycle/tombstone orchestration, and the complete final pre-ON/in-flight compensation envelope are current. Every integration-owned AUTO, MANUAL, and continuation-pulse ON now uses fresh public configuration authority after verified intent and compensates possible flow through the one shared OFF operation. Slices remain conservatively [~] where Stage 5 flow/reload ownership, Stage 6 surfaces, Stage 7 full traceability, or Stage 8 release evidence is still outstanding. Slices 2 and 6 remain fully conformant within their documented scopes.`
-- Slice 9 specification status: `Resolved by approved spec.4. Update-listener-driven tombstone reconciliation plus the authoritative final ON gate now prevent native deletion races, including focused HA 2025.9 websocket deletion while ON dispatch is in flight. Slice 9 remains incomplete for the Stage-5 config-flow/reload-helper conversion and Stage-7 complete native-route/registry-cleanup traceability.`
-- Next implementation work: `Stage 5 is technically unblocked by completed Stages 1-4, but may begin only after new explicit user authorization. No implementation work is currently authorized.`
-- Release gates: `Spec.4 Remediation Stages 5-8 and the integrated 134-ID evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-5 are complete. Canonical schema-2 authority, exact-record blockers, immutable/latest-generation reconciliation, lifecycle/tombstone orchestration, the final pre-ON/in-flight compensation envelope, native config-subentry flow ownership, and reconciler-owned zero-or-one reload application are current. Add/reconfigure/delete now reach the one entry update listener; changed reconfiguration uses async_update_and_abort after cooperative old-runtime preparation, while unchanged input is a true no-op. Slices remain conservatively [~] where Stage 6 surfaces, Stage 7 full traceability, or Stage 8 release evidence is outstanding. Slices 2 and 6 remain fully conformant within their documented scopes.`
+- Slice 9 specification status: `Resolved by approved spec.4 and Stage 5. Core's native add/reconfigure/delete mutations feed the existing entry listener and reconciler, actual HA 2025.9 websocket deletion is exercised for IDLE and AUTO WATERING zones, registry cleanup preserves canonical safety evidence, and delete-only reconciliation performs no whole-entry reload. Stage 7 still owns the complete 134-ID native-route/registry traceability audit.`
+- Next implementation work: `Stage 6 is technically unblocked by completed Stages 1-5, but may begin only after new explicit user authorization. No implementation work is currently authorized.`
+- Release gates: `Spec.4 Remediation Stages 6-8 and the integrated 134-ID evidence remain outstanding; the supported-current Home Assistant harness has not been evidenced; GitHub-hosted hassfest and HACS Action have not been evidenced; all §46 prototype validations remain outstanding.`
 - Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Not release-ready. Stages 1-4 are complete. The Stage-4 HA 2025.9.0 affected-module coverage suite has 657 passed/1 deliberate pure-boundary skip and 91.99% combined branch coverage; reconciliation.py is 91.13%, zone_controller.py is 91.32%, and slot_manager.py/state_machine.py remain 100%. The focused Stage-4 race module has 92 passed across switch and valve. The post-Stage-4 broad inventory has 768 passed, 2 Stage-6-owned surface expectation failures, 1 deliberate skip, and 0 errors. Historical spec.3 and Stage-1/2/3 evidence remains preserved.`
+- Overall status: `Not release-ready. Stages 1-5 are complete. The Stage-5 HA 2025.9.0 affected-module coverage suite has 696 passed/1 deliberate pure-boundary skip and 93.01% combined branch coverage; config_flow.py is 98.61%, reconciliation.py is 91.52%, zone_controller.py is 93.19%, and slot_manager.py/state_machine.py remain 100%. The post-Stage-5 broad inventory has 785 passed, 2 Stage-6-owned surface expectation failures, 1 deliberate skip, and 0 errors. Historical spec.3 and Stage-1/2/3/4 evidence remains preserved.`
 
-On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stage 4 only. Stage 4 is complete and the authorization has returned to `None`; Stage 5 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 5-8 implementation or prototype work requires new explicit user authorization.
+On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4 and 5 in sequence. Stage 5 is complete and the authorization has returned to `None`; Stage 6 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 6-8 implementation or prototype work requires new explicit user authorization.
 
 ## Status Legend
 
@@ -42,8 +42,8 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 5 | Global SlotManager and resource blockers | [~] Stages 2-3 complete; Stage 7 integration evidence required |
 | 6 | Home Assistant moisture sensor adapter | [x] |
 | 7 | Zone runtime controller | [~] Stages 3-4 complete; Stage 6-7 remediation/evidence remains |
-| 8 | Startup, reload, reconfiguration, and shutdown lifecycle | [~] Stages 3-4 complete; Stage 5 remediation remains |
-| 9 | Config flow and zone subentries | [~] Spec.4 remediation required; specification blocker resolved |
+| 8 | Startup, reload, reconfiguration, and shutdown lifecycle | [~] Stages 3-5 complete; Stage 6-7 remediation/evidence remains |
+| 9 | Config flow and zone subentries | [~] Stage 5 complete; Stage 7 complete traceability remains |
 | 10 | Home Assistant entities and actions | [~] Spec.4 remediation required |
 | 11 | Repairs, diagnostics, events, and logging | [~] Spec.4 remediation required |
 | 12 | Distribution and documentation | [~] Spec.4 remediation and existing release gates required |
@@ -77,16 +77,16 @@ These are implementation-wide targets. Their definitions remain authoritative in
 ### Current test-evidence boundary
 
 - **Normative named tests specified:** 134 unique IDs. A mechanical scan of §39.2 matched 134 entries, found 134 unique IDs, and found zero duplicates.
-- **Tests currently implemented:** Stage-1/2/3 evidence remains as recorded. Stage 4 adds the applicable portions of ND4-ND5, ND7-ND12, ND17, and RC1-RC6 for the complete final gate, zero-ON pre-dispatch deletion, no-yield dispatch instrumentation, switch/valve in-flight deletion/update/supersession, service success/raise/cancellation uncertainty, first-terminal arbitration, one-OFF convergence, retained exact blockers/accounting/slot ownership, stale-callback suppression, crash recovery, unload/reload/shutdown interaction, and sensor-fault MANUAL deletion. AC1-AC4, SR5-SR13, MF1-MF5, and exact-key/external-interference regressions were rerun. Complete normative proof remains reserved for Stage 7 rather than inferred from these applicable portions.
-- **Tests actually run/passing:** the 2026-08-23 Stage-4 focused race module passed 92 tests for switch and valve; the combined Stage-3/4 controller/reconciliation/lifecycle suite passed 205. The final HA 2025.9.0 affected-module branch-coverage command passed 657 with 1 deliberate pure-boundary skip and 91.99% combined coverage; `reconciliation.py` is 91.13%, `zone_controller.py` is 91.32%, and `state_machine.py`/`slot_manager.py` remain 100%. The model/state/SlotManager/Stage-1/2 Store regression passed 452 with 1 deliberate skip. The post-Stage-4 broad inventory produced 768 passed, 2 Stage-6 surface expectation failures, 1 deliberate skip, and 0 errors. Historical 2026-08-21 and Stage-1/2/3 totals remain unchanged below.
+- **Tests currently implemented:** Stage-1/2/3/4 evidence remains as recorded. Stage 5 adds applicable LC3, LC13, ND1-ND2, AR1, AR5-AR6, AR11-AR16, RC7-RC8, and HA1 portions for supported Core mutations, normalized no-op reconfigure, cooperative preparation, durable identity/rename/reactivation/A -> B validation, latest-batch reload policy/coalescing/stale suppression/fail-closed failure, source-contract prohibitions, and actual HA 2025.9 native websocket deletion with registry cleanup for IDLE and AUTO WATERING. Complete normative proof remains reserved for Stage 7 rather than inferred from these applicable portions.
+- **Tests actually run/passing:** the 2026-08-23 Stage-5 config-flow/reconciliation/lifecycle suite passed 95; the Stage-3/4 controller/reconciliation/lifecycle regression passed 210. The final HA 2025.9.0 affected-module branch-coverage command passed 696 with 1 deliberate pure-boundary skip and 93.01% combined coverage; `config_flow.py` is 98.61%, `reconciliation.py` is 91.52%, `zone_controller.py` is 93.19%, and `state_machine.py`/`slot_manager.py` remain 100%. The pure regression passed 424; the model/state/SlotManager/Stage-1/2 Store HA regression passed 452 with 1 deliberate skip. The post-Stage-5 broad inventory produced 785 passed, 2 Stage-6 surface expectation failures, 1 deliberate skip, and 0 errors. Historical 2026-08-21 and Stage-1/2/3/4 totals remain unchanged below.
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-4 now declare Store schema 2, persist canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, key live/durable blockers by `safety_record_id`, fail grant/ON admission closed for reconciliation state, provide verified conservative history handoff without hazard transfer, and consume those authorities through the entry-wide configuration coordinator, startup config+Store union, and final command envelope. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Config flow still owns the old reload behaviour, compatibility projection APIs remain for historical/migration consumers, and Repairs/diagnostics/entities still require Stage-6 full schema-2 surface remediation. Those remaining observations assign Stages 5-8 and are not Stage-1/2/3/4 defects.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-5 now declare Store schema 2, persist canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, key live/durable blockers by `safety_record_id`, fail grant/ON admission closed for reconciliation/reload state, provide verified conservative history handoff without hazard transfer, and consume those authorities through the entry-wide configuration coordinator, startup config+Store union, final command envelope, native config-subentry flows, and reconciler-owned reload application. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Compatibility projection APIs remain for historical/migration consumers, and Repairs/diagnostics/entities still require Stage-6 full schema-2 surface remediation. Those remaining observations assign Stages 6-8 and are not Stage-1/2/3/4/5 defects.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
-| 0 | `[~] Spec.4 remediation required` | The quality foundation remains useful, but HA1 currently checks the incompatible reload helper and lacks the approved listener/removal/`async_update_and_abort` contract. CI must later carry the new test inventory and current-HA evidence. |
+| 0 | `[~] Stage 5 HA1 complete; Stage 7-8 evidence remains` | HA1 checks the approved `async_update_and_abort`, entry listener/unload/public subentries, and supported reconciler reload contract and rejects prohibited production APIs. Stage 7-8 still own the complete inventory/current-HA and distribution evidence. |
 | 1 | `[~] Stages 1-3 complete; later evidence required` | Stage 1 added canonical identity/ownership models, Stage 2 added whole-history conservative continuity, and Stage 3 consumes them in live reconciliation/reactivation/A -> B orchestration. Stage 7 still owns complete integrated traceability. |
 | 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
 | 3 | `[~] Spec.4 remediation required` | Historical T1-T59 proof remains valid, but traceability stops at I31 and does not supply LC13 or the new PI/ND/TB/AR/RC evidence for I32-I37. |
@@ -94,8 +94,8 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 5 | `[~] Stages 2-3 complete; later integration evidence required` | SlotManager exact-record blockers and its one reconciliation barrier are consumed by the coordinator; persisted blockers rebuild before grants and dirty/reconciling/failed admission blocks offers. Stage 7 repeats the complete exact-key inventory end to end. |
 | 6 | `[x]` | Entity-filtered changed/unchanged report delivery, normalization, timestamp, and freshness semantics remain normative. Persistent sensor identity and reconciliation handoff are assigned to Slices 1/4/8; real rename validation remains Slice 13. |
 | 7 | `[~] Stages 3-4 command ownership complete; Stage 6-7 remediation/evidence remains` | Controllers require exact canonical records, persist command/session/accounting state through explicit schema-2 IDs, carry applied generation/lifecycle metadata, become observation-only when retained, and route every AUTO/MANUAL/continuation ON through the complete live gate, possible-flow marker, immediate post-call recheck, and shared compensation OFF. Stage 6 surfaces and Stage 7 complete traceability remain. |
-| 8 | `[~] Stages 3-4 complete; Stage 5 required` | EntryRuntime owns the supported listener/coordinator, immutable snapshots/generations, config+Store union, lifecycle materialization, exact reactivation, A -> B orchestration, stale/failure/reload/shutdown fencing, and final-ON authorization. In-flight lifecycle overlap joins one OFF operation. Stage 5 reconciler-owned reload application remains. |
-| 9 | `[~] Stages 3-4 listener/deletion safety complete; Stage 5 required` | Native public add/update/removal mutations feed the entry listener and tombstone reconciliation, and focused HA 2025.9 websocket deletion proves in-flight compensation for switch and valve. Config flow still has add-owned reload scheduling and `async_update_reload_and_abort`; Stage 5 must replace those without creating a competing owner, while Stage 7 owns the complete native-route/registry traceability run. |
+| 8 | `[~] Stages 3-5 complete; Stage 6-7 evidence remains` | EntryRuntime owns the supported listener/coordinator, immutable snapshots/generations, config+Store union, lifecycle materialization, exact reactivation, A -> B orchestration, final-ON authorization, and zero-or-one supported reload application after durable handoff. Delete-only batches do not reload; stale/failing reloads stay fail closed. Stage 6-7 surface/complete evidence remains. |
+| 9 | `[~] Stage 5 complete; Stage 7 complete traceability remains` | Config flow owns UI/backend validation and cooperative old-runtime preparation only. Add uses Core creation, changed reconfigure uses `async_update_and_abort`, unchanged input does not mutate, and actual native websocket deletion needs no integration pre-delete hook. Registry-first duplicate/retained/rename/reuse/A -> B cases feed the existing reconciler. Stage 7 owns the complete named-test traceability run. |
 | 10 | `[~] Spec.4 remediation required` | Existing entities/actions remain useful, but actions do not yet reject non-`ACTIVE` or dirty/failed reconciliation and presentation lacks schema-2 safety/lineage/history/lifecycle/reconciliation ownership. |
 | 11 | `[~] Spec.4 remediation required` | Existing events/logs/diagnostics/Repairs remain a baseline, but spec.4 requires exact-record tombstone/identity/reconciliation issues, an entry-level fix flow, safety/lineage/history identities, lifecycle/barrier/merge diagnostics, and deleted-zone-safe event payloads. |
 | 12 | `[~] Spec.4 remediation and existing release gates required` | README/distribution metadata require a post-remediation accuracy pass; current traceability artifacts and HA1 contract must be updated. Supported-current HA, GitHub-hosted hassfest, and GitHub-hosted HACS Action evidence remain absent. |
@@ -150,6 +150,8 @@ Stages 1-4 were explicitly authorized in sequence and are complete. No later sta
 - **Completion evidence:** deterministic future/event interleavings prove no post-mismatch ON, durable intent covers every crash window, in-flight calls compensate immediately, and each outcome has one terminal reason, one idempotent OFF, honest accounting, retained blockers, and no future pulse/session resurrection.
 
 ### Stage 5 - Config flows and reconciler-owned reload application
+
+- **Status:** `[x] Complete on 2026-08-23`; authorization returned to `None` after config-flow/native websocket deletion, identity, reload coalescing/failure, Stage-3/4 regression, HA1/source audit, coverage, lint, formatting, diff, and broad-inventory gates ran.
 
 - **Objective:** retain pre-mutation quiescence where applicable, replace `async_update_reload_and_abort` with `async_update_and_abort`, remove add/flow-owned reload scheduling, validate durable identity/same-record/A -> B conflicts, and make the reconciler the sole zero-or-one reload owner.
 - **Affected existing slices/files:** Slices 0, 8, and 9; `config_flow.py`, `runtime.py`/reconciliation component, `scripts/check_ha_contract.py`, strings/translations, and `tests/test_config_flow.py`/lifecycle tests.
@@ -1158,7 +1160,7 @@ Implement the single-controller configuration flow and safe zone-subentry add, r
 
 ### Remaining work
 
-The specification issue is resolved by spec.4, but implementation conformance is incomplete. After explicit authorization, this slice must integrate with the entry-owned update listener/reconciler, use `async_update_and_abort`, remove add/flow-owned reload scheduling and incompatible reload-helper semantics, apply durable-identity/same-record/A -> B validation, and prove the actual HA 2025.9 native websocket deletion path plus safe reconciliation. Entity/device/subentry attribution tests implemented under Slice 10 remain historical spec.3 evidence.
+Stage 5 completed the current config-flow/reload-ownership remediation: the flow uses `async_update_and_abort`, add/reconfigure schedule no flow-owned reload, the existing entry listener/reconciler applies all Core mutations, durable identity/same-record/rename/A -> B conflicts are validated without duplicating reconciliation, and actual HA 2025.9 native websocket deletion proves safe IDLE/AUTO-WATERING tombstoning plus registry cleanup with no delete-only reload. Stage 7 still owns complete 134-ID/native-route traceability. Entity/device/subentry attribution tests implemented under Slice 10 remain historical spec.3 evidence pending that audit.
 
 ### Tests actually run
 
@@ -1956,6 +1958,80 @@ Authorization closeout:
 - Current authorized slice returned to `None`. Stage 5 is not automatically authorized.
 - `SPECIFICATION.md` was not changed; no spec.5 was created.
 - Historical spec.3 and Stage-1/2/3 records were preserved without rewriting.
+
+PROGRESS.md updated:
+- yes
+
+### 2026-08-23 - Spec.4 Remediation Stage 5
+
+Authorized work:
+- The user explicitly authorized **Spec.4 Remediation Stage 5 only**: native config-subentry flows and reconciler-owned reload application, using GPT-5.6 Sol with high reasoning. Stages 6-8, Slice 13, publication/external submission, specification edits, and spec.5 remained out of scope.
+
+Completed config-flow and application ownership:
+- Removed production use of `ConfigSubentryFlow.async_update_reload_and_abort` and every add-flow `async_schedule_reload` call. Changed reconfiguration validates/normalizes the complete candidate, cooperatively prepares a loaded old runtime through `async_prepare_reconfigure`, then calls the exact HA 2025.9 public `ConfigSubentryFlow.async_update_and_abort(entry, subentry, title=..., data=...)`. An equivalent normalized submission aborts successfully without Core mutation, preparation, observed-generation advance, session termination, or reload.
+- Preserved exactly one entry-owned `ConfigEntry.add_update_listener`, registered before grants and removed through `entry.async_on_unload`. Core add/reconfigure/delete mutation reaches that listener, the Stage-3 coordinator, durable latest-snapshot reconciliation, and only then optional platform reconstruction. Config flow creates no listener, publishes no applied runtime, creates no canonical record, transfers no history/hazard, clears no blocker, and schedules no reload.
+- Reduced pre-mutation preparation to cooperative old-runtime quiescence only. WATERING/SOAKING use the existing `CONFIG_CHANGED` path and complete the shared OFF safety preparation before mutation; unloaded/absent runtime data performs no invented partial reconciliation.
+
+Reconciler-owned reload policy:
+- Added one `stable_batch_requires_reload` policy. Initial setup establishes the platform snapshot without reload; pure deletion schedules zero reloads; any added subentry or materially changed fingerprint schedules one supported `ConfigEntries.async_reload(entry_id)` only after the latest durable safety handoff has published. Runtime-only optimization is not used where the current platform architecture binds entities to setup-time controller objects.
+- Reload state is generation/fingerprint-bound, coalesced behind the serialized worker, and included in final-ON admission. A newer observation suppresses an obsolete not-yet-started reload and makes the latest stable snapshot the only decision owner. Equivalent post-reload notifications recognize the stable applied platform snapshot and cannot loop. Unload/shutdown cancels a stale pending request.
+- False/raised/cancelled reload leaves coordinator/SlotManager admission failed/closed, retains Store/tombstone/blocker evidence, records the error, and does not retry indefinitely for an equivalent fingerprint. No reload can clear safety evidence.
+
+Native deletion and identity:
+- Exercised Home Assistant 2025.9.0's unmodified websocket/backend route `config_entries/subentries/delete` against the installed listener/reconciler for IDLE and AUTO WATERING zones. Core mapping removal is visible when websocket success returns; the immediate Stage-4 membership authority rejects a fresh ON before asynchronous reconciliation completes; active flow joins the shared OFF operation; the listener tombstones/retires the canonical record; Core removes subentry-attributed device/entity registry objects; the safety record persists; and delete-only reconciliation performs no whole-entry reload. No integration pre-delete callback, frontend/websocket interception, or private registry hook exists.
+- Add/reconfigure duplicate checks compare Entity Registry UUIDs first. A current active UUID duplicate is refused; an exact retained UUID is accepted for Stage-3 same-record reactivation; a renamed entity ID resolving to the same UUID remains the same actuator; textual entity-ID reuse by another UUID or ambiguous retained evidence fails with translated `actuator_identity_conflict`; shared sensor remains warning-only.
+- A -> B flow validation checks B and active/retained conflicts, quiesces old A when material, and performs only the Core mutation. The existing reconciler retains A evidence, independently resolves/reuses exact retained B, merges the continuing zone history, and fails closed on conflict. Flow code creates no B record and never discards a tombstone.
+
+HA1 and production source contract:
+- `scripts/check_ha_contract.py` now verifies HA 2025.9.0's exact `ConfigSubentryFlow.async_update_and_abort` parameter set, `ConfigEntry.add_update_listener`, `ConfigEntry.async_on_unload`, public `ConfigEntry.subentries`, and the supported `ConfigEntries.async_reload(entry_id)`, while retaining all still-valid minimum-release checks.
+- The foundation AST/source audit rejects production uses of `async_update_reload_and_abort`, `_async_update_entry`, `_async_save_and_notify`, `_async_dispatch`, `SIGNAL_CONFIG_ENTRY_CHANGED`, `async_dispatcher_send_internal`, and equivalent private/manual dispatch seams. Direct source search found none.
+
+Named/focused evidence implemented:
+- Applicable Stage-5 portions of LC3, LC13, ND1-ND2, AR1, AR5-AR6, AR11-AR16, RC7-RC8, and HA1: supported update helper/listener pairing, loaded/unloaded/no-op reconfigure, native deletion and registry cleanup, duplicate/exact-retained/rename/entity-ID reuse/A -> B identity handling, latest-batch serialization, reload coalescing/stale suppression/no-loop/failure, and Stage-4 membership/compensation through a real delete mutation.
+- This is focused Stage-5 evidence only. It does not claim Stage 7's complete 134-ID/I1-I37 mapping.
+
+Files changed:
+- `custom_components/moisture_loop/config_flow.py`
+- `custom_components/moisture_loop/reconciliation.py`
+- `custom_components/moisture_loop/runtime.py`
+- `custom_components/moisture_loop/strings.json`
+- `custom_components/moisture_loop/translations/en.json`
+- `scripts/check_ha_contract.py`
+- `tests/test_config_flow.py`
+- `tests/test_foundation.py`
+- `tests/test_lifecycle.py`
+- `tests/test_reconciliation.py`
+- `PROGRESS.md`
+
+Environment:
+- Windows; HA harness Python 3.13.13; `homeassistant==2025.9.0`; `pytest==8.4.1`; `pytest-homeassistant-custom-component==0.13.277`; `pytest-cov==6.2.1`; `coverage==7.10.0`.
+- Pure environment Python 3.14.5 with pytest 8.3.3. Lint/format tool `ruff==0.16.4` through `uvx`.
+
+Tests run:
+- Pure regression: `py -3.14 -m pytest tests\test_models.py tests\test_storage_pure.py tests\test_state_machine.py tests\test_foundation.py tests\test_slot_manager.py -q --tb=short` -> PASS: 424 passed, 0 failed, 0 skipped; warning-only Python 3.14/pytest-asyncio deprecations (1.20 s).
+- Stage-1/2 Store/SlotManager HA regression: `.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_models.py tests\test_state_machine.py tests\test_slot_manager.py tests\test_storage_pure.py tests\test_storage.py -q --tb=short` -> PASS: 452 passed, 0 failed, 1 deliberate pure-boundary skip (4.34 s).
+- Complete config-flow/reconciliation/lifecycle regression: `.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_config_flow.py tests\test_reconciliation.py tests\test_lifecycle.py -q --tb=short` -> PASS: 95 passed, 0 failed, 0 skipped (3.47 s). This includes add, loaded/unloaded changed/no-op reconfigure, durable identity/A -> B, rapid add/reconfigure/delete, reload policy, and actual native deletion.
+- Stage-3 reconciliation and Stage-4 final-ON regression: `.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_reconciliation.py tests\test_stage4_on_gate.py tests\test_zone_controller.py tests\test_lifecycle.py -q --tb=short` -> PASS: 210 passed, 0 failed, 0 skipped (8.02 s).
+- Actual native websocket deletion focused rerun: `.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_config_flow.py::TestNativeSubentryDeletion -q --tb=short` -> PASS: 2 passed, 0 failed, 0 skipped (0.34 s). The immediately preceding test-only run exposed a misspelled test class reference (1 passed/1 failed); it was corrected without a production change before this green rerun.
+- Focused affected-module branch coverage: `.venv-ha-stage1\Scripts\python.exe -m pytest tests\test_models.py tests\test_state_machine.py tests\test_slot_manager.py tests\test_storage_pure.py tests\test_storage.py tests\test_reconciliation.py tests\test_stage4_on_gate.py tests\test_zone_controller.py tests\test_lifecycle.py tests\test_config_flow.py --cov=custom_components.moisture_loop.state_machine --cov=custom_components.moisture_loop.slot_manager --cov=custom_components.moisture_loop.storage --cov=custom_components.moisture_loop.reconciliation --cov=custom_components.moisture_loop.runtime --cov=custom_components.moisture_loop.config_flow --cov=custom_components.moisture_loop.zone_controller --cov-branch --cov-report=term-missing -q --tb=short` -> PASS: 696 passed, 0 failed, 1 deliberate pure-boundary skip; combined 93.01%; `config_flow.py` 98.61%, `reconciliation.py` 91.52%, `runtime.py` 87.30%, `storage.py` 89.15%, `zone_controller.py` 93.19%, `slot_manager.py` 100.00%, `state_machine.py` 100.00% (21.37 s).
+- HA1: `.venv-ha-stage1\Scripts\python.exe scripts\check_ha_contract.py --expect 2025.9.0` -> PASS: all 11 minimum-release checks.
+- Final broad HA 2025.9.0 inventory: `.venv-ha-stage1\Scripts\python.exe -m pytest tests -q --tb=no` -> expected later-stage non-green result: 785 passed, 2 failed, 1 deliberate pure-boundary skip, 0 errors, 3 warnings (17.73 s). Stage 5 = 0 failures; Stage 6 = 2 (`tests/test_entities.py::TestBinarySensors::test_watering_on_for_external_flow`, stale subentry-ID expectation rather than canonical `safety_record_id`; `tests/test_repairs.py::TestDiagnostics::test_diagnostics_content_and_redaction`, stale schema-1 diagnostics expectation); Stage 7/test-only = 0; genuine unexpected defect = 0.
+- Tool/version and quality gates: `uvx ruff --version` -> ruff 0.16.4; `uvx ruff check .` -> PASS; `uvx ruff format --check .` -> PASS; `git diff --check` -> PASS. A final post-`PROGRESS.md` rerun is recorded below if its file count differs.
+- Expected warning-only environment noise: pytest-homeassistant-custom-component's no-current-event-loop deprecation and an inaccessible pre-existing `.pytest_cache` path; neither produces a test error or changes safety evidence.
+
+Compatibility seams remaining:
+- `StoreData.zones`, `ZoneRecord`, `SafetyStore.async_update_zone`, `SafetyStore.async_update_record_runtime`, controller `build_record`, and optional legacy attach projections remain for schema migration, historical tests, and untouched compatibility consumers. They are not authority for normal live application/command/session/accounting. Stage 7 owns their final historical seam removal/audit.
+- Entity/action/Repair/diagnostic/event presentation remediation remains Stage 6; the two broad failures remain unchanged and classified there.
+- Full 134-ID/I1-I37 traceability remains Stage 7; supported-current HA/distribution/documentation work remains Stage 8; all §46 Slice-13 prototype validations remain unstarted.
+
+Open issues / remaining remediation:
+- No Stage-5 specification ambiguity, STOP condition, implementation blocker, private-API need, T1-T59 change, Stage-4 weakening, or need for spec.5 was found. `SPECIFICATION.md` was unchanged.
+- Stage 6 is technically unblocked by the completed flow/reload architecture but remains unauthorised/unimplemented. Stages 7-8 remain unauthorised/unimplemented or unverified as assigned, and Slice 13 remains not started.
+
+Authorization closeout:
+- Current authorized slice returned to `None`. Stage 6 is not automatically authorized.
+- `SPECIFICATION.md` was not changed; no spec.5 was created.
+- Historical spec.3 and Stage-1/2/3/4 records were preserved without rewriting.
 
 PROGRESS.md updated:
 - yes

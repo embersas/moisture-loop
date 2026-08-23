@@ -738,7 +738,6 @@ class TestShutdownAndReload:
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
         await runtime.async_prepare_reconfigure("missing-zone")
-        await runtime.async_prepare_delete("missing-zone")
         await runtime.async_unload()
 
     async def test_shutdown_fallback_cancels_and_best_effort_off(self, env) -> None:

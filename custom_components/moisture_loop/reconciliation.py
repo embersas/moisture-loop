@@ -168,6 +168,31 @@ def immutable_entry_snapshot(
 
 SnapshotBuilder = Callable[[int], ImmutableEntrySnapshot]
 SnapshotApplier = Callable[[ImmutableEntrySnapshot, Callable[[], bool]], Awaitable[None]]
+ReloadEntry = Callable[[], Awaitable[bool]]
+TaskCreator = Callable[[Awaitable[None], str], asyncio.Task[object]]
+
+
+def stable_batch_requires_reload(
+    platform_snapshot: ImmutableEntrySnapshot | None,
+    target_snapshot: ImmutableEntrySnapshot,
+) -> bool:
+    """Return whether platform/entity reconstruction is required.
+
+    The platform snapshot is the configuration represented by the currently
+    loaded entity platforms. A pure deletion needs no reload because Core
+    removes its subentry-attributed registry objects itself. Any addition or
+    material fingerprint change needs one reload because the current platform
+    setup binds entity objects to the controller instances present at setup.
+    """
+    if platform_snapshot is None:
+        return False
+    platform = platform_snapshot.by_subentry_id()
+    target = target_snapshot.by_subentry_id()
+    for subentry_id, zone in target.items():
+        previous = platform.get(subentry_id)
+        if previous is None or previous.config_fingerprint != zone.config_fingerprint:
+            return True
+    return False
 
 
 class ConfigurationReconciliationCoordinator:
@@ -178,12 +203,20 @@ class ConfigurationReconciliationCoordinator:
         slots: SlotManager,
         snapshot_builder: SnapshotBuilder,
         snapshot_applier: SnapshotApplier,
+        reload_entry: ReloadEntry | None = None,
+        task_creator: TaskCreator | None = None,
     ) -> None:
         self._slots = slots
         self._snapshot_builder = snapshot_builder
         self._snapshot_applier = snapshot_applier
+        self._reload_entry = reload_entry
+        self._task_creator = task_creator
         self._ready = asyncio.Event()
         self._worker: asyncio.Task[object] | None = None
+        self._reload_handle: asyncio.Handle | None = None
+        self._reload_task: asyncio.Task[object] | None = None
+        self._platform_snapshot: ImmutableEntrySnapshot | None = None
+        self._reload_failed_fingerprint: str | None = None
         self._publication_allowed = True
         self._stopping = False
         self._observation_error: Exception | None = None
@@ -197,6 +230,10 @@ class ConfigurationReconciliationCoordinator:
         self.failed = False
         self.superseded_count = 0
         self.last_error: str | None = None
+        self.reload_pending = False
+        self.reload_generation: int | None = None
+        self.reload_snapshot_fingerprint: str | None = None
+        self.reload_count = 0
 
     @property
     def stopping(self) -> bool:
@@ -309,20 +346,140 @@ class ConfigurationReconciliationCoordinator:
                 self.superseded_count += 1
                 continue
 
+            reload_required = stable_batch_requires_reload(self._platform_snapshot, target)
+            prior_reload_failure = (
+                self._reload_failed_fingerprint == target.entry_snapshot_fingerprint
+            )
+            if prior_reload_failure:
+                # One deterministic failure remains fail closed; equivalent
+                # notifications cannot create an unbounded retry loop.
+                reload_required = False
+
             # No suspension is permitted between the final current-token
-            # check, applied publication, and SlotManager barrier opening.
+            # check, applied publication, and SlotManager admission decision.
             self.applied_generation = target_generation
             self.applied_snapshot = target
             self.dirty = False
             self.reconciling = False
             self.failed = False
             self.last_error = None
-            self._slots.set_reconciliation_state_now(
-                dirty=False,
-                reconciling=False,
-                failed=False,
-            )
+            if self._platform_snapshot is None:
+                # Initial setup forwards platforms only after this publication.
+                self._platform_snapshot = target
+            if prior_reload_failure:
+                self._fail(ReconciliationError("configuration reload previously failed"))
+            elif reload_required and self._reload_entry is not None:
+                self._queue_reload(target)
+            else:
+                self._cancel_pending_reload()
+                self._slots.set_reconciliation_state_now(
+                    dirty=False,
+                    reconciling=False,
+                    failed=False,
+                )
             return
+
+    def _queue_reload(self, target: ImmutableEntrySnapshot) -> None:
+        """Queue one latest-generation reload after durable reconciliation."""
+        self.reload_pending = True
+        self.reload_generation = target.observed_generation
+        self.reload_snapshot_fingerprint = target.entry_snapshot_fingerprint
+        self._slots.set_reconciliation_state_now(
+            dirty=True,
+            reconciling=False,
+            failed=False,
+        )
+        if self._reload_handle is None and self._reload_task is None:
+            self._reload_handle = asyncio.get_running_loop().call_soon(
+                self._begin_reload_if_current
+            )
+
+    def _begin_reload_if_current(self) -> None:
+        """Start the supported reload only for the latest stable publication."""
+        self._reload_handle = None
+        generation = self.reload_generation
+        fingerprint = self.reload_snapshot_fingerprint
+        current = self.applied_snapshot
+        if (
+            not self.reload_pending
+            or self._reload_entry is None
+            or self.stopping
+            or self.dirty
+            or self.reconciling
+            or self.failed
+            or generation is None
+            or fingerprint is None
+            or self.observed_generation != generation
+            or self.applied_generation != generation
+            or current is None
+            or current.entry_snapshot_fingerprint != fingerprint
+        ):
+            return
+        coroutine = self._async_apply_reload(generation, fingerprint)
+        if self._task_creator is None:
+            self._reload_task = asyncio.create_task(
+                coroutine,
+                name="moisture_loop configuration reload",
+            )
+        else:
+            self._reload_task = self._task_creator(
+                coroutine,
+                "moisture_loop configuration reload",
+            )
+
+    async def _async_apply_reload(self, generation: int, fingerprint: str) -> None:
+        """Await the public reload API and retain fail-closed state on error."""
+        try:
+            if (
+                self.stopping
+                or not self.reload_pending
+                or self.reload_generation != generation
+                or self.reload_snapshot_fingerprint != fingerprint
+                or self.observed_generation != generation
+                or self.applied_generation != generation
+            ):
+                return
+            assert self._reload_entry is not None
+            reloaded = await self._reload_entry()
+            if not reloaded:
+                raise ReconciliationError("supported config-entry reload returned false")
+        except asyncio.CancelledError:
+            if not self.stopping:
+                self._reload_failed_fingerprint = fingerprint
+                self.reload_pending = False
+                self._fail(ReconciliationError("configuration reload was cancelled"))
+            raise
+        except Exception as err:
+            if not self.stopping and self.reload_snapshot_fingerprint == fingerprint:
+                self._reload_failed_fingerprint = fingerprint
+                self.reload_pending = False
+                self._fail(err)
+        else:
+            self.reload_count += 1
+            self.reload_pending = False
+            self.reload_generation = None
+            self.reload_snapshot_fingerprint = None
+            self._platform_snapshot = self.applied_snapshot
+            if not self.stopping:
+                self._slots.set_reconciliation_state_now(
+                    dirty=False,
+                    reconciling=False,
+                    failed=False,
+                )
+        finally:
+            if self._reload_task is asyncio.current_task():
+                self._reload_task = None
+
+    def _cancel_pending_reload(self) -> None:
+        """Cancel a not-yet-started obsolete reload decision."""
+        handle = self._reload_handle
+        if handle is not None:
+            handle.cancel()
+            self._reload_handle = None
+        if self._reload_task is None:
+            self.reload_pending = False
+            self.reload_generation = None
+            self.reload_snapshot_fingerprint = None
 
     def _fail(self, err: Exception) -> None:
         self.dirty = True
@@ -342,7 +499,11 @@ class ConfigurationReconciliationCoordinator:
         self.dirty = True
         self._slots.set_reconciliation_state_now(dirty=True, reconciling=False)
         self._ready.set()
-        worker = self._worker
+        self._cancel_pending_reload()
+        reload_task = self._reload_task
         current = asyncio.current_task()
+        if reload_task is not None and not reload_task.done() and reload_task is not current:
+            reload_task.cancel()
+        worker = self._worker
         if worker is not None and not worker.done() and worker is not current:
             await asyncio.shield(worker)

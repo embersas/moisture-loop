@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import MappingProxyType
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -35,6 +36,7 @@ from custom_components.moisture_loop.reconciliation import (
     ReconciliationError,
     immutable_entry_snapshot,
     normalized_zone_fingerprint,
+    stable_batch_requires_reload,
 )
 from custom_components.moisture_loop.slot_manager import SlotManager
 
@@ -96,6 +98,15 @@ async def settle(hass, cycles: int = 12) -> None:
 
 
 class TestCoordinator:
+    def test_reload_policy_distinguishes_delete_add_and_change(self) -> None:
+        original = pure_snapshot(1, "original")
+        deleted = immutable_entry_snapshot(2, [])
+        changed = pure_snapshot(2, "changed")
+        assert not stable_batch_requires_reload(None, original)
+        assert not stable_batch_requires_reload(original, deleted)
+        assert stable_batch_requires_reload(deleted, original)
+        assert stable_batch_requires_reload(original, changed)
+
     async def test_immutable_latest_snapshot_wins_and_stale_cannot_open(self) -> None:
         source = {"name": "generation-10"}
         slots = SlotManager()
@@ -220,6 +231,144 @@ class TestCoordinator:
         assert coordinator.superseded_count == 1
         assert slots.snapshot().admission_open
 
+    async def test_reloads_once_for_latest_stable_snapshot_and_not_equivalent_notice(
+        self,
+    ) -> None:
+        source = {"name": "original"}
+        slots = SlotManager()
+        await slots.async_enable_grants()
+        reloads: list[str] = []
+
+        def build(generation: int):
+            return pure_snapshot(generation, source["name"])
+
+        async def apply(_snapshot, _is_current) -> None:
+            return None
+
+        async def reload() -> bool:
+            assert coordinator.applied_snapshot is not None
+            reloads.append(coordinator.applied_snapshot.zones[0].config.name)
+            return True
+
+        coordinator = ConfigurationReconciliationCoordinator(slots, build, apply, reload)
+        coordinator.observe_current()
+        await coordinator.async_start()
+        assert reloads == []
+
+        source["name"] = "changed"
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        assert coordinator.reload_pending
+        assert not slots.snapshot().admission_open
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert reloads == ["changed"]
+        assert coordinator.reload_count == 1
+
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        await asyncio.sleep(0)
+        assert reloads == ["changed"]
+        assert slots.snapshot().admission_open
+
+    async def test_newer_generation_suppresses_obsolete_reload(self) -> None:
+        source = {"name": "original"}
+        slots = SlotManager()
+        await slots.async_enable_grants()
+        reloads: list[str] = []
+
+        def build(generation: int):
+            return pure_snapshot(generation, source["name"])
+
+        async def apply(_snapshot, _is_current) -> None:
+            return None
+
+        async def reload() -> bool:
+            assert coordinator.applied_snapshot is not None
+            reloads.append(coordinator.applied_snapshot.zones[0].config.name)
+            return True
+
+        coordinator = ConfigurationReconciliationCoordinator(slots, build, apply, reload)
+        coordinator.observe_current()
+        await coordinator.async_start()
+
+        source["name"] = "generation-n"
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        source["name"] = "generation-n-plus-one"
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert reloads == ["generation-n-plus-one"]
+        assert coordinator.reload_count == 1
+
+    async def test_reload_failure_is_fail_closed_and_not_retried_equivalently(self) -> None:
+        source = {"name": "original"}
+        slots = SlotManager()
+        await slots.async_enable_grants()
+        attempts = 0
+
+        def build(generation: int):
+            return pure_snapshot(generation, source["name"])
+
+        async def apply(_snapshot, _is_current) -> None:
+            return None
+
+        async def reload() -> bool:
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("injected reload failure")
+
+        coordinator = ConfigurationReconciliationCoordinator(slots, build, apply, reload)
+        coordinator.observe_current()
+        await coordinator.async_start()
+        source["name"] = "reload-fails"
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert attempts == 1
+        assert coordinator.failed and coordinator.dirty
+        assert not slots.snapshot().admission_open
+        assert "reload failure" in (coordinator.last_error or "")
+
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        await asyncio.sleep(0)
+        assert attempts == 1
+        assert coordinator.failed and not slots.snapshot().admission_open
+
+    async def test_stop_cancels_a_pending_reload_before_it_can_start(self) -> None:
+        source = {"name": "original"}
+        slots = SlotManager()
+        await slots.async_enable_grants()
+        attempts = 0
+
+        def build(generation: int):
+            return pure_snapshot(generation, source["name"])
+
+        async def apply(_snapshot, _is_current) -> None:
+            return None
+
+        async def reload() -> bool:
+            nonlocal attempts
+            attempts += 1
+            return True
+
+        coordinator = ConfigurationReconciliationCoordinator(slots, build, apply, reload)
+        coordinator.observe_current()
+        await coordinator.async_start()
+        source["name"] = "changed"
+        coordinator.observe_current()
+        await coordinator.async_reconcile()
+        assert coordinator.reload_pending
+        await coordinator.async_stop()
+        await asyncio.sleep(0)
+        assert attempts == 0
+        assert coordinator.stopping
+        assert not slots.snapshot().admission_open
+
 
 @pytest.fixture
 async def runtime_env(hass, hass_storage, freezer):
@@ -259,6 +408,11 @@ async def runtime_env(hass, hass_storage, freezer):
     entry.add_to_hass(hass)
     runtime = EntryRuntime(hass, entry)
     await runtime.async_initialize()
+    # These Stage-3 unit tests construct EntryRuntime directly rather than
+    # through HA's integration loader. Stage 5 reload policy is tested
+    # separately; keep this fixture's platform-application seam supported
+    # without asking Core to set up an unregistered entry.
+    runtime.coordinator._reload_entry = AsyncMock(return_value=True)
     await settle(hass)
     yield runtime, entry, actuator_entry, freezer
     await runtime.async_unload()

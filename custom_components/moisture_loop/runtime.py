@@ -168,6 +168,8 @@ class EntryRuntime:
             self.slots,
             self._build_immutable_snapshot,
             self._apply_configuration_snapshot,
+            self._async_reload_after_reconciliation,
+            self.hass.async_create_task,
         )
 
     # ------------------------------------------------------------------
@@ -314,6 +316,7 @@ class EntryRuntime:
             or self.coordinator.dirty
             or self.coordinator.reconciling
             or self.coordinator.failed
+            or self.coordinator.reload_pending
             or not slot_snapshot.admission_open
         ):
             fail("reconciliation_admission_clear", authority=True)
@@ -505,6 +508,10 @@ class EntryRuntime:
         unsubscribe = self.entry.add_update_listener(_entry_updated)
         self.entry.async_on_unload(unsubscribe)
         self._listener_registered = True
+
+    async def _async_reload_after_reconciliation(self) -> bool:
+        """Apply platform reconstruction through HA's supported reload API."""
+        return await self.hass.config_entries.async_reload(self.entry.entry_id)
 
     def _migration_contexts(
         self, snapshot: ImmutableEntrySnapshot
@@ -1872,9 +1879,9 @@ class EntryRuntime:
     async def async_prepare_reconfigure(self, zone_id: str) -> None:
         """Cooperatively terminate the zone's session as CONFIG_CHANGED.
 
-        The existing config-flow helper still owns its Stage-5 reload seam;
-        Stage 3 applies the resulting public subentry mutation through the
-        registered update listener and entry coordinator.
+        This is preparation only: the flow subsequently asks Core to mutate
+        the ConfigSubentry, and the registered update listener/reconciler owns
+        the new canonical/applied state and any required platform reload.
         """
         controller = self.controllers.get(zone_id)
         if controller is None:
@@ -1885,10 +1892,3 @@ class EntryRuntime:
             await controller.async_dispatch(ConfigChangedPrepare())
             if was_watering:
                 await self._await_off_within_budget(controller)
-
-    async def async_prepare_delete(self, zone_id: str) -> None:
-        """Deletion preparation: same safety path (§24.3).
-
-        Removal never clears an unproven-OFF water-resource blocker (§21).
-        """
-        await self.async_prepare_reconfigure(zone_id)

@@ -45,19 +45,21 @@ def main() -> int:
     def subentry_helper() -> None:
         from homeassistant.config_entries import ConfigSubentryFlow
 
-        sig = inspect.signature(ConfigSubentryFlow.async_update_reload_and_abort)
-        _assert(
-            "reload_even_if_entry_is_unchanged" in sig.parameters,
-            f"signature is {sig}",
-        )
+        sig = inspect.signature(ConfigSubentryFlow.async_update_and_abort)
+        expected = {"self", "entry", "subentry", "unique_id", "title", "data", "data_updates"}
+        _assert(set(sig.parameters) == expected, f"signature is {sig}")
 
     check(
-        "ConfigSubentryFlow.async_update_reload_and_abort(..., reload_even_if_entry_is_unchanged)",
+        "ConfigSubentryFlow.async_update_and_abort(entry, subentry, ...)",
         subentry_helper,
     )
 
     def subentry_model() -> None:
-        from homeassistant.config_entries import ConfigEntry, ConfigSubentry  # noqa: F401
+        from homeassistant.config_entries import (  # noqa: F401
+            ConfigEntries,
+            ConfigEntry,
+            ConfigSubentry,
+        )
 
         # runtime_data is a typed instance attribute declared on the class.
         annotations = getattr(ConfigEntry, "__annotations__", {})
@@ -67,8 +69,21 @@ def main() -> int:
             or "runtime_data" in getattr(ConfigEntry, "__slots__", ()),
             "ConfigEntry.runtime_data missing",
         )
+        for name in ("add_update_listener", "async_on_unload"):
+            _assert(hasattr(ConfigEntry, name), f"ConfigEntry.{name} missing")
+        _assert(
+            "subentries" in annotations
+            or hasattr(ConfigEntry, "subentries")
+            or "subentries" in getattr(ConfigEntry, "__slots__", ()),
+            "public ConfigEntry.subentries missing",
+        )
+        reload_sig = inspect.signature(ConfigEntries.async_reload)
+        _assert("entry_id" in reload_sig.parameters, f"async_reload signature is {reload_sig}")
 
-    check("ConfigEntry.runtime_data and ConfigSubentry", subentry_model)
+    check(
+        "ConfigEntry listener/unload/subentries and supported ConfigEntries.async_reload",
+        subentry_model,
+    )
 
     def event_helpers() -> None:
         from homeassistant.helpers.event import (  # noqa: F401

@@ -6,6 +6,7 @@ integration runtime behaviour (none exists yet).
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -39,8 +40,6 @@ def test_pure_modules_have_no_homeassistant_import() -> None:
     Passes trivially until Slice 1 creates the modules; from then on it is a
     live audit of every pure-layer file.
     """
-    import ast
-
     pure_files = [
         REPO_ROOT / "custom_components" / "moisture_loop" / name
         for name in ("models.py", "const.py", "state_machine.py", "slot_manager.py")
@@ -58,3 +57,22 @@ def test_pure_modules_have_no_homeassistant_import() -> None:
                 continue
             for name in names:
                 assert not name.startswith("homeassistant"), f"{file.name} imports {name}"
+
+
+def test_production_source_uses_no_prohibited_config_entry_internals() -> None:
+    """Stage 5 negative contract: current integration uses public HA APIs only."""
+    prohibited = {
+        "async_update_reload_and_abort",
+        "_async_update_entry",
+        "_async_save_and_notify",
+        "_async_dispatch",
+        "SIGNAL_CONFIG_ENTRY_CHANGED",
+        "async_dispatcher_send_internal",
+    }
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    for file in integration.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        }
+        assert not (used & prohibited), f"{file.name} uses {sorted(used & prohibited)}"
