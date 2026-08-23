@@ -14,8 +14,8 @@ jobs:
     name: Lint and format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install tooling
@@ -29,8 +29,8 @@ jobs:
     name: Pure-layer tests (no homeassistant installed)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install pure test dependencies
@@ -41,16 +41,16 @@ jobs:
             echo "homeassistant must not be installed in the pure-layer job"
             exit 1
           fi
-      - name: Run pure test suite
-        # HA-dependent test modules must guard themselves with
-        # pytest.importorskip("homeassistant") at module level (DEVELOPMENT.md),
-        # so this job runs the full tests/ tree and HA suites skip cleanly.
-        run: |
-          if [ -d custom_components/moisture_loop ]; then
-            pytest --cov --cov-branch --cov-report=term-missing
-          else
-            pytest
-          fi
+      - name: Run complete pure test suite
+        run: >-
+          pytest
+          tests/test_models.py
+          tests/test_storage_pure.py
+          tests/test_state_machine.py
+          tests/test_foundation.py
+          tests/test_slot_manager.py
+          tests/test_traceability.py
+          --cov --cov-branch --cov-report=term-missing
       - name: Enforce 100% branch coverage for state_machine.py
         run: |
           if [ -f custom_components/moisture_loop/state_machine.py ]; then
@@ -67,8 +67,8 @@ jobs:
     name: HA 2025.9.0 harness (mandatory)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - name: Install HA 2025.9.0 test environment
@@ -96,59 +96,38 @@ jobs:
   test-ha-current:
     # Supported-current HA job, deliberately a separate pinned environment
     # from the mandatory 2025.9.0 job (SPECIFICATION.md §39.1 HA2).
-    name: HA supported-current harness
+    name: HA 2026.8.3 supported-current harness
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Install supported-current HA test environment
         run: pip install -r requirements_test_ha_current.txt
-      - name: Report installed HA version
-        run: python -c "import homeassistant.const as c; print('homeassistant', c.__version__)"
-      - name: Run full test suite
-        run: pytest
+      - name: Verify pinned HA version
+        run: python -c "import homeassistant.const as c; assert c.__version__ == '2026.8.3', c.__version__"
+      - name: Supported-current API contract check
+        run: python scripts/check_ha_contract.py --expect 2026.8.3
+      - name: Run full test suite with branch coverage
+        run: pytest --cov --cov-branch --cov-report=term-missing
 
   hassfest:
-    # Release gate: validates custom_components/moisture_loop/manifest.json.
-    # Skips honestly while the integration package does not exist yet
-    # (Slice 12 owns final manifest/packaging); it does NOT falsely pass.
+    # Required GitHub-hosted release gate.
     name: hassfest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Check integration package exists
-        id: pkg
-        run: |
-          if [ -f custom_components/moisture_loop/manifest.json ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "manifest.json not present yet; hassfest gate armed but inactive"
-          fi
+      - uses: actions/checkout@v7
       - name: Run hassfest
-        if: steps.pkg.outputs.exists == 'true'
         uses: home-assistant/actions/hassfest@master
 
   hacs:
-    # Release gate: HACS validation with category integration.
-    # Same honest gating as hassfest until the package exists.
+    # Required GitHub-hosted release gate with no ignored checks.
     name: HACS validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Check integration package exists
-        id: pkg
-        run: |
-          if [ -f custom_components/moisture_loop/manifest.json ] && [ -f hacs.json ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "manifest.json/hacs.json not present yet; HACS gate armed but inactive"
-          fi
+      - uses: actions/checkout@v7
       - name: Run HACS validation
-        if: steps.pkg.outputs.exists == 'true'
         uses: hacs/action@main
         with:
           category: integration

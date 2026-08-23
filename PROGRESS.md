@@ -9,14 +9,14 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current authorized slice: `None`
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Slices 0-8 and 10-11 were historically completed under spec.3; Slice 9 was partially implemented but did not complete deletion conformance; Slice 12 has implementation artifacts but remains in progress.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-7 are complete. The integrated schema-2 implementation is proven on exact Home Assistant 2025.9.0: 134/134 normative IDs pass executed-evidence traceability, I1-I37 are fully evidenced, T1-T59 have exact implementation/test/diagram parity, and state_machine.py retains 100% branch coverage. Current watering uses only canonical SafetyRecord/ZoneHistory authorities and exact-record blockers; schema-1 types remain isolated to strict migration. Slices 1-11 are complete except Slice 0, whose supported-current/CI release evidence remains assigned to Stage 8.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-7 are complete. Stage 8 local/documentation/current-HA work is complete but the stage is blocked by unavailable GitHub-hosted hassfest and HACS Action results for the exact final commit. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Stage 8 is technically unblocked by completed Stage 7, but may begin only after new explicit user authorization. No implementation work is currently authorized.`
-- Release gates: `Stage 8 remains outstanding: supported-current Home Assistant harness execution, documentation/distribution accuracy remediation, and GitHub-hosted hassfest/HACS Action execution have not been performed. All §46 prototype validations remain outstanding.`
+- Next implementation work: `No slice is currently authorized. Stage 8 can close only after an authorized external workflow places the exact final state on GitHub and both required hosted gates pass. Slice 13 is not automatically authorized.`
+- Release gates: `Local hassfest passes with zero invalid integrations. HACS metadata/schema preflight passes, but the official HACS Action cannot validate a nonexistent/private non-GitHub final repository state and no GitHub-hosted HACS or hassfest result exists for the exact final commit. These are release-gate blockers, not specification contradictions. All §46 prototype validations remain outstanding.`
 - Slice 13: `Not started. No mock or existing automated result is treated as §46 prototype evidence.`
-- Overall status: `Not release-ready. Stages 1-7 are complete. The Stage-7 final HA 2025.9.0 broad inventory has 838 passed, 1 deliberate pure-boundary skip, 0 failures, and 0 errors with 92.74% branch coverage; the no-Home-Assistant pure suite has 436 passed and 0 skips; state_machine.py is 100%. The one HA skip has independent passing pure evidence and no normative ID is skipped. Stage 8 release gates and Slice 13 prototypes remain outstanding; historical spec.3 and Stage-1-6 evidence is preserved.`
+- Overall status: `Not release-ready. Stage 8 local/current-HA remediation passes, including HA 2025.9.0 at 92.74% overall branch and HA 2026.8.3 at 92.63%; documentation, metadata, CI, package, local-only, Recorder, traceability, and local hassfest audits pass. Stage 8 remains blocked solely by the two exact-final-commit GitHub-hosted gates. Slice 13 remains unstarted; historical spec.3 and Stage 1-7 evidence is preserved.`
 
-On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, and 7 in sequence. Stage 7 is complete and the authorization has returned to `None`; Stage 8 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced. Any Stage 8 implementation or prototype work requires new explicit user authorization.
+On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, and 7 in sequence, then explicitly authorized Stage 8 only. Stage 8 completed every authorized local/current-HA task but remains blocked by external GitHub-hosted gates that cannot be obtained without an unauthorized external write. Authorization has returned to `None`; Slice 13 is not automatically authorized. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
 ## Status Legend
 
@@ -34,7 +34,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 
 | Slice | Name | Status |
 |---:|---|:---:|
-| 0 | Repository and quality foundation | [~] Spec.4 remediation required |
+| 0 | Repository and quality foundation | [x] |
 | 1 | Pure domain models | [x] |
 | 2 | Pure state machine | [x] |
 | 3 | State-machine and invariant test suite | [x] |
@@ -46,10 +46,10 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 9 | Config flow and zone subentries | [x] |
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
-| 12 | Distribution and documentation | [~] Spec.4 remediation and existing release gates required |
+| 12 | Distribution and documentation | [~] Blocked by exact-final-commit GitHub-hosted hassfest/HACS evidence |
 | 13 | Prototype validations | [ ] |
 
-Slices 1-11 are `[x]` after Stage 7 because their current spec.4 implementation scope and behavioural acceptance evidence are complete. Slice 2 retains exact T1-T59 semantics and Slice 6 retains the unchanged report-normalization contract; both were rerun in the integrated suite. Slice 0 remains `[~]` because supported-current HA and final CI/release evidence belong to Stage 8. Slice 12 remains `[~]` for the documentation/distribution/current-HA gates. Slice 13 remains `[ ]`; harness results are not prototype evidence.
+Slices 0-11 are `[x]` after Stage 8 local/current-HA evidence. Slice 0 now has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 remains `[~]`: documentation, metadata, local hassfest, current HA, package, and traceability gates pass, but GitHub-hosted hassfest and HACS Action have no result for the exact final commit. Slice 13 remains `[ ]`; harness results are not prototype evidence.
 
 ## Specification Traceability
 
@@ -76,15 +76,15 @@ These are implementation-wide targets. Their definitions remain authoritative in
 
 - **Normative named tests specified:** 134 expected, 134 mechanically discovered from §39.2, 134 unique, 134 mapped, and 134 with actually executed passing evidence; zero missing, duplicate, extra, malformed, or unresolved IDs.
 - **Tests currently implemented:** every SR1-SR13, PI1-PI27, MF1-MF5, AC1-AC4, ER1-ER12, LC1-LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, and HA1-HA2 is classified `FULLY IMPLEMENTED AND PASSING`. No current normative ID remains partial, future, focused-only, manager-level-only, expected-only, skipped, or xfailed.
-- **Tests actually run/passing:** the final 2026-08-23 no-Home-Assistant pure inventory passed 436 with 0 skips. The exact HA 2025.9.0 broad/coverage inventory passed 838 with 1 deliberate pure-boundary skip, 0 failures, and 0 errors. The executed-JUnit checker proves 134/134 named IDs, I1-I37, and T1-T59. Overall branch coverage is 92.74%; `state_machine.py` is 100.00%. Historical 2026-08-21 and Stage-1-6 totals remain unchanged below.
+- **Tests actually run/passing:** the final 2026-08-23 no-Home-Assistant pure inventory passed 436 with 0 skips. Exact HA 2025.9.0 and supported-current HA 2026.8.3 each passed 838 with 1 deliberate pure-boundary skip, 0 failures, and 0 errors. The executed-JUnit checker proves 134/134 named IDs, I1-I37, and T1-T59 against both HA reports. Mandatory overall branch coverage is 92.74% with `state_machine.py` at 100.00%; supported-current overall branch coverage is 92.63%. Historical 2026-08-21 and Stage 1-6 totals remain unchanged below.
 
 ## Spec.4 Remediation Assessment
 
-This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-7 now implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, and deleted-safe events. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Stage 8 owns only the remaining release/documentation/supported-current evidence.
+This assessment compares the approved spec.4 requirements with the dated spec.3 baseline and current remediation state. Stages 1-7 implement and prove Store schema 2, canonical `safety_records` plus independent `zone_histories[*].zone_runtime`, exact `safety_record_id` blockers, fail-closed reconciliation/reload admission, conservative history handoff without hazard transfer, the entry-wide coordinator/final command envelope, native config-subentry flows, schema-2 entities/actions, exact-record Repairs, diagnostics, and deleted-safe events. Live controller/session/accounting writes use explicit schema-2 record/history IDs without a `ZoneRecord` projection. Historical schema-1 types/parsers remain migration-only; obsolete runtime/test compatibility projections were removed. Stage 8 has completed its local/documentation/supported-current scope and remains blocked only at the exact-final-commit GitHub-hosted distribution gates.
 
 | Slice | Current assessment | Actual spec.4 impact |
 |---:|---|---|
-| 0 | `[~] Stage 7 minimum-version/quality evidence complete; Stage 8 gates remain` | HA1/HA2 minimum-platform evidence, traceability, pure/HA suites, coverage, source audits, lint, and formatting pass. Supported-current HA and external CI/distribution execution remain Stage 8. |
+| 0 | `[x] Stage 8 quality/current-HA foundation complete` | Reproducible pure, exact HA 2025.9.0, and exact supported-current HA 2026.8.3 environments pass; HA1/HA2, traceability, coverage, source audits, lint, formatting, and six separated CI jobs are current. Hosted distribution execution remains a Slice 12 blocker. |
 | 1 | `[x]` | Canonical identity/ownership models and conservative history continuity are fully consumed and evidenced without a current schema-1 projection. |
 | 2 | `[x]` | The pure five-state T1-T59 decision semantics are unchanged. Reconciliation must dispatch the broadened T21/T39 trigger, but no new pure transition/state is required. |
 | 3 | `[x]` | Mechanical executed-evidence traceability covers all 134 named IDs and I1-I37; T1-T59 implementation/table/diagram/test parity and 100% branch coverage pass. |
@@ -96,12 +96,12 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 9 | `[x]` | Config flow uses `async_update_and_abort`, owns no reload/application state, enforces durable identity, and native HA deletion passes IDLE/AUTO/MANUAL/SOAKING/rapid-delete evidence with zero delete-only reload. |
 | 10 | `[x]` | Schema-2 entities/actions and all lifecycle/reconciliation refusal surfaces pass final traceability. |
 | 11 | `[x]` | Exact-record Repairs, incidents, diagnostics, deleted-safe events, delayed closure, and logging pass final traceability. |
-| 12 | `[~] Spec.4 remediation and existing release gates required` | README/distribution metadata require a post-remediation accuracy pass; current traceability artifacts and HA1 contract must be updated. Supported-current HA, GitHub-hosted hassfest, and GitHub-hosted HACS Action evidence remain absent. |
+| 12 | `[~] Local/current-HA complete; hosted gates blocked` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, local hassfest, package, local-only, Recorder, and metadata audits pass. Exact-final-commit GitHub-hosted hassfest and HACS Action evidence remain absent. |
 | 13 | `[ ] Not started` | All seven real §46 validations remain outstanding. Existing mocks and harness tests do not satisfy them. |
 
 ## Spec.4 Implementation Remediation Plan
 
-Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 is not authorized or started. A later stage may be marked complete only after its named evidence is implemented and actually run.
+Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 was explicitly authorized on 2026-08-23; its local/current-HA scope passes, but the stage remains blocked because exact-final-commit GitHub-hosted hassfest and HACS Action evidence is unavailable without an unauthorized external write. Current authorization is `None`. A later stage may be marked complete only after its named evidence is implemented and actually run.
 
 ### Stage 1 - Canonical models and Store schema-1 -> schema-2 migration
 
@@ -182,6 +182,8 @@ Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 is n
 
 ### Stage 8 - Post-remediation documentation, supported-current HA, and distribution CI
 
+- **Status:** `[~] Blocked on 2026-08-23`; all authorized local/current-HA work passes. No GitHub remote or exact-final-state GitHub commit exists, so the mandatory GitHub-hosted hassfest and HACS Action results cannot be obtained without creating/mirroring/pushing externally, which this authorization prohibited. Authorization returned to `None`; Slice 13 was not begun.
+
 - **Objective:** align user/developer documentation with safe native deletion and schema 2, then execute the separately pinned supported-current HA job and GitHub-hosted hassfest/HACS release gates without publishing.
 - **Affected existing slices/files:** Slices 0 and 12; `README.md`, `DEVELOPMENT.md`, manifest/HACS metadata if accuracy changes are required, `.github/workflows/ci.yml`, `scripts/check_ha_contract.py`, and tracking/release documentation.
 - **Specification sections:** §§39.1, 41-43, 45-46.
@@ -212,7 +214,7 @@ Stages 1-7 were explicitly authorized in sequence and are complete. Stage 8 is n
 
 ### Status
 
-`[~] Spec.4 remediation required (historically complete under spec.3 on 2026-08-21)`
+`[x] Complete (current spec.4 quality/current-HA foundation evidenced by Stage 8 on 2026-08-23; historical spec.3 record preserved below)`
 
 ### Objective
 
@@ -271,12 +273,13 @@ None. This is the first implementation slice, but it still requires explicit use
 - `pyproject.toml`: ruff (lint+format), pytest (`asyncio_mode=auto`, `testpaths=tests`), coverage (branch, source `custom_components/moisture_loop`) configuration. No packaging metadata (HACS distribution, not a pip package).
 - `requirements_test.txt`: pinned pure-layer environment (pytest 9.1.1, pytest-asyncio 1.4.0, pytest-cov 7.1.0, coverage 7.15.4, ruff 0.16.4); deliberately excludes homeassistant to prove the §37 boundary.
 - `requirements_test_ha.txt`: mandatory HA 2025.9.0 environment via `pytest-homeassistant-custom-component==0.13.277` (verified on PyPI 2026-08-21 to pin exactly `homeassistant==2025.9.0`, Python >= 3.13).
-- `requirements_test_ha_current.txt`: supported-current environment via `pytest-homeassistant-custom-component==0.13.356` (pins `homeassistant==2026.8.2`), kept as a separate pinned environment per §39.1.
-- `.github/workflows/ci.yml`: jobs `lint`, `test-pure` (asserts homeassistant absent; enforces the state_machine 100%-branch gate once the file exists), `test-ha-2025-9-0` (mandatory; exact-version assert plus HA1 contract check), `test-ha-current`, `hassfest`, `hacs`. hassfest/HACS jobs are armed but skip honestly until `manifest.json`/`hacs.json` exist (Slice 12), so no false pass is claimed.
+- `requirements_test_ha_current.txt`: Stage 8 superseded the planning pin with exact `homeassistant==2026.8.3` plus `pytest-homeassistant-custom-component==0.13.357`; the harness independently pins that exact Core release and requires Python >=3.14.2.
+- `.github/workflows/ci.yml`: six non-optional jobs: `lint`, explicit no-HA `test-pure`, mandatory exact `test-ha-2025-9-0`, exact `test-ha-current`, `hassfest`, and `hacs`. The distribution jobs no longer contain existence skips.
 - `scripts/check_ha_contract.py`: HA1 execution path — verifies, inside the exactly pinned HA environment, every §5.1 normative API: `ConfigSubentryFlow.async_update_reload_and_abort(..., reload_even_if_entry_is_unchanged)`, `ConfigEntry.runtime_data`/`ConfigSubentry`, state change/report/entity-registry event helpers, `State.last_reported`, `Store(atomic_writes=...)`, nested `DeviceSelectorConfig.filter`, `IssueSeverity` WARNING/ERROR/CRITICAL, `ValveEntityFeature` OPEN/CLOSE, `EVENT_HOMEASSISTANT_STOP`, `ServiceValidationError`.
 - `tests/conftest.py` (minimal, HA-import-free) and `tests/test_foundation.py` (toolchain smoke, mandatory-job presence check, HA1 script presence, AST-based no-homeassistant-import audit of the pure layer).
 - `DEVELOPMENT.md`: environments, bootstrap, and all local validation commands for later slices; test-module conventions (`pytest.importorskip("homeassistant")` for HA suites).
 - `.gitignore`.
+- Stage 8 clean-environment verification: pure Python 3.14.5 passed 436/436 with Home Assistant absent; HA 2025.9.0/Python 3.13.13 passed 838 with the one documented skip and 92.74% overall branch; HA 2026.8.3/Python 3.14.5 Linux passed 838 with the same skip and 92.63% overall branch. Both HA1/HA2 environments passed, and `state_machine.py` remained 100% branch on the mandatory suite.
 
 ### Remaining work
 
@@ -1386,7 +1389,7 @@ Spec.4 remediation is required for exact-record tombstone/identity/reconciliatio
 
 ### Status
 
-`[~] Spec.4 remediation and existing release gates required` — implementation artifacts produced under spec.3 remain, but a post-remediation documentation/distribution pass is required; the supported-current HA harness and GitHub-hosted hassfest/HACS executions remain outstanding.
+`[~] Blocked by exact-final-commit GitHub-hosted hassfest/HACS evidence` — Stage 8 documentation, supported-current HA, metadata, CI, package, local-only/Recorder, traceability, and local hassfest work passes. Hosted hassfest and HACS Action evidence is unavailable for the final state.
 
 ### Objective
 
@@ -1414,7 +1417,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Dependencies
 
-- Implementations exist through Slice 11, and the dated Slice 10/11 spec.3 tests remain valid historical evidence. The current prerequisite chain is incomplete because Spec.4 Remediation Stages 1-7 have not been authorized, implemented, or tested.
+- Implementations and current automated evidence exist through Slice 11; Spec.4 Remediation Stages 1-7 are complete and Stage 8 local/current-HA work passes. Only the external hosted release-gate dependency remains.
 
 ### Expected files
 
@@ -1451,14 +1454,15 @@ Complete a distributable, documented HACS custom integration and run the full au
 - Root `hacs.json` declaring `homeassistant: "2025.9.0"`; `README.md` covering every §43 subject (closed-loop purpose and non-goals, exact hysteresis/equality, pulse-soak-report rationale, unchanged reports and sensor cadence, the AUTO watchdog vs post-soak grace distinction, all limits and conservative crash estimates, manual watering from sensor faults with refusals, external-actuator/shared-resource rules, Store identity/recovery/shutdown/reload/reconfigure/no-resume behaviour, the 2025.9.0 minimum, the hardware-failsafe recommendation, action examples with device+duration, diagnostics/Repairs/events/troubleshooting, and the local-only privacy statement — plus the known Slice 9 deletion-reload limitation); `LICENSE` (GPL-3.0-only); `icons.json` for every entity and action; generated `brand/icon.png` (256x256 PNG for custom-repository presentation; the centralized `home-assistant/brands` submission remains §46 item 7).
 - CI release gates finalized in `.github/workflows/ci.yml` since Slice 0 (mandatory 2025.9.0 job with HA1, supported-current job, hassfest, HACS Action) — their existence-gating now activates because manifest/hacs.json exist.
 - The I1-I31 traceability matrix updated from future-slice placeholders to the real, now-existing test evidence and mechanically re-verified.
+- Stage 8 replaced the historical README limitation with the implemented spec.4 native deletion/tombstone, add/reconfigure, safety, action, Repair, diagnostics, local-only, minimum-version, and Slice-13-boundary documentation. `DEVELOPMENT.md` and `CLAUDE.md` now describe the two-HA-environment policy and current commands.
+- Current metadata passes JSON/YAML/key parity and local hassfest: manifest `0.1.0`, helper/calculated/single-entry/config-flow classification, empty requirements, HACS floor `2025.9.0`, synchronized services/strings/en/icons, and a 256x256 RGBA local icon. Current HACS schema no longer supports the historical `render_readme` key, which was removed.
+- Stage 8 current HA evidence is exact `homeassistant==2026.8.3`, Python 3.14.5 Linux, `pytest-homeassistant-custom-component==0.13.357`, pytest 9.0.3, pytest-cov 7.1.0, and coverage 7.15.2: 838 passed, 0 failed, 1 documented skip, 0 errors, 92.63% overall branch. Mandatory HA 2025.9.0 remains 838/0/1/0 at 92.74% overall branch and 100% `state_machine.py`; pure remains 436/436 with no skip. Traceability is 134/134, 37/37, and 59/59 in both HA report checks.
 
 ### Remaining work
 
-- Complete the post-remediation documentation/distribution pass after Spec.4 Remediation Stages 1-7, including removal of the documented spec.3 deletion limitation and current I1-I37/134-ID traceability.
-- Run and record the supported-current HA harness separately from the HA 2025.9.0 harness. The pinned intended environment is `pytest-homeassistant-custom-component==0.13.356` / `homeassistant==2026.8.2`, but no execution result or test count is currently recorded.
-- Execute hassfest and HACS Action in GitHub CI (see Blockers).
-- Complete Slice 9 implementation remediation and the full integrated spec.4 test evidence before treating the release/gating chain as ready.
-- Release publication and any HACS default-store submission remain separately authorized (§41).
+- Place the exact final repository state on an authorized public GitHub repository and obtain passing GitHub-hosted `home-assistant/actions/hassfest@master` and `hacs/action@main` results for that exact commit. No repository creation, mirror, push, or publication was authorized in Stage 8.
+- Once hosting exists, make the manifest `documentation` and `issue_tracker` targets resolve at their declared GitHub locations; they currently return 404 because that repository does not exist publicly.
+- Release publication and any HACS default-store or centralized-brand submission remain separately authorized (§41/§46) and were not begun.
 
 ### Tests actually run
 
@@ -1471,12 +1475,12 @@ All on 2026-08-21 (local machine):
 - Dependency/network audit -> PASS: `requirements: []`; grep over the integration source finds no aiohttp/requests/urllib/websocket usage, no recorder import, no cloud/telemetry/API-key references (the single textual hit is the diagnostics docstring stating Recorder is not used). Local-only (I28) and no-Recorder-safety-dependency confirmed.
 - Metadata consistency -> PASS: manifest/hacs/version/translations/icons all parse and agree; strings/en.json in sync.
 
-The supported-current HA harness was **not run**: no exact execution command, pass/fail result, or test count is recorded. The configured pinned environment alone is not test evidence.
+Historical 2026-08-21 statement: the supported-current HA harness was **not run** in that session. This is superseded by the Stage 8 exact HA 2026.8.3 execution evidence above and in the Stage 8 session log; the historical planning pin alone was never treated as evidence.
 
 ### Decisions / implementation notes
 
 - The `venv-ha` local harness runs the exact 2025.9.0 release, so "release gates" here means every automated §45 gate except the two GitHub-hosted actions.
-- Historical note: the current README documents the spec.3 Slice 9 limitation (UI zone deletion applies at the next reload). Approved spec.4 resolves the architecture; the README must be corrected only after implementation remediation makes that behaviour true.
+- Historical note from 2026-08-21: the then-current README documented the spec.3 Slice 9 limitation (UI zone deletion applied at the next reload). Stage 8 removed that limitation only after Stages 5 and 7 proved native deletion and safety reconciliation.
 
 ### Deviations from specification
 
@@ -1484,9 +1488,9 @@ None.
 
 ### Blockers
 
-- hassfest and HACS Action still need to execute in CI. The code was committed and pushed to `main` on 2026-08-21 — but to the self-hosted remote `https://git.lukestanbury.com/luke/moisture-loop.git` (Gitea/Forgejo), not GitHub. The `.github/workflows/ci.yml` gates run there only if Gitea Actions is enabled (it consumes GitHub-compatible workflows); alternatively, mirror the repository to GitHub. Note also that HACS custom-repository installation requires a GitHub-hosted repository, so distribution per §41 ultimately needs a GitHub presence. A green hassfest + HACS Action run completes this slice.
-- The separately required supported-current HA harness has not been run. Until an exact environment/version, exact command, pass/fail result, and test count are recorded, this Slice 12 gate remains incomplete.
-- Spec.4 implementation remediation and its full test/traceability evidence are incomplete. Slice 9's specification question is resolved, but its implementation and dependent Slice 12 documentation/distribution remediation remain release blockers.
+- The only remote is self-hosted `origin https://git.lukestanbury.com/luke/moisture-loop.git`; there is no GitHub remote, and public GitHub checks for the manifest repository path return 404. Local `HEAD` is `ee6df21f6ac07fd13e4d29a9329c5ee755b59338`, `origin/main` is `7cad715008888a542da1ee583e1be7a0f0bd35a4`, and the Stage 8 final state is an uncommitted working tree, so no exact-final-commit hosted result can exist.
+- Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`). The official HACS Action container reaches its mandatory token/repository preflight then stops with `No GitHub token found`; the action validates a GitHub repository rather than an offline directory. Local metadata/schema checks therefore are not represented as a hosted HACS pass.
+- Passing GitHub-hosted hassfest and HACS Action results for the exact final commit remain mandatory. Obtaining them requires an external repository/commit/workflow action outside this authorization.
 
 ## Slice 13 - Prototype validations
 
@@ -2258,3 +2262,57 @@ PROGRESS.md updated:
 - Final suites: pure Python 3.14.5 = 436 passed, 0 failed, 0 skipped, 0 errors; HA 2025.9.0 on Python 3.13.13 = 838 passed, 0 failed, 1 non-normative pure-boundary skip, 0 errors. Overall branch coverage is 92.74%; `state_machine.py` branch coverage is 100%.
 - Final repository gates after all edits: `uvx --from ruff==0.16.4 ruff check .` -> PASS; `uvx --from ruff==0.16.4 ruff format --check .` -> PASS (45 files already formatted); `git diff --check` -> PASS with warning-only Git LF-to-CRLF notices; `SPECIFICATION.md` -> unchanged.
 - Current authorized slice: `None`. Stage 8 is technically unblocked but not authorized or begun. Slice 13 remains `[ ]` and unstarted.
+
+## Session Log — 2026-08-23 (Spec.4 Remediation Stage 8)
+
+### Authorization and result
+
+- The user explicitly authorized **Spec.4 Remediation Stage 8 only**, using GPT-5.6 Sol with high reasoning. `SPECIFICATION.md`, `PROGRESS.md`, and `HOME_ASSISTANT_SUBENTRY_DELETION_INVESTIGATION.md` were read completely before any edit, followed by the workflow, documentation, metadata, requirements, scripts, repository, remotes, and CI audits.
+- **Status: `[~] Blocked`.** All authorized local documentation, supported-current, mandatory-minimum, pure, traceability, metadata, package, and distribution-preflight work passes. Stage 8 cannot be marked complete because no GitHub-hosted hassfest or HACS Action result exists for the exact final commit/state, and obtaining those results requires an unauthorized external repository creation/mirror/push/workflow action.
+- No STOP-condition contradiction, T1-T59 change, fail-closed weakening, minimum-version change, architecture redesign, spec.5 work, publication, submission, remote alteration, or Slice 13 work occurred. Current authorized slice returned to `None`.
+
+### Supported-current identity and environment
+
+- Current stable Core was established, not guessed: official Home Assistant Core GitHub release `2026.8.3` is non-draft/non-prerelease and was published 2026-08-21; PyPI's `homeassistant` index also identifies `2026.8.3`, uploaded 2026-08-21, not yanked, with `Requires-Python >=3.14.2`.
+- Current PyPI metadata identifies `pytest-homeassistant-custom-component==0.13.357` as the latest harness; its dependency metadata pins `homeassistant==2026.8.3`, `pytest==9.0.3`, `pytest-cov==7.1.0`, and `coverage==7.15.2` exactly and requires Python >=3.14.
+- Reproducible pin: `requirements_test_ha_current.txt` now contains direct `homeassistant==2026.8.3` and `pytest-homeassistant-custom-component==0.13.357` pins. The mandatory `requirements_test_ha.txt` remains unchanged at harness `0.13.277` / exact HA `2025.9.0`.
+- A clean Windows Python 3.14.5 environment installed the exact dependency set, but the current harness imports POSIX `fcntl` at pytest-plugin startup on Windows. This was classified as a test-harness/platform issue. Final supported-current execution used a clean `python:3.14.5-slim` Linux container (`Linux 6.6.114.1-microsoft-standard-WSL2 x86_64`, glibc 2.41), independent of the HA 2025.9 environment.
+
+### Tests and quality actually run
+
+- Supported-current bootstrap/contract: `docker run --rm --mount "type=bind,source=$repoPath,target=/workspace" --mount "type=bind,source=$stage8Evidence,target=/evidence" -w /workspace python:3.14.5-slim sh -lc 'python -m pip install --disable-pip-version-check --requirement requirements_test_ha_current.txt && python scripts/check_ha_contract.py --expect 2026.8.3 && ...'` -> exact versions above; all 12 HA public-contract checks passed.
+- Final supported-current full suite: `docker exec -e COVERAGE_FILE=/tmp/.coverage-current-clean moisture-loop-stage8-current python -m pytest tests -q --tb=short --junitxml=/evidence/ha-current-release-clean.xml -o cache_dir=/tmp/cache-current-release-clean --basetemp=/tmp/temp-current-release-clean --cov=custom_components.moisture_loop --cov-branch --cov-report=term` -> **838 passed, 0 failed, 1 skipped, 0 errors in 118.57 s; 92.63% overall branch coverage**. `state_machine.py` also reported 100%, though exact percentage parity is required only on the minimum suite.
+- Mandatory full regression: `.venv-ha-stage1\Scripts\python.exe -m pytest tests -q --tb=short --junitxml="$env:TEMP\moisture-loop-stage8\ha-min-release-final.xml" -o cache_dir="$env:TEMP\moisture-loop-stage8\cache-min-release-final" --basetemp="$env:TEMP\moisture-loop-stage8\temp-min-release-final" --cov=custom_components.moisture_loop --cov-branch --cov-report=term --cov-fail-under=90` -> **838 passed, 0 failed, 1 skipped, 0 errors, 1 harness deprecation warning in 39.71 s; 92.74% overall branch; `state_machine.py` 100.00% branch**. Environment: Windows 11, Python 3.13.13, HA 2025.9.0, harness 0.13.277, pytest 8.4.1, pytest-cov 6.2.1, coverage 7.10.0.
+- Pure clean environment: `uv venv --python 3.14.5 --seed .venv-pure-stage8`; `.venv-pure-stage8\Scripts\python.exe -m pip install --requirement requirements_test.txt`; `pip show homeassistant` -> not found; `.venv-pure-stage8\Scripts\python.exe -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_state_machine.py tests/test_foundation.py tests/test_slot_manager.py tests/test_traceability.py -q --tb=short --junitxml="$env:TEMP\moisture-loop-stage8\pure-final.xml" -o cache_dir=... --basetemp=... --cov=custom_components.moisture_loop.models --cov=custom_components.moisture_loop.state_machine --cov=custom_components.moisture_loop.slot_manager --cov-branch --cov-report=term-missing` -> **436 passed, 0 failed, 0 skipped, 0 errors; `state_machine.py` 100.00% branch**. Warning-only Python 3.14 event-loop-policy deprecations were non-behavioural.
+- HA1/HA2: `...python.exe -m pytest tests/test_ha_contract.py -q --tb=short` -> 2 passed on HA 2025.9.0 and 2 passed on HA 2026.8.3. Direct `scripts/check_ha_contract.py --expect <version>` passed all 12 checks in both environments.
+- Focused native-delete/final-ON/Store/actions/entities/Repairs/diagnostics regression: `pytest -q --tb=short tests/test_config_flow.py::TestNativeSubentryDeletion tests/test_stage4_on_gate.py tests/test_storage.py tests/test_storage_pure.py tests/test_services.py tests/test_entities.py tests/test_repairs.py` -> 282 passed on HA 2025.9.0 and 282 passed on HA 2026.8.3.
+- Final executed traceability, run once with the mandatory JUnit and once with the current JUnit: `scripts/check_traceability.py --pure-report <pure-final.xml> --ha-report <ha-report.xml>` -> **134/134 normative IDs, 37/37 invariants, 59/59 transitions** on each pairing. Skip audit: pure `[]`; each HA report contains only `TestPureBoundary::test_importing_models_does_not_import_homeassistant`, which passes in pure.
+- Quality: `.venv-pure-stage8\Scripts\ruff.exe check .` -> pass; `ruff format --check .` -> all files formatted; `git diff --check` -> pass with warning-only LF-to-CRLF notices. JSON parsing, YAML parsing, strings/en equality, four service/action/icon-key parity, manifest/HACS assertions, and 256x256 RGBA PNG validation all pass.
+
+### Compatibility findings and remediation
+
+- HA 2026.8.3 initially produced six failures because older integration test doubles did not propagate `ServiceCall.context` into simulated state changes, and current HA no longer includes the controller's deliberate background session task in `async_block_till_done()`. This was classified as test-harness-only compatibility. The doubles now model real entity services by preserving context, and the native-delete test waits for actuator acknowledgement instead of depending on harness task-draining policy. No production runtime Python changed.
+- Current hassfest rejected the fixable `actuator_off_unconfirmed` issue because a fixable issue translation now permits `description` or `fix_flow`, not both. The redundant top-level description was removed while the detailed safety/acknowledgement text remains in the fix flow and README. Both HA suites and local hassfest pass afterward.
+
+### Documentation, metadata, CI, and release audit
+
+- `README.md` now documents implemented spec.4 native deletion/tombstones, immediate no-ON authority, safe active-session termination, same-actuator re-add history, independent A -> B hazards, native add/reconfigure/no-op behavior, all four device-targeted actions, manual clamps/refusals, Repairs/diagnostics, exact thresholds/report/freshness behavior, Store/restart/shutdown safety, local-only/privacy, hardware failsafes, Home Assistant 2025.9.0 or later, and the seven still-unstarted Slice 13 items. The spec.3 delete-after-reload limitation is gone.
+- `DEVELOPMENT.md` now gives exact clean-environment, full-suite, coverage, traceability, HA1/HA2, focused-regression, metadata, Ruff, hassfest, HACS, and six-job CI instructions. `CLAUDE.md` no longer claims a greenfield/2025.7 project.
+- Manifest remains version `0.1.0`, domain/name correct, helper/calculated/local-only, config flow/single entry true, requirements empty, and key ordering accepted by current hassfest. `hacs.json` retains minimum `2025.9.0` and drops unsupported `render_readme`. Services, strings, `translations/en.json`, and icons synchronize all four actions; fix-flow errors remain present. Specification version remains `0.1.0-spec.4`; `SPECIFICATION.md` has no diff.
+- CI now has required independent `lint`, explicit pure, mandatory HA 2025.9.0, exact HA 2026.8.3/Python 3.14, hassfest, and HACS jobs. Current action forms are `home-assistant/actions/hassfest@master` and `hacs/action@main`; neither distribution job has an existence skip or ignored validation.
+- Official local hassfest: `docker run --rm --mount "type=bind,source=$repoPath,target=/github/workspace" ghcr.io/home-assistant/hassfest` -> **PASS: Integrations 1; Invalid integrations 0**. Official local HACS Action container invocation reached its mandatory remote preflight and stopped with **`No GitHub token found`**; this is not recorded as a HACS validation pass.
+- Tracked release-content audit: 59 tracked files, 24 integration files, no tracked venv/cache/JUnit/coverage/storage/secret/temp/migration artifact, license and README present, and only the integration directory is the HACS payload. The diagnostics source filename is expected, not a diagnostics dump. Runtime source has no cloud/outbound HTTP/telemetry/API-key dependency, Recorder import/safety reconstruction, or direct `.storage` filesystem manipulation; pure AST/import tests pass.
+
+### Repository hosting and external gate
+
+- `git remote -v`: only `origin https://git.lukestanbury.com/luke/moisture-loop.git` for fetch/push. No remote was altered. There is no GitHub remote. Public GitHub checks for `lukestanbury/moisture_loop` and `lukestanbury/moisture-loop` returned 404.
+- Audited baseline `HEAD` is `ee6df21f6ac07fd13e4d29a9329c5ee755b59338`; `origin/main` is `7cad715008888a542da1ee583e1be7a0f0bd35a4`; local branch was ahead by six before Stage 8, and the final Stage 8 state is an uncommitted working tree. Therefore no GitHub-hosted workflow result can match the exact final state.
+- Current official HACS guidance requires a public GitHub repository for a custom repository. Manifest documentation/issue URLs target the intended GitHub repository but currently return 404. Repository creation/mirroring/push, release publication, HACS submission, and brands submission were explicitly unauthorized and were not performed.
+
+### Slice and authorization reconciliation
+
+- Slice 0 -> `[x]`: all quality-foundation and supported-current obligations assigned to it are now complete and reproducible.
+- Slice 12 -> `[~]`: every local/current-HA/documentation gate passes, but exact-final-commit GitHub-hosted hassfest and HACS Action evidence is mandatory and unavailable; the declared GitHub documentation/issue targets also cannot resolve until hosting exists.
+- Slice 13 -> `[ ]`: all seven §46 real UI/UX, physical valve, real registry rename, physical shutdown timing, ten-zone scale, deployment cadence, and HACS/central-brand presentation validations remain unstarted.
+- Files changed in Stage 8: `.github/workflows/ci.yml`, `.gitignore`, `CLAUDE.md`, `DEVELOPMENT.md`, `README.md`, `custom_components/moisture_loop/strings.json`, `custom_components/moisture_loop/translations/en.json`, `hacs.json`, `requirements_test_ha_current.txt`, `tests/test_config_flow.py`, `tests/test_entities.py`, `tests/test_ha_contract.py`, and `PROGRESS.md`.
+- Current authorized slice: `None`. `SPECIFICATION.md` remained unchanged. Stage 8 is not complete; no external/publication action or Slice 13 work was taken.

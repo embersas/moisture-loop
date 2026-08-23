@@ -517,20 +517,22 @@ class TestZoneReconfigureFlow:
         )
         calls = {"on": 0, "off": 0}
 
-        async def open_valve(_call) -> None:
+        async def open_valve(call) -> None:
             calls["on"] += 1
             hass.states.async_set(
                 actuator.entity_id,
                 "open",
                 {"supported_features": 3},
+                context=call.context,
             )
 
-        async def close_valve(_call) -> None:
+        async def close_valve(call) -> None:
             calls["off"] += 1
             hass.states.async_set(
                 actuator.entity_id,
                 "closed",
                 {"supported_features": 3},
+                context=call.context,
             )
 
         hass.services.async_register("valve", "open_valve", open_valve)
@@ -1154,6 +1156,15 @@ class TestNativeSubentryDeletion:
         assert controller.session is not None
         assert controller.session.mode is SessionMode.MANUAL
         assert controller.state is ControllerState.WATERING
+        # The session owner is a deliberate HA background task.  Current HA
+        # no longer includes that task in async_block_till_done(), so wait for
+        # the simulated actuator acknowledgement instead of relying on the
+        # harness scheduler's task-draining policy.
+        for _ in range(40):
+            if controller.session.pulse_confirmed_at_utc is not None:
+                break
+            await asyncio.sleep(0)
+        assert controller.session.pulse_confirmed_at_utc is not None
         before_on = calls["on"]
         before_off = calls["off"]
 

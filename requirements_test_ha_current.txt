@@ -1,8 +1,10 @@
 # Supported-current Home Assistant test environment (SPECIFICATION.md §39.1,
 # HA2). Kept as a separate pinned environment from the mandatory 2025.9.0 job
 # because one shared dependency matrix is impractical across HA releases.
-# pytest-homeassistant-custom-component 0.13.356 pins homeassistant==2026.8.2
-# (verified against PyPI metadata on 2026-08-21) and brings its own pinned
-# pytest stack. Bump deliberately; record the exact Core tag verified in the
-# release checklist (HA1/HA2).
-pytest-homeassistant-custom-component==0.13.356
+# pytest-homeassistant-custom-component 0.13.357 pins homeassistant==2026.8.3
+# exactly (verified from current PyPI metadata on 2026-08-23) and brings its
+# own pinned pytest stack. Home Assistant 2026.8.3 requires Python >=3.14.2;
+# use a clean Python 3.14 environment. Bump deliberately and record the exact
+# Core tag and harness metadata in the release evidence (HA1/HA2).
+homeassistant==2026.8.3
+pytest-homeassistant-custom-component==0.13.357

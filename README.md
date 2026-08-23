@@ -1,194 +1,245 @@
 # Moisture Loop
 
-**Closed-loop soil-moisture irrigation for Home Assistant.**
+Closed-loop soil-moisture irrigation for Home Assistant.
 
-Moisture Loop is a hardware-agnostic Home Assistant custom integration that
-waters each zone in bounded pulses driven by a real soil-moisture sensor.
-Every pulse is followed by a full soak, and the next decision uses only a
-sensor report made *at or after* the soak ends. It is not a timer, a weather
-model, or an evapotranspiration calculator: measured soil moisture is the
-authoritative automatic feedback signal, and every uncertainty fails toward
-water OFF.
+Moisture Loop pairs one soil-moisture sensor with one `switch` or `valve`
+actuator per zone. It waters in bounded pulses, waits for water to redistribute
+through the soil, then requires a fresh report made at or after the soak ends
+before deciding whether to pulse again. Measured moisture is the automatic
+feedback signal; this is not a timer, weather, or evapotranspiration controller.
 
-> **Requires Home Assistant 2025.9.0 or newer.** The integration uses the
-> subentry-specific update-and-reload API introduced in that release; no
-> older release is supported or claimed compatible.
+> Requires Home Assistant 2025.9.0 or later. Older releases are not supported.
 
-## How it works
+The integration is local-only and hardware-agnostic. It has no cloud account,
+telemetry, API key, outbound network dependency, or Recorder safety dependency.
 
-Each zone pairs exactly one moisture `sensor` with one `switch` or `valve`
-actuator:
+## How automatic watering works
 
-1. A new automatic session starts only when a **valid, fresh** moisture
-   report is **strictly below** the start threshold (and every safety guard
-   passes).
-2. The zone waters one bounded **pulse**, then closes the valve and waits
-   the full configured **soak** — water moves through soil slowly, so a
-   reading taken right after closing means nothing yet.
-3. After the soak, the next decision requires a report **timestamped at or
-   after the soak deadline**. Below target: another whole pulse (if it fits
-   every limit). At or above target: done.
-4. Hysteresis is exact and asymmetric: start requires `moisture <
-   start_threshold`; an active session continues while `moisture <
-   target_threshold`; equality at the target completes.
+Each zone has exactly one sensor and one actuator:
 
-### Safety model
+1. A new AUTO session can start only from `IDLE`, with the zone enabled, when
+   the latest report is valid and fresh and `moisture < start_threshold`.
+2. One complete pulse must fit the cycle, session, and current-day limits.
+3. The actuator is closed and proven OFF, then the full soak runs.
+4. Continuation or completion requires a valid, fresh report timestamped at or
+   after the soak deadline. Below target, another whole pulse may run; at or
+   above target, the session completes.
 
-- **Fail toward OFF.** A sensor that goes unavailable, invalid, or silent
-  during automatic watering stops the pulse immediately. An interrupted
-  watering pulse is **never resumed** after a restart, reload, or crash.
-- **Hard limits.** Whole pulses must fit within the per-session and
-  per-day runtime budgets; sessions are bounded by a cycle count and a
-  minimum interval between automatic sessions.
-- **Conservative accounting.** If Home Assistant crashes mid-pulse, the
-  possible watering time is *overestimated* (from the persisted
-  write-ahead intent through restart reconciliation) and fully charged to
-  the daily budget — estimated runtime is labelled but never discounted.
-- **One zone at a time.** Watering commands are globally serialized. Any
-  configured actuator that is observed (or must conservatively be assumed)
-  to be flowing — even when a person opened it by hand — blocks every new
-  integration command until it is proven OFF.
-- **Verified persistence.** Safety state is stored atomically with
-  read-back verification before any valve is commanded ON; corrupted or
-  missing history blocks all watering, exhausts the day's budget, and
-  raises a Repair until acknowledged.
-- **Manual watering is always bounded.** There is no unbounded ON anywhere
-  in this integration. Manual runs require an explicit duration, clamped by
-  the manual maximum, session maximum, and remaining daily budget.
+The comparisons are exact:
 
-**Hardware note:** software cannot close a mechanically stuck valve. Use a
-hardware backstop (a valve with a built-in maximum runtime, or a master
-valve) for defense in depth. If the actuator cannot be proven OFF, Moisture
-Loop raises a **critical Repair** and keeps charging runtime until OFF is
-observed.
+- `moisture == start_threshold` does not start a new AUTO session.
+- An active AUTO session continues only while `moisture < target_threshold`.
+- `moisture == target_threshold` completes the session.
+- A report exactly at the soak deadline qualifies; an earlier report does not.
+- A report exactly on the freshness boundary is fresh.
+
+Repeated unchanged readings are real reports. Moisture Loop listens to Home
+Assistant's entity-filtered `state_reported` path, so an identical reading can
+refresh the sensor watchdog or qualify after a soak. A fallback scan never
+invents a new report timestamp.
+
+### Freshness and watchdogs
+
+AUTO watering remains dependent on a current sensor report while water is
+flowing. If the sensor becomes invalid or unavailable, the session stops and
+the actuator follows the shared OFF path. If reports go silent, watering stops
+when the newest valid report reaches its configured maximum age. A newer valid
+report, changed or unchanged, replaces that deadline.
+
+SOAKING uses a separate rule: a report before the soak ends may update the UI
+but cannot decide the session. After the soak, Moisture Loop waits for a
+qualifying report for at most one sensor-freshness window, then faults stale.
+
+## Safety model
+
+- Watering commands are globally serialized: at most one integration-commanded
+  zone flows at a time.
+- An actuator observed or conservatively believed to be flowing blocks every
+  new integration ON, including flow started outside Moisture Loop.
+- External flow outside a session is respected and is not counter-commanded;
+  it blocks the shared resource until that exact actuator is proven OFF.
+- Every AUTO pulse must fit in full. No partial trailing pulse is used to spend
+  the last part of a budget.
+- Manual watering is finite and clamped by its request, the configured manual
+  maximum, session maximum, and remaining current-day budget.
+- Every created session resets the minimum interval for later AUTO starts.
+- WATERING never resumes after restart, crash, reload, or reconfiguration.
+- Unknown watering duration is conservatively overestimated and charged to the
+  affected HA-local calendar day or days.
+- Safety state is written atomically and read back before an ON command. A
+  missing, corrupt, future-version, or mismatched initialized Store blocks both
+  AUTO and MANUAL, exhausts the detection day's budget, and raises a Repair.
+- Home Assistant shutdown and entry unload close admission first and route
+  possible flow through the same idempotent OFF operation.
+
+Software cannot close mechanically failed hardware. Use a valve with a hardware
+maximum runtime, a master valve, or another independent physical failsafe. If
+OFF cannot be proven, Moisture Loop raises a critical Repair, retains the global
+blocker, and continues conservative accounting until exact OFF evidence exists.
 
 ## Installation
 
-### HACS (custom repository)
+This source tree is not yet a published HACS release. HACS custom-repository
+distribution requires a public GitHub repository and passing GitHub-hosted HACS
+Action and hassfest results for the release candidate.
 
-1. HACS → Integrations → ⋮ → *Custom repositories*.
-2. Add this repository with category **Integration**.
-3. Install **Moisture Loop** and restart Home Assistant.
+For manual development installation, copy
+`custom_components/moisture_loop/` into the Home Assistant
+`config/custom_components/` directory and restart Home Assistant.
 
-### Manual
+Once an authorized public GitHub repository is available, HACS installation is:
 
-Copy `custom_components/moisture_loop/` into your Home Assistant
-`config/custom_components/` directory and restart.
+1. HACS → Integrations → ⋮ → Custom repositories.
+2. Add the public GitHub repository as category Integration.
+3. Install Moisture Loop and restart Home Assistant.
 
-## Configuration
+## Configure zones
 
-Everything is configured in the UI:
+1. Settings → Devices & services → Add integration → Moisture Loop.
+2. Create the single controller entry.
+3. On that entry, choose Add zone and select the name, sensor, actuator,
+   thresholds, pulse/soak timing, and safety limits.
 
-1. **Settings → Devices & services → Add integration → Moisture Loop.**
-   This creates the single controller entry.
-2. On the Moisture Loop entry, choose **Add zone** and complete the three
-   steps: identity (name, sensor, actuator), thresholds/timing, and safety
-   limits.
+Each native config subentry becomes one zone device. The configured sensor must
+produce a finite number from 0 through 100. A `switch` uses ON/OFF. A `valve`
+must support both open and close; position-only valves are unsupported.
+`opening`, `closing`, unknown, unavailable, and a nonzero reported position are
+never proof of OFF.
 
-Each zone appears as its own device with status, runtime, last-session,
-needs-water, watering, problem, enable, stop, evaluate, and clear-fault
-entities.
+| Setting | Default | Allowed range |
+|---|---:|---:|
+| Start threshold | 30% | 1–99; strictly below target |
+| Target threshold | 40% | 2–100; strictly above start |
+| Pulse duration | 5 min | 30 s–30 min |
+| Soak duration | 20 min | 1 min–4 h |
+| Maximum cycles | 4 | 1–20 |
+| Maximum session runtime | 30 min | pulse duration–4 h |
+| Maximum daily runtime | 60 min | pulse duration–12 h |
+| Minimum AUTO session interval | 6 h | 15 min–7 d |
+| Sensor report maximum age | 2 h | 5 min–24 h |
+| Actuator confirmation timeout | 30 s | 5 s–5 min |
+| Manual maximum duration | 30 min | 1 min–2 h |
 
-| Setting | Default | Range |
-|---|---|---|
-| Start threshold | 30 % | 1–99, strictly below target |
-| Target threshold | 40 % | 2–100, strictly above start |
-| Pulse duration | 5 min | 30 s – 30 min |
-| Soak duration | 20 min | 1 min – 4 h |
-| Max cycles per session | 4 | 1–20 |
-| Max session runtime | 30 min | pulse – 4 h |
-| Max daily runtime | 60 min | pulse – 12 h |
-| Min automatic session interval | 6 h | 15 min – 7 d |
-| Sensor report max age | 2 h | 5 min – 24 h |
-| Actuator confirm timeout | 30 s | 5 s – 5 min |
-| Manual max duration | 30 min | 1 min – 2 h |
+Defaults are conservative starting points, not agronomic advice. Calibrate for
+the soil, emitters, probe placement, and sensor cadence in the deployment.
 
-The defaults are safe starting points, **not agronomic advice**. Calibrate
-thresholds and timing from your own soil, emitters, probe placement, and
-sensor behaviour. There are no universal moisture percentages for crops.
+### Add and reconfigure behavior
 
-### Sensor requirements
+Zone creation uses Home Assistant's native subentry flow. An unchanged
+reconfigure is a no-op. A changed reconfigure safely quiesces an active old
+session before the new configuration is applied. Users do not need to manually
+reload after add, reconfigure, or delete; configuration-flow code does not own
+watering safety or reload semantics.
 
-Any `sensor` whose state is a finite number in `[0, 100]` works. Repeated
-*identical* readings still count: Moisture Loop listens to Home Assistant's
-`state_reported` events, so a sensor that reports the same value every few
-minutes keeps its data fresh. A sensor that only pushes on change and stays
-silent longer than the configured max age will stop automatic watering —
-that is deliberate. Prefer sensors that report at least a few times per
-freshness window.
+When the durable actuator is unchanged, its retained safety and irrigation
+history continue. When actuator A is replaced by actuator B, A's possible-flow
+evidence, blockers, accounting, faults, and acknowledgement remain independently
+owned by A. The logical zone's conservative daily budget and minimum interval
+continue onto B; B cannot clear or inherit A's actuator hazard.
 
-### Valves
+### Delete a zone
 
-`valve` entities must support both open and close commands; position-only
-valves are not supported. Transitional states (`opening`/`closing`) are
-never treated as proof of the requested state, and a reported nonzero
-position is conservatively treated as flowing.
+A zone can be deleted through Home Assistant's normal UI or API. Core removes
+the configuration subentry through its native path. From that visible removal,
+Moisture Loop rejects every new ON for the zone and safely terminates an active
+AUTO, MANUAL, or SOAKING session in the background. No manual reload is needed.
+
+The zone device and entities disappear, but runtime safety evidence may remain
+internally as a retained tombstone. This is deliberate:
+
+- unresolved actuator flow, blockers, accounting, faults, and Repairs survive;
+- deleting a zone never means unresolved physical-flow evidence was erased;
+- delete/re-add of the same durable actuator may reuse the same retained safety
+  lineage, daily runtime, minimum interval, and acknowledgement history;
+- a deleted-zone Repair remains available at entry level even without the old
+  zone device;
+- retired tombstones are not automatically purged in v0.1.
+
+## Entities
+
+Each active zone exposes status, current-day watering runtime, last-session and
+next-eligible sensors; watering, problem, and needs-water binary sensors; an
+enabled switch; and Stop, Evaluate now, and Clear fault buttons. `needs_water`
+is informational and never bypasses an AUTO guard. There is no manual-start
+button because a safe manual request requires an explicit duration.
 
 ## Actions
 
-All actions target one **zone device** and validate everything in the
-backend:
+All four actions require exactly one current Moisture Loop zone `device_id`.
+Targets are checked again in the backend. Deleted, unloaded, non-active,
+reconciling, failed, or otherwise unsafe runtimes are refused.
 
-| Action | Fields | Notes |
+| Action | Required data | Behavior |
 |---|---|---|
-| `moisture_loop.start_manual_watering` | `device_id`, `duration` (s) | Explicit, bounded manual run. Ignores sensor health but never actuator, configuration, integrity, or budget safety. |
-| `moisture_loop.stop_watering` | `device_id` | Cooperative stop; no-op when idle. |
-| `moisture_loop.evaluate_zone` | `device_id` | Runs a normal guarded evaluation; bypasses nothing. |
-| `moisture_loop.clear_fault` | `device_id` | Clears/acknowledges a fault only when its safety condition is resolved. |
+| `moisture_loop.start_manual_watering` | `device_id`, `duration` in seconds | Starts one explicit bounded run; may clamp or refuse it. |
+| `moisture_loop.stop_watering` | `device_id` | Cooperatively stops an active session; no-op when inactive. |
+| `moisture_loop.evaluate_zone` | `device_id` | Runs normal AUTO evaluation and bypasses no guard. |
+| `moisture_loop.clear_fault` | `device_id` | Clears only when that fault's safety condition permits it. |
 
-Example:
+Example matching `services.yaml`:
 
 ```yaml
-service: moisture_loop.start_manual_watering
+action: moisture_loop.start_manual_watering
 data:
-  device_id: abc123...   # the zone device
-  duration: 600
+  device_id: abc123...  # Moisture Loop zone device
+  duration: 600         # requested seconds
 ```
 
-Manual watering is permitted during sensor-only faults (that is its
-purpose) and refused for actuator, configuration, and integrity faults.
+MANUAL may ignore only `SENSOR_UNAVAILABLE`, `SENSOR_STALE`, and
+`SENSOR_INVALID`. Sensor changes do not stop the bounded run. It is refused for
+actuator unavailable/ON-timeout/OFF-timeout faults, invalid configuration,
+restored unsafe Store state, a disabled zone, an active session, an actuator
+not proven OFF, an occupied global water resource, reconciliation restrictions,
+an invalid duration, or an exhausted daily budget.
 
-## Faults and recovery
+## Repairs, diagnostics, and recovery
 
-| Fault | Blocks manual? | Clears |
-|---|---|---|
-| `sensor_unavailable` / `sensor_invalid` / `sensor_stale` | No | Automatically on a valid, fresh report |
-| `actuator_unavailable` / `actuator_on_timeout` | Yes | Automatically once the actuator is available and observed OFF |
-| `actuator_off_timeout` | Yes | Only by acknowledgement **after** OFF is observed (critical Repair) |
-| `configuration_invalid` | Yes | By reconfiguring the zone |
-| `restored_from_unsafe_state` | Yes | By acknowledgement after actuators are proven OFF; the detection day's budget stays exhausted |
+Repairs cover missing current sensors or actuators, unresolved tombstone
+actuators, durable identity conflicts, configuration reconciliation failure,
+runtime Store integrity loss, and unconfirmed OFF. The unconfirmed-OFF Repair
+is critical. Exact OFF evidence releases only that actuator's blocker and
+closes its accounting; acknowledgement remains separate and cannot clear a
+different retained record.
 
-## Events
+Download diagnostics from the Moisture Loop config entry. They include Store
+schema/run integrity, configuration-application state, active and retained
+safety records, durable identities, blockers, sessions/accounting, current
+observations, and recent transitions with identifiers redacted or shortened as
+appropriate.
 
-`moisture_loop_session_started`, `moisture_loop_session_finished`,
-`moisture_loop_fault_set`, and `moisture_loop_fault_cleared` fire on the
-event bus with the zone, device, session, mode, and (on finish) the reason,
-runtime, estimation metadata, cycles, and moisture before/after.
+Do not delete files from `.storage` and do not manually edit Store data. Restore
+the exact entity identity, prove the physical actuator OFF, reconfigure the zone,
+or use the offered Repair flow as instructed. If watering refuses to start,
+check sensor freshness, actuator OFF/availability, Repairs, daily budget,
+minimum interval, and external flow before trying again.
 
-## Diagnostics and troubleshooting
+The integration also emits `moisture_loop_session_started`,
+`moisture_loop_session_finished`, `moisture_loop_fault_set`, and
+`moisture_loop_fault_cleared` events.
 
-- Download diagnostics from the Moisture Loop entry: they include the
-  safety-store status, run integrity results, per-zone state and session
-  anchors, the resource-blocker set, and the last 50 transitions.
-- The `status` sensor's attributes show the live freshness deadline,
-  moisture classification, and any resource blockers.
-- Check the **Repairs** dashboard for missing entities, unproven-OFF
-  panics, and safety-history loss.
-- Watering that "refuses to start" is almost always a guard doing its job:
-  stale sensor data, an unproven-OFF actuator, an exhausted daily budget,
-  or the minimum session interval.
+## Known limitations and validation status
 
-## Privacy / local operation
+v0.1 intentionally has no weather/ET input, calendar scheduling, flow meter,
+leak measurement, tank interlock, shared-pump model beyond global serialization,
+multi-sensor/multi-actuator zone, stuck-sensor detection, adaptive learning, or
+unbounded manual watering.
 
-Moisture Loop is entirely local. It has **no cloud account, no telemetry,
-no API keys, and no outbound network access**, and it does not depend on
-the Recorder for any safety decision.
+Automated mocked-time implementation evidence is not physical deployment
+validation. The seven SPECIFICATION.md §46 / Slice 13 validations remain
+unstarted:
 
-## Known limitations (v0.1)
+1. Real Home Assistant UI/UX lifecycle validation.
+2. A physical valve state/availability/position matrix.
+3. A real entity-registry rename trial.
+4. Measured physical shutdown OFF timing.
+5. Approximately ten simultaneously dry zones in a deployment-scale exercise.
+6. Deployment sensor-cadence validation of the two-hour default.
+7. HACS/brand presentation and centralized `home-assistant/brands` submission.
 
-- One sensor and one actuator per zone; no weather/ET input; no flow
-  meters; no shared pump modelling beyond the global one-zone-at-a-time
-  rule. See the specification's non-goals for the full list.
-- On Home Assistant 2025.9.x, deleting a zone from the UI takes effect at
-  the next reload of the entry; reload the Moisture Loop entry (or restart)
-  after deleting a zone.
+Centralized brand submission, HACS default-store submission, and public release
+publication are not implied by the local icon or this repository metadata.
+
+## License
+
+This software is licensed under GNU GPL v3 only (`GPL-3.0-only`); see `LICENSE`.
+Distributed modifications and derivative works are subject to the GPL requirements.

@@ -61,13 +61,19 @@ class ScriptedValve:
         async def open_valve(call) -> None:
             self.on_calls += 1
             hass.states.async_set(
-                ACTUATOR, "open", {"supported_features": 3, "current_position": 100}
+                ACTUATOR,
+                "open",
+                {"supported_features": 3, "current_position": 100},
+                context=call.context,
             )
 
         async def close_valve(call) -> None:
             self.off_calls += 1
             hass.states.async_set(
-                ACTUATOR, "closed", {"supported_features": 3, "current_position": 0}
+                ACTUATOR,
+                "closed",
+                {"supported_features": 3, "current_position": 0},
+                context=call.context,
             )
 
         hass.services.async_register("valve", "open_valve", open_valve)

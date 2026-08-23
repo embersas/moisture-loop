@@ -264,7 +264,6 @@
     },
     "actuator_off_unconfirmed": {
       "title": "Water may still be flowing in {zone_name}",
-      "description": "Safety record {safety_record_id} could not prove actuator {entity_id} OFF after repeated commands. Check it physically. The exact-record blocker remains until OFF is proven; acknowledgement is separate.",
       "fix_flow": {
         "step": {
           "confirm": {
