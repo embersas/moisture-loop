@@ -1460,7 +1460,7 @@ Complete a distributable, documented HACS custom integration and run the full au
 
 ### Remaining work
 
-- Place the exact final repository state on an authorized public GitHub repository and obtain passing GitHub-hosted `home-assistant/actions/hassfest@master` and `hacs/action@main` results for that exact commit. No repository creation, mirror, push, or publication was authorized in Stage 8.
+- Place the exact final repository state on an authorized public GitHub repository and obtain passing GitHub-hosted `home-assistant/actions/hassfest@master` and `hacs/action@main` results for that exact commit. The later explicit commit/push authorization covered only the existing self-hosted `origin`; it did not authorize repository creation, a GitHub mirror, or publication.
 - Once hosting exists, make the manifest `documentation` and `issue_tracker` targets resolve at their declared GitHub locations; they currently return 404 because that repository does not exist publicly.
 - Release publication and any HACS default-store or centralized-brand submission remain separately authorized (§41/§46) and were not begun.
 
@@ -1488,7 +1488,7 @@ None.
 
 ### Blockers
 
-- The only remote is self-hosted `origin https://git.lukestanbury.com/luke/moisture-loop.git`; there is no GitHub remote, and public GitHub checks for the manifest repository path return 404. Local `HEAD` is `ee6df21f6ac07fd13e4d29a9329c5ee755b59338`, `origin/main` is `7cad715008888a542da1ee583e1be7a0f0bd35a4`, and the Stage 8 final state is an uncommitted working tree, so no exact-final-commit hosted result can exist.
+- The only remote is self-hosted `origin https://git.lukestanbury.com/luke/moisture-loop.git`; there is no GitHub remote, and public GitHub checks for the manifest repository path return 404. After the Stage 8 closeout, the user explicitly authorized commit/push: Stage 8 content commit `b2a9a8474e5d4ba219c87b4c1c5b64746901bb25` was pushed to self-hosted `origin/main`. This creates no GitHub-hosted result and does not satisfy either mandatory hosted gate.
 - Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 0`). The official HACS Action container reaches its mandatory token/repository preflight then stops with `No GitHub token found`; the action validates a GitHub repository rather than an offline directory. Local metadata/schema checks therefore are not represented as a hosted HACS pass.
 - Passing GitHub-hosted hassfest and HACS Action results for the exact final commit remain mandatory. Obtaining them requires an external repository/commit/workflow action outside this authorization.
 
@@ -2306,7 +2306,7 @@ PROGRESS.md updated:
 ### Repository hosting and external gate
 
 - `git remote -v`: only `origin https://git.lukestanbury.com/luke/moisture-loop.git` for fetch/push. No remote was altered. There is no GitHub remote. Public GitHub checks for `lukestanbury/moisture_loop` and `lukestanbury/moisture-loop` returned 404.
-- Audited baseline `HEAD` is `ee6df21f6ac07fd13e4d29a9329c5ee755b59338`; `origin/main` is `7cad715008888a542da1ee583e1be7a0f0bd35a4`; local branch was ahead by six before Stage 8, and the final Stage 8 state is an uncommitted working tree. Therefore no GitHub-hosted workflow result can match the exact final state.
+- Audited pre-Stage-8 `HEAD` was `ee6df21f6ac07fd13e4d29a9329c5ee755b59338`; the then-observed `origin/main` was `7cad715008888a542da1ee583e1be7a0f0bd35a4`. A later user message explicitly authorized commit/push to the existing remote, and Stage 8 content commit `b2a9a8474e5d4ba219c87b4c1c5b64746901bb25` was pushed successfully. There is still no GitHub commit or workflow result for this state.
 - Current official HACS guidance requires a public GitHub repository for a custom repository. Manifest documentation/issue URLs target the intended GitHub repository but currently return 404. Repository creation/mirroring/push, release publication, HACS submission, and brands submission were explicitly unauthorized and were not performed.
 
 ### Slice and authorization reconciliation
@@ -2315,4 +2315,10 @@ PROGRESS.md updated:
 - Slice 12 -> `[~]`: every local/current-HA/documentation gate passes, but exact-final-commit GitHub-hosted hassfest and HACS Action evidence is mandatory and unavailable; the declared GitHub documentation/issue targets also cannot resolve until hosting exists.
 - Slice 13 -> `[ ]`: all seven §46 real UI/UX, physical valve, real registry rename, physical shutdown timing, ten-zone scale, deployment cadence, and HACS/central-brand presentation validations remain unstarted.
 - Files changed in Stage 8: `.github/workflows/ci.yml`, `.gitignore`, `CLAUDE.md`, `DEVELOPMENT.md`, `README.md`, `custom_components/moisture_loop/strings.json`, `custom_components/moisture_loop/translations/en.json`, `hacs.json`, `requirements_test_ha_current.txt`, `tests/test_config_flow.py`, `tests/test_entities.py`, `tests/test_ha_contract.py`, and `PROGRESS.md`.
-- Current authorized slice: `None`. `SPECIFICATION.md` remained unchanged. Stage 8 is not complete; no external/publication action or Slice 13 work was taken.
+- Current authorized slice: `None`. `SPECIFICATION.md` remained unchanged. Stage 8 is not complete. The subsequently authorized commit/push to existing self-hosted `origin` occurred; no GitHub repository/mirror, release/publication/submission, or Slice 13 action was taken.
+
+### Post-closeout git handoff
+
+- After the Stage 8 response, the user explicitly authorized `commit & push`.
+- Commit `b2a9a8474e5d4ba219c87b4c1c5b64746901bb25` (`Complete spec.4 remediation stage 8 local gates`) was created and pushed from `main` to the existing self-hosted `origin/main`; remote verification returned the same hash.
+- This tracking correction is a follow-up commit on the same existing remote. It does not create GitHub-hosted hassfest/HACS evidence, alter remotes, publish a release, submit to HACS/brands, or begin Slice 13.
