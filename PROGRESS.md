@@ -2591,3 +2591,139 @@ PROGRESS.md updated:
   suites were not gratuitously rerun; documentation diff checks are the
   applicable closeout gate. `SPECIFICATION.md` remains unchanged.
 - Current authorization returned to `None`.
+
+## Session Log — 2026-08-24 (Slice 13 Phase A live execution)
+
+### Authorization and method
+
+- The user explicitly authorized SoilSync Slice 13 **Phase A only**, using
+  Claude Opus 5 with browser automation against the real Home Assistant
+  instance. Phase B physical water, releases, tags, version changes, HACS
+  default-store submission, Brands submission, and specification changes were
+  not authorized and did not occur.
+- Before any live mutation, `SPECIFICATION.md` §46 and the surrounding
+  normative sections, `PROGRESS.md`, `PROTOTYPE_VALIDATION.md`, `README.md`,
+  `DEVELOPMENT.md`, the config-flow/subentry/entity/action/slot-manager/
+  reconciliation/diagnostics/Repairs source, and Git state, remotes, and HEAD
+  were reviewed. Local `HEAD`, `github/main`, and the documented baseline all
+  matched `dcf9036165b02c443e5cc8a5eddf0741676ffe65`.
+- Browser automation was genuinely available this time and was used
+  throughout: local Chrome 151 driven over the DevTools protocol by
+  `playwright-core` in a dedicated profile. The operator performed one
+  interactive Home Assistant sign-in in that window. No long-lived access
+  token was requested, and no cookie, token, or credential was read, printed,
+  stored, or committed. The private LAN address is not recorded here.
+
+### Live Phase A result
+
+- **A1 HACS installation — PASS.** `https://github.com/embersas/soilsync` was
+  added as an Integration custom repository through the real HACS UI and
+  accepted immediately. The card showed name `SoilSync`, the repository
+  description, type `Integration`, author `embersas`, and a fully rendered
+  README. The download dialog stated `Commit dcf9036 will be downloaded` into
+  `/config/custom_components/soilsync` and presented the restart requirement,
+  which was also raised as a real `hacs / restart_required` Repair. Download
+  succeeded, Home Assistant restarted successfully in about 5 s, HACS status
+  moved to `installed`, the Repair cleared, and the system log contained zero
+  SoilSync entries. HACS artwork shows `icon not available` because the
+  centralized brands submission is deliberately not made; the local brand icon
+  renders correctly inside Home Assistant.
+- **A2 UI/UX lifecycle — PASS.** Integration search, config entry creation,
+  UI zone creation with a real translated validation error, selectors, zone
+  subentry, device attribution, all 11 entities per zone with correct naming,
+  availability and attribute presentation, enable/disable, thresholds,
+  pulse/soak, `evaluate_zone`, `start_manual_watering` against a synthetic
+  actuator, `stop_watering`, `clear_fault`, buttons, unchanged reconfigure as a
+  true no-op, changed reconfigure, diagnostics, reload, native websocket
+  deletion with tombstone retention, exact same-record re-add with identical
+  record/lineage/history, Repairs presentation, and restart survival were all
+  exercised live.
+- **A3 Entity Registry rename — PARTIAL.** A supported rename was performed in
+  the real Entity Registry UI and then restored. Durable identity held
+  completely: identical `safety_record_id`, `safety_lineage_id`, and
+  `zone_history_id`, unchanged Registry UUID, `registry_confirmed` status, and
+  no duplicate safety record, device, or entity. Two live findings were
+  produced and are recorded rather than patched.
+- **A4 ten simultaneously-dry zones — PASS.** §46 item 5 requires FIFO
+  latency/visibility at approximately ten dry zones and does not require
+  physical zones, so live synthetic entities were used. Ten zones with ten
+  unique synthetic sensors and ten unique synthetic actuators were driven dry
+  together. FIFO held exactly in arrival order, the maximum number of
+  simultaneously ON actuators across 359 two-second samples was 1 with zero
+  violations, every zone was granted exactly once with no starvation, each
+  pulse measured 30.00x s un-estimated, handoff was a consistent 30 s, all ten
+  zones correctly refused to advance out of `soaking` until a genuine post-soak
+  report arrived, and all ten completed as `target_reached`.
+- **A5 sensor cadence and freshness — PARTIAL.** SoilSync freshness derivation
+  was validated live against the one real physical MQTT soil-moisture sensor
+  paired with a synthetic actuator: a guarded AUTO evaluation opened a real
+  session, ran one 30.011 s measured pulse, and entered `soaking` with
+  `sensor_fresh_until_utc` exactly equal to the physical sensor own
+  `last_reported` plus the configured 7200 s. Freshness therefore comes from
+  report time, not scan time. The duration-dependent part remains partial: no
+  clean restart-free window longer than two hours was achieved and no new
+  unchanged re-report was captured, so the preserved 2026-08-23 direct MQTT
+  sample remains the only unchanged-report evidence.
+- **A6 HACS and integration presentation — PASS.** Post-install HACS grouping,
+  README, name, description, version `0.1.0`, repository and issue links,
+  Devices & services presentation, actions, diagnostics, and Repairs were all
+  inspected live. The stale-name audit is clean: no tracked source,
+  documentation, manifest, or translation file contains the old development
+  name, the only file that does is this historical `PROGRESS.md`, and the live
+  system shows zero matching entity IDs, friendly names, action names, or
+  diagnostics content.
+
+### Findings and specification review
+
+- Three live findings were produced. None was patched, and no production or
+  test code was changed in this run.
+- **F1:** a Home Assistant restart during an active session leaves the
+  record `integration_off_unconfirmed` blocker permanently set even after the
+  actuator is proven OFF, which refuses every grant integration-wide. Startup
+  recovery itself was correct: no pulse resumed, the actuator was driven OFF,
+  the session finalized as `restart_recovery` with conservative estimated
+  runtime, accounting closed, and all 11 zones kept exact identity. The blocker
+  survived an entry reload, `clear_fault`, `evaluate_zone`, and fresh external
+  terminal OFF evidence, while `external_flow` was correctly added and removed
+  independently. The result is fail-closed and safe but is a real availability
+  defect, and it lands between the two outcomes §25 describes and outside what
+  §11.4 step 5 states, so it is carried to specification review.
+- **F2:** an actuator Entity Registry rename is not tracked at runtime, because
+  `async_track_entity_registry_updated_event` is installed only by the moisture
+  adapter. The rename nevertheless changes the computed entry snapshot, so the
+  final ON gate fails `current_entry_snapshot_matches` and every session ends
+  immediately as `config_changed`, entry-wide including untouched zones, with
+  no fault, blocker, or Repair while the entry stays loaded.
+- **F3:** reloading while renamed puts the whole entry into `setup_retry` with
+  a reconciliation identity conflict and raises the `actuator_identity_conflict`
+  Repair. Raising an exact-record Repair and authorising no water matches §39
+  TB8 and the §46 item 3 Repair-and-reconfigure fallback; the entry-wide scope
+  and the reachability of the reconfigure remedy from `setup_retry` are what
+  require review.
+- Because §46 item 3 is explicitly an open prototype validation and because
+  resolving F1-F3 means choosing new Repair, blocker, or fault semantics rather
+  than applying an unambiguous spec.4 rule, all three are marked
+  `[?] Requires specification review`. No new semantics were invented.
+
+### Safety, cleanup, and closeout
+
+- **Zero physical irrigation ON or open commands were issued.** Every SoilSync
+  ON command targeted a synthetic Home Assistant `template` switch whose only
+  configured actions target a dedicated `input_boolean`. Non-physical scope was
+  proved twice: by reading each switch stored configuration back from the live
+  config store, and by a full 1700-entity before/after state diff showing only
+  the switch and its backing helper changed.
+- Physical irrigation hardware and unrelated irrigation automations and scripts
+  were untouched. The one real moisture sensor was read-only throughout.
+- The Registry rename was restored and verified. All temporary zones, the ten
+  scale zones, the SoilSync config entry, and the temporary synthetic helpers
+  were removed, so no test-only safety record, tombstone, blocker, fault, or
+  Repair remains. SoilSync intentionally remains installed through HACS.
+- Only `PROGRESS.md` and `PROTOTYPE_VALIDATION.md` changed, so the full
+  838-test environments were not gratuitously rerun; `git diff --check` and
+  documentation validation are the applicable closeout gates.
+  `SPECIFICATION.md` remains unchanged.
+- Phase A closes `[~] Partial`. Phase B remains `[ ] Not started`, specifically
+  B1 physical valve matrix and B2 active-flow shutdown OFF timing. Slice 13
+  remains `[~] Partial`.
+- Current authorization returned to `None`.
