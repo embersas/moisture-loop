@@ -41,7 +41,7 @@ def test_pure_modules_have_no_homeassistant_import() -> None:
     live audit of every pure-layer file.
     """
     pure_files = [
-        REPO_ROOT / "custom_components" / "moisture_loop" / name
+        REPO_ROOT / "custom_components" / "soilsync" / name
         for name in ("models.py", "const.py", "state_machine.py", "slot_manager.py")
     ]
     for file in pure_files:
@@ -71,7 +71,7 @@ def test_production_source_uses_no_prohibited_config_entry_internals() -> None:
         "async_prepare_delete",
         "websocket_intercept",
     }
-    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    integration = REPO_ROOT / "custom_components" / "soilsync"
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
@@ -90,7 +90,7 @@ def test_local_only_and_no_recorder_dependency() -> None:
         "urllib",
         "homeassistant.components.recorder",
     }
-    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    integration = REPO_ROOT / "custom_components" / "soilsync"
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         imports: set[str] = set()
@@ -108,7 +108,7 @@ def test_local_only_and_no_recorder_dependency() -> None:
 
 def test_schema1_compatibility_is_migration_only() -> None:
     """ZoneRecord/schema 1 cannot be current watering or reconciliation authority."""
-    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    integration = REPO_ROOT / "custom_components" / "soilsync"
     allowed = {"models.py", "storage.py"}
     for file in integration.glob("*.py"):
         text = file.read_text(encoding="utf-8")
@@ -140,7 +140,7 @@ def test_schema1_compatibility_is_migration_only() -> None:
 
 def test_blocker_ownership_is_safety_record_only() -> None:
     """I19: physical hazard calls never key blockers by zone/subentry ID."""
-    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    integration = REPO_ROOT / "custom_components" / "soilsync"
     calls = 0
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
@@ -159,7 +159,7 @@ def test_blocker_ownership_is_safety_record_only() -> None:
 
 def test_one_shared_off_implementation() -> None:
     """I16: flow exits converge on the controller's one OFF future."""
-    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    integration = REPO_ROOT / "custom_components" / "soilsync"
     callers: list[tuple[str, int]] = []
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))

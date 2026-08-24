@@ -1,4 +1,4 @@
-"""Schema-2 Moisture Loop sensors (§28.1)."""
+"""Schema-2 SoilSync sensors (§28.1)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import MoistureLoopZoneEntity
+from .entity import SoilSyncZoneEntity
 from .models import ControllerState
 from .runtime import EntryRuntime
 from .zone_controller import ZoneController
@@ -42,7 +42,7 @@ def _short(value: str | None) -> str | None:
     return value[:12] if value else None
 
 
-class ZoneStatusSensor(MoistureLoopZoneEntity, SensorEntity):
+class ZoneStatusSensor(SoilSyncZoneEntity, SensorEntity):
     """Five-state logical-zone view plus exact actuator safety context."""
 
     _attr_device_class = SensorDeviceClass.ENUM
@@ -153,7 +153,7 @@ class ZoneStatusSensor(MoistureLoopZoneEntity, SensorEntity):
         }
 
 
-class ZoneRuntimeTodaySensor(MoistureLoopZoneEntity, SensorEntity):
+class ZoneRuntimeTodaySensor(SoilSyncZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = "s"
 
@@ -167,7 +167,7 @@ class ZoneRuntimeTodaySensor(MoistureLoopZoneEntity, SensorEntity):
         return round(daily.runtime_s if daily else 0.0, 1)
 
 
-class ZoneLastSessionSensor(MoistureLoopZoneEntity, SensorEntity):
+class ZoneLastSessionSensor(SoilSyncZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
@@ -202,7 +202,7 @@ class ZoneLastSessionSensor(MoistureLoopZoneEntity, SensorEntity):
         }
 
 
-class ZoneNextEligibleSensor(MoistureLoopZoneEntity, SensorEntity):
+class ZoneNextEligibleSensor(SoilSyncZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:

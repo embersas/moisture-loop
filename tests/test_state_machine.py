@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from custom_components.moisture_loop.models import (
+from custom_components.soilsync.models import (
     ActuatorAssessment,
     ActuatorBecameUnavailable,
     ActuatorFinding,
@@ -78,7 +78,7 @@ from custom_components.moisture_loop.models import (
     WatchdogToken,
     ZoneConfig,
 )
-from custom_components.moisture_loop.state_machine import decide
+from custom_components.soilsync.state_machine import decide
 
 NOW = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
 SEC = timedelta(seconds=1)
@@ -594,7 +594,7 @@ class TestTransitionTable:
         expected = {f"T{i}" for i in range(1, 60)}
         assert set(rows) == expected
         implementation = Path(__file__).resolve().parents[1] / (
-            "custom_components/moisture_loop/state_machine.py"
+            "custom_components/soilsync/state_machine.py"
         )
         tree = ast.parse(implementation.read_text(encoding="utf-8"))
         implementation_ids = {

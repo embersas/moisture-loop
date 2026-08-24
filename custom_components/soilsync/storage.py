@@ -1,4 +1,4 @@
-"""Runtime safety Store for Moisture Loop (SPECIFICATION.md §23).
+"""Runtime safety Store for SoilSync (SPECIFICATION.md §23).
 
 Owns the §23.5 initialization/integrity decision matrix, atomic revisioned
 persistence with fresh-Store read-back verification (§23.4), the run-ID

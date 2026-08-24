@@ -4,7 +4,7 @@ This file provides repository guidance to Claude Code and other coding agents.
 
 ## Project state
 
-Moisture Loop v0.1 is implemented under `custom_components/moisture_loop/`.
+SoilSync v0.1 is implemented under `custom_components/soilsync/`.
 `SPECIFICATION.md` version `0.1.0-spec.4` is the authoritative behavioural and
 safety contract. Preserve the Stage 7 traceability evidence: 134 normative
 behavioural IDs, invariants I1-I37, and transitions T1-T59.

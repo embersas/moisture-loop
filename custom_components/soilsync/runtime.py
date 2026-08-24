@@ -129,7 +129,7 @@ PLATFORMS = ["binary_sensor", "button", "sensor", "switch"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up the single Moisture Loop controller entry."""
+    """Set up the single SoilSync controller entry."""
     runtime = EntryRuntime(hass, entry)
     await runtime.async_initialize()
     entry.runtime_data = runtime

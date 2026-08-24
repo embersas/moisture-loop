@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from custom_components.moisture_loop.models import (
+from custom_components.soilsync.models import (
     AccountingContribution,
     ActuatorIdentity,
     AppliedConfigurationShadow,
@@ -39,7 +39,7 @@ from custom_components.moisture_loop.models import (
     schema1_store_data_to_dict,
     store_data_to_dict,
 )
-from custom_components.moisture_loop.storage import (
+from custom_components.soilsync.storage import (
     SafetyStore,
     SetupClassification,
     StoreNotLoadedError,
@@ -48,7 +48,7 @@ from custom_components.moisture_loop.storage import (
 
 ENTRY_ID = "entry-1"
 GENERATION = "11111111-2222-3333-4444-555555555555"
-KEY = f"moisture_loop.{ENTRY_ID}"
+KEY = f"soilsync.{ENTRY_ID}"
 NOW = datetime(2026, 8, 22, 12, tzinfo=UTC)
 
 
@@ -401,7 +401,7 @@ class TestVerifiedMigration:
             async def async_load(self):
                 raise OSError("unreadable")
 
-        import custom_components.moisture_loop.storage as storage_module
+        import custom_components.soilsync.storage as storage_module
 
         monkeypatch.setattr(storage_module, "_new_store", lambda *_args: BrokenReadback())
         with pytest.raises(StoreWriteVerificationError, match="read-back load failed"):
@@ -432,7 +432,7 @@ class TestVerifiedWritesAndRuns:
         store = make_store(hass)
         assert store._store._atomic_writes is True
         await store.async_first_initialize()
-        from custom_components.moisture_loop.storage import _new_store
+        from custom_components.soilsync.storage import _new_store
 
         assert _new_store(hass, KEY)._atomic_writes is True
 
@@ -519,7 +519,7 @@ class TestVerifiedWritesAndRuns:
                 "data": altered,
             }
 
-        from custom_components.moisture_loop.models import store_data_from_dict
+        from custom_components.soilsync.models import store_data_from_dict
 
         store._store.async_save = tamper  # type: ignore[method-assign]
         with pytest.raises(StoreWriteVerificationError, match="payload mismatch"):

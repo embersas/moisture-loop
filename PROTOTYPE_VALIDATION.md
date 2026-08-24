@@ -1,4 +1,4 @@
-# Moisture Loop prototype-validation evidence
+# SoilSync prototype-validation evidence
 
 This document is the development evidence ledger for the seven real-world
 prototype validations required by `SPECIFICATION.md` §46. Automated tests,
@@ -25,8 +25,8 @@ where they are needed for before/after comparison.
 |---|---|
 | Validation date | 2026-08-23 (Australia/Brisbane) |
 | Home Assistant | Core 2026.7.2, Home Assistant Container on Docker with host networking |
-| Moisture Loop candidate | 0.1.0 at `43f24b12fc162412b534851b9c1b3762ca57cd98` |
-| Candidate installation at baseline | Not installed; no duplicate `custom_components/moisture_loop` directory and no config entry |
+| SoilSync candidate | 0.1.0 at `43f24b12fc162412b534851b9c1b3762ca57cd98`; at the time, the integration still used the development name Moisture Loop and domain `moisture_loop` |
+| Candidate installation at baseline | Not installed; no development-era `custom_components/moisture_loop` directory and no config entry |
 | HACS | 2.0.5; the operator confirmed the real Custom repositories dialog is available |
 | Backup | A recent full Home Assistant backup predating the prototype work was confirmed |
 | Access | Authenticated operator UI plus legitimate SSH/Docker host control; no credential is recorded here |
@@ -42,9 +42,9 @@ was issued and no physical-flow checkpoint has yet been passed.
 | Field | Record |
 |---|---|
 | Date/time | Began 2026-08-23 |
-| HA / candidate | HA 2026.7.2; Moisture Loop 0.1.0 candidate SHA above |
+| HA / candidate | HA 2026.7.2; SoilSync 0.1.0 candidate SHA above (then still named Moisture Loop) |
 | Entities/hardware | None created yet |
-| Preconditions | Real HA frontend reachable; HACS 2.0.5 available; no pre-existing Moisture Loop installation |
+| Preconditions | Real HA frontend reachable; HACS 2.0.5 available; no pre-existing SoilSync installation (the candidate was then named Moisture Loop) |
 | Procedure | Operator opened HACS Integrations and its Custom repositories dialog in the authenticated real UI. The operator was then asked to add the public repository as category Integration and report the visible result. No controllable in-app or Chrome browser session was available to Codex. |
 | Observed result | HACS version and Custom repositories availability were confirmed by the operator. The repository-add result was not provided before run closeout, and read-only live inventory confirmed the repository/component remained absent. No API or harness observation is substituted for the remaining UI lifecycle. |
 | Evidence references | Operator observation; live component/config-entry inventory |
@@ -124,7 +124,7 @@ reported separately and will not be claimed as valve-position evidence.
 | Field | Record |
 |---|---|
 | Date/time | Historical window and live observation begun 2026-08-23 |
-| HA / candidate | HA 2026.7.2; Moisture Loop candidate default `sensor_max_age` is two hours |
+| HA / candidate | HA 2026.7.2; SoilSync candidate default `sensor_max_age` is two hours |
 | Entities/hardware | Deployed Zigbee/MQTT soil-moisture sensor; entity identifier generalized |
 | Preconditions | Sensor available with numeric percentage state; runtime remains independent of Recorder |
 | Procedure | Queried seven days of live Recorder history for changed-state/availability evidence, then subscribed read-only to the sensor's existing Zigbee2MQTT report topic to observe unchanged reports that Recorder history cannot prove. The direct observer was stopped at closeout because the remaining UI checkpoint was not completed. |
@@ -148,7 +148,7 @@ default is still required before declaring the item complete.
 | Date/time | Began 2026-08-23 |
 | HA / candidate | HA 2026.7.2; HACS 2.0.5; candidate SHA above |
 | Entities/hardware | Real HACS frontend and public repository |
-| Preconditions | No pre-existing Moisture Loop directory/config entry; custom repositories supported |
+| Preconditions | No pre-existing SoilSync installation under its then-current development name/domain; custom repositories supported |
 | Procedure | Operator opened the real HACS Custom repositories dialog and was asked to add the public repository as category Integration. Codex had no controllable browser session. |
 | Observed result | Custom-repository capability is confirmed. At closeout, read-only live HACS storage still did not contain the repository and the component directory was absent; card presentation, README/icon/version, download/install/update, restart, and post-restart discovery were therefore not observed. |
 | Evidence references | Operator UI observation; read-only HACS/component inventory |

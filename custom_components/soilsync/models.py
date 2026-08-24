@@ -1,4 +1,4 @@
-"""Pure domain models for Moisture Loop.
+"""Pure domain models for SoilSync.
 
 Home Assistant-independent vocabulary and data structures implementing
 SPECIFICATION.md §§6, 9, 12, 18.2, 19, 20, 23.2 and 26. This module must not

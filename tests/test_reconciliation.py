@@ -16,13 +16,13 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.moisture_loop import EntryRuntime
-from custom_components.moisture_loop.const import (
+from custom_components.soilsync import EntryRuntime
+from custom_components.soilsync.const import (
     CONF_RUNTIME_STORE_GENERATION_ID,
     CONF_RUNTIME_STORE_INITIALIZED,
     DOMAIN,
 )
-from custom_components.moisture_loop.models import (
+from custom_components.soilsync.models import (
     AppliedEntityIdentity,
     BlockerReason,
     CompletionReason,
@@ -32,7 +32,7 @@ from custom_components.moisture_loop.models import (
     ZoneConfig,
     ZoneDailyRuntime,
 )
-from custom_components.moisture_loop.reconciliation import (
+from custom_components.soilsync.reconciliation import (
     ConfigurationReconciliationCoordinator,
     ImmutableZoneSnapshot,
     ReconciliationError,
@@ -40,13 +40,13 @@ from custom_components.moisture_loop.reconciliation import (
     normalized_zone_fingerprint,
     stable_batch_requires_reload,
 )
-from custom_components.moisture_loop.repairs import (
+from custom_components.soilsync.repairs import (
     ISSUE_IDENTITY_CONFLICT,
     ISSUE_OFF_UNCONFIRMED,
     ISSUE_RECONCILIATION_FAILED,
     record_issue_id,
 )
-from custom_components.moisture_loop.slot_manager import SlotManager
+from custom_components.soilsync.slot_manager import SlotManager
 
 GEN = "11111111-2222-3333-4444-555555555555"
 SENSOR = "sensor.stage3_moisture"
@@ -399,7 +399,7 @@ async def runtime_env(hass, hass_storage, freezer):
     hass.services.async_register("switch", "turn_off", turn_off)
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="Moisture Loop",
+        title="SoilSync",
         data={
             CONF_RUNTIME_STORE_GENERATION_ID: GEN,
             CONF_RUNTIME_STORE_INITIALIZED: False,

@@ -1,4 +1,4 @@
-"""Moisture Loop enabled switch (SPECIFICATION.md §28.3)."""
+"""SoilSync enabled switch (SPECIFICATION.md §28.3)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import MoistureLoopZoneEntity
+from .entity import SoilSyncZoneEntity
 from .runtime import EntryRuntime
 from .zone_controller import ZoneController
 
@@ -27,7 +27,7 @@ async def async_setup_entry(
         )
 
 
-class ZoneEnabledSwitch(MoistureLoopZoneEntity, SwitchEntity):
+class ZoneEnabledSwitch(SoilSyncZoneEntity, SwitchEntity):
     """Runtime enable/disable; Disable terminates an active session (I20)."""
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:

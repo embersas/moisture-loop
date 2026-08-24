@@ -1,4 +1,4 @@
-"""Moisture Loop control buttons (SPECIFICATION.md §28.3).
+"""SoilSync control buttons (SPECIFICATION.md §28.3).
 
 There is deliberately no manual-start button: a mandatory duration cannot
 be safely supplied by a button press (§28.3).
@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import MoistureLoopZoneEntity
+from .entity import SoilSyncZoneEntity
 from .runtime import EntryRuntime
 from .zone_controller import ZoneController
 
@@ -33,7 +33,7 @@ async def async_setup_entry(
         )
 
 
-class ZoneStopButton(MoistureLoopZoneEntity, ButtonEntity):
+class ZoneStopButton(SoilSyncZoneEntity, ButtonEntity):
     """Cooperative Stop (§28.3); a no-op in inactive states."""
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
@@ -48,7 +48,7 @@ class ZoneStopButton(MoistureLoopZoneEntity, ButtonEntity):
         await self._controller.async_stop_watering()
 
 
-class ZoneEvaluateButton(MoistureLoopZoneEntity, ButtonEntity):
+class ZoneEvaluateButton(SoilSyncZoneEntity, ButtonEntity):
     """Normal guarded AUTO evaluation (§28.3); bypasses nothing."""
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
@@ -63,7 +63,7 @@ class ZoneEvaluateButton(MoistureLoopZoneEntity, ButtonEntity):
         await self._controller.async_evaluate()
 
 
-class ZoneClearFaultButton(MoistureLoopZoneEntity, ButtonEntity):
+class ZoneClearFaultButton(SoilSyncZoneEntity, ButtonEntity):
     """Fault acknowledgement through the validated path (§26.1, §28.3)."""
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:

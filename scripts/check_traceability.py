@@ -89,7 +89,7 @@ def show(identifier: str, descriptions: dict[str, str]) -> None:
         return
     if identifier in TRANSITION_EVIDENCE:
         item = TRANSITION_EVIDENCE[identifier]
-        print(f"{identifier}: custom_components/moisture_loop/state_machine.py")
+        print(f"{identifier}: custom_components/soilsync/state_machine.py")
         print(f"  [{item.environment}] {item.node}")
         return
     raise SystemExit(f"unknown traceability identifier: {identifier}")

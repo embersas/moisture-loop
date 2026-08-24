@@ -2,12 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "Moisture Loop",
-        "description": "Create the Moisture Loop controller. Add irrigation zones afterwards with 'Add zone'."
+        "title": "SoilSync",
+        "description": "Create the SoilSync controller. Add irrigation zones afterwards with 'Add zone'."
       }
     },
     "abort": {
-      "single_instance_allowed": "Only one Moisture Loop controller is supported."
+      "single_instance_allowed": "Only one SoilSync controller is supported."
     }
   },
   "config_subentries": {
@@ -149,7 +149,7 @@
       "fields": {
         "device_id": {
           "name": "Zone",
-          "description": "The Moisture Loop zone device."
+          "description": "The SoilSync zone device."
         },
         "duration": {
           "name": "Duration",
@@ -163,7 +163,7 @@
       "fields": {
         "device_id": {
           "name": "Zone",
-          "description": "The Moisture Loop zone device."
+          "description": "The SoilSync zone device."
         }
       }
     },
@@ -173,7 +173,7 @@
       "fields": {
         "device_id": {
           "name": "Zone",
-          "description": "The Moisture Loop zone device."
+          "description": "The SoilSync zone device."
         }
       }
     },
@@ -183,7 +183,7 @@
       "fields": {
         "device_id": {
           "name": "Zone",
-          "description": "The Moisture Loop zone device."
+          "description": "The SoilSync zone device."
         }
       }
     }
@@ -193,13 +193,13 @@
       "message": "No device with this ID exists."
     },
     "not_a_zone_device": {
-      "message": "The selected device is not a Moisture Loop zone."
+      "message": "The selected device is not a SoilSync zone."
     },
     "zone_deleted": {
       "message": "This zone has been deleted."
     },
     "entry_not_loaded": {
-      "message": "The Moisture Loop controller is not loaded."
+      "message": "The SoilSync controller is not loaded."
     },
     "zone_not_ready": {
       "message": "The zone runtime is not ready."
@@ -259,7 +259,7 @@
       "description": "Safety record {safety_record_id} has conflicting durable actuator identity evidence for {entity_id} (Registry ID {registry_entry_id}). Reconfigure or restore the original entity identity; a replacement actuator cannot inherit this record's hazard. Details: {detail}"
     },
     "configuration_reconciliation_failed": {
-      "title": "Moisture Loop configuration reconciliation failed",
+      "title": "SoilSync configuration reconciliation failed",
       "description": "Entry {entry_id} could not safely apply configuration generation {observed_generation}; the last applied generation is {applied_generation}. Watering admission remains closed. Details: {error}"
     },
     "actuator_off_unconfirmed": {
@@ -272,7 +272,7 @@
           }
         },
         "error": {
-          "record_entry_not_loaded": "The owning Moisture Loop entry is not loaded.",
+          "record_entry_not_loaded": "The owning SoilSync entry is not loaded.",
           "record_not_found": "The exact retained safety record is missing or has been superseded.",
           "record_fault_changed": "The exact record no longer has the acknowledgement fault referenced by this Repair.",
           "record_fault_not_acknowledgeable": "This fault cannot be acknowledged by this flow.",
@@ -283,7 +283,7 @@
       }
     },
     "runtime_store_integrity_lost": {
-      "title": "Moisture Loop safety history lost",
+      "title": "SoilSync safety history lost",
       "description": "The runtime safety store is missing, corrupt, or does not match this installation. All automatic and manual watering is blocked, today's budget is treated as exhausted, and acknowledgement is required after every actuator is proven OFF."
     }
   }

@@ -1,4 +1,4 @@
-# Moisture Loop Implementation Progress
+# SoilSync Implementation Progress
 
 This document tracks implementation work against the approved `SPECIFICATION.md` version `0.1.0-spec.4`, whose architectural-review verdict is **READY WITH PROTOTYPE VALIDATIONS**.
 
@@ -6,7 +6,8 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized slice: `None`
+- Current authorized work: `SoilSync canonical pre-release rename`; Slice 13 is paused and remains `[~] Partial`.
+- Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository target `https://github.com/embersas/soilsync`.
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch on the mandatory suite. Public SHA 43f24b12fc162412b534851b9c1b3762ca57cd98 passed all six GitHub-hosted jobs.`
@@ -17,6 +18,8 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial because the required operator UI sequence did not progress past opening HACS Custom repositories, all identified irrigation actuators were unavailable, and the mandatory physical-water checkpoint was never reached. No prototype absence is recorded as a pass.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
+
+> **Development-name history:** Before the 2026-08-24 canonical rename, SoilSync was developed as **Moisture Loop** with domain/package `moisture_loop` and repository slug `moisture-loop`. Occurrences of those names in dated session logs, old commands, old file lists, old URLs, and the first partial prototype observations below are retained only as historical evidence. They are not current installation, domain, package, service, event, Store, CI, or repository instructions.
 
 ## Status Legend
 
@@ -1583,7 +1586,7 @@ The exact current §46 validation list is:
 - Install the public candidate through the real HACS custom-repository UI and complete the full §46 native UI lifecycle with screenshots/observations.
 - Restore availability of a positively identified safe physical valve, confirm manual shutoff and interference controls, then pass the explicit operator water checkpoint before the valve matrix or shutdown test.
 - Perform and reverse a supported real Entity Registry rename after a prototype zone exists, recording Registry identity, safety-record/lineage/history continuity, and cleanup.
-- Run the real container shutdown while Moisture Loop owns safe physical flow and record T0-T4 plus restart/no-resume evidence.
+- Run the real container shutdown while SoilSync owns safe physical flow and record T0-T4 plus restart/no-resume evidence.
 - Create approximately ten isolated live-HA synthetic sensor/actuator pairs and zones, run the FIFO/slot/fairness exercise, and remove them.
 - Observe the deployed sensor continuously for longer than the two-hour default, retaining report-burst/unchanged-report evidence, before closing the cadence conclusion.
 - Complete real HACS card/README/icon/version/download/install/restart presentation validation. Centralized Brands and HACS default-store submissions remain separately unauthorized.
@@ -1600,7 +1603,7 @@ The exact current §46 validation list is:
 
 - The physical valve candidate's implementation reports no position support; a future physical result cannot be claimed as position evidence. §46's template cases and any unavailable-hardware limitation must be reported separately.
 - Real Docker host control is available, but it is not treated as shutdown evidence without the actual active-flow shutdown test.
-- Recorder history is observational cadence evidence only and remains no Moisture Loop runtime safety dependency.
+- Recorder history is observational cadence evidence only and remains no SoilSync runtime safety dependency.
 - No successful single hardware sample would justify weakening blockers, the final ON fence, durable identity, OFF proof, Store persistence, or conservative accounting.
 
 ### Deviations from specification
@@ -2408,3 +2411,30 @@ PROGRESS.md updated:
 - No temporary live helper/zone, Registry rename, automation disable, shutdown, or restart existed to revert. The read-only cadence observer was stopped and its exact temporary log removed. HA remained in normal operation with no test-only Moisture Loop blocker/fault.
 - No HACS default-store submission, Brands submission, GitHub Release, version bump, release tag, or specification edit occurred.
 - Slice 13 remains `[~]` because the exact §46 completion rule requires all seven live/physical items. Current authorized slice returned to `None`.
+
+## Session Log — 2026-08-24 (SoilSync canonical pre-release rename)
+
+### Authorization, baseline, and collision checks
+
+- The user selected the final product identity **SoilSync**, Home Assistant domain `soilsync`, package `custom_components/soilsync/`, and public repository `embersas/soilsync`. This is a pre-release canonical rename only; Slice 13 is paused and remains `[~] Partial`.
+- The requested pre-rename SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` was verified as the immediate parent of the actual starting `main` SHA `bbfeee2e18bfa478c79bc41faa7555f7933c9ec6`. The latter is the normal forward commit that preserves the first partial Slice 13 observations in `PROTOTYPE_VALIDATION.md` and `PROGRESS.md`; local `main`, self-hosted `origin/main`, and `github/main` all matched it before this rename.
+- `soilsync` matches Home Assistant's integration-domain syntax. No local `custom_components/soilsync/` existed before the rename, GitHub had no `embersas/soilsync` repository, and current Home Assistant Core had neither a `homeassistant/components/soilsync` path nor an exact `soilsync` domain result. No technical collision was found.
+- The pre-edit tracked-file inventory found 103 exact `Moisture Loop`, 293 exact `moisture_loop`, and 22 exact `moisture-loop` occurrences across 47 files; uppercase and all-lowercase display-name variants were absent. The inventory covered source, tests, metadata, CI, traceability tooling, current documentation, specification, progress, and prototype evidence before transformation.
+
+### Canonical source and documentation rename
+
+- Git moved the sole integration directory from `custom_components/moisture_loop/` to `custom_components/soilsync/`; no legacy alias package or dual-domain registration was retained. All active imports, patch targets, constants, config-flow registration, task/logger namespaces, domain-derived device identifiers, Repair ownership, diagnostics module references, services, and events now use `soilsync`.
+- The integration-owned Store key changed mechanically from `moisture_loop.<entry_id>` to `soilsync.<entry_id>` through the existing `f"{DOMAIN}.{entry_id}"` construction. Store schema remains 2 and its schema, serialization, durable UUID, SafetyRecord, ZoneHistory, blocker, accounting, tombstone, restart, shutdown, delete, and reconfigure semantics are unchanged. No deployed-domain migration or compatibility shim was added because the integration is unreleased and was not installed on the prototype.
+- Manifest/HACS metadata, strings, English translations, icons metadata, README, development instructions, source audits, coverage targets, and all four action examples now use SoilSync/`soilsync` and `https://github.com/embersas/soilsync`. Version remains `0.1.0`; the Home Assistant floor remains `2025.9.0`; the supported-current evidence pin remains `2026.8.3`.
+- `SPECIFICATION.md` remains `0.1.0-spec.4`. Its edits are strictly the authorized canonical product/domain/path/service/event/repository nomenclature replacement; SR1-SR13, PI1-PI27, MF1-MF5, AC1-AC4, ER1-ER12, LC1-LC13, ND1-ND17, TB1-TB12, AR1-AR17, RC1-RC12, HA1-HA2, I1-I37, T1-T59, thresholds, defaults, states, persistence, lifecycle, and safety semantics received zero behavioural amendment.
+- A mechanical comparison of the complete active source/test/script/CI tree before and after rename, with only the old/new product and namespace tokens normalized, found zero mismatches. The PNG brand asset has the identical Git blob. This proves the five-state model, AUTO hysteresis, pulse/soak/recheck, freshness watchdog, manual semantics, blockers/serialization/final ON fence, durable identities/history, deletion/tombstones/reconfigure, restart/shutdown safety, accounting, Repairs, and diagnostics logic were not changed under the rename.
+- The post-rename active-scope audit has zero occurrences of the development names. Current tracked historical occurrences are intentionally confined to this file and `PROTOTYPE_VALIDATION.md`: dated commands, old paths/URLs, old Store/domain evidence, publication history, and the true observation that the candidate then called Moisture Loop was not installed. They are covered by the explicit development-name history notice and are not current instructions.
+
+### Local rename validation
+
+- Pure/no-HA Python 3.14.5: **436 passed, 0 failed, 0 skipped, 0 errors**; Home Assistant absent; `state_machine.py` 100.00% branch.
+- Mandatory HA 2025.9.0/Python 3.13.13: direct HA contract check **12/12**; full suite **838 passed, 0 failed, 1 documented pure-boundary skip, 0 errors**; 92.74% overall branch and `state_machine.py` 100.00% branch.
+- Supported-current HA 2026.8.3/Python 3.14.5: direct HA contract check **12/12**; Linux full suite **838 passed, 0 failed, 1 documented pure-boundary skip, 0 errors**; 92.63% overall branch and `state_machine.py` 100.00% branch. The established Stage 8 exact pin was deliberately preserved.
+- Executed traceability remains **134/134 normative IDs, 37/37 invariants, and 59/59 transitions** with no new or missing ID and only the established HA-environment pure-boundary skip.
+- Ruff check, Ruff format check, `git diff --check`, JSON/YAML validation, strings/translation and service/icon parity, manifest domain/path/version checks, and the official local hassfest container all pass. Hassfest reports one integration and zero invalid integrations. HACS-compatible local metadata/preflight is canonical; the mandatory official HACS result remains the GitHub-hosted exact-SHA job.
+- The public repository rename, remotes, forward push, exact-final-SHA six-job GitHub Actions run, public rendering checks, and final authorization closeout are intentionally recorded after those operations. No tag, GitHub Release, HACS default submission, Brands submission, or Slice 13 prototype action is part of this rename.

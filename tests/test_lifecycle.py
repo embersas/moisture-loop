@@ -24,13 +24,13 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.moisture_loop import EntryRuntime, zone_config_from_subentry
-from custom_components.moisture_loop.const import (
+from custom_components.soilsync import EntryRuntime, zone_config_from_subentry
+from custom_components.soilsync.const import (
     CONF_RUNTIME_STORE_GENERATION_ID,
     CONF_RUNTIME_STORE_INITIALIZED,
     DOMAIN,
 )
-from custom_components.moisture_loop.models import (
+from custom_components.soilsync.models import (
     ActuatorIdentity,
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
@@ -58,8 +58,8 @@ from custom_components.moisture_loop.models import (
     config_fingerprint,
     store_data_to_dict,
 )
-from custom_components.moisture_loop.reconciliation import normalized_zone_fingerprint
-from custom_components.moisture_loop.storage import (
+from custom_components.soilsync.reconciliation import normalized_zone_fingerprint
+from custom_components.soilsync.storage import (
     SafetyStore,
     SetupClassification,
     StoreWriteVerificationError,
@@ -117,7 +117,7 @@ class ScriptedSwitch:
 def make_entry(hass, initialized: bool = True) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="Moisture Loop",
+        title="SoilSync",
         data={
             CONF_RUNTIME_STORE_GENERATION_ID: GEN,
             CONF_RUNTIME_STORE_INITIALIZED: initialized,
@@ -974,7 +974,7 @@ class TestStartupResourceSafety:
     async def test_setup_entry_and_unload_via_module_api(self, env) -> None:
         from unittest.mock import AsyncMock, patch
 
-        from custom_components.moisture_loop import async_setup_entry, async_unload_entry
+        from custom_components.soilsync import async_setup_entry, async_unload_entry
 
         entry = make_entry(env.hass, initialized=False)
         # Platform forwarding needs HA's own setup machinery; the flow tests
@@ -1000,7 +1000,7 @@ class TestRuntimeEdges:
     """Remaining deterministic lifecycle edges."""
 
     async def test_async_setup_returns_true(self, env) -> None:
-        from custom_components.moisture_loop import async_setup
+        from custom_components.soilsync import async_setup
 
         assert await async_setup(env.hass, {}) is True
 

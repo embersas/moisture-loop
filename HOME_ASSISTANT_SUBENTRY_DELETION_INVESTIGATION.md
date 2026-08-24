@@ -123,7 +123,7 @@ The normative deletion and persistence lifecycle must change; this warrants `0.1
 | Can the deleted ID be detected? | Yes: runtime controller IDs minus current `entry.subentries` IDs. |
 | Is the removed `ConfigSubentry` passed to the listener? | No. |
 | Can the controller survive? | Yes. `entry.runtime_data`, controller tasks, actuator listeners, and the separately-owned source actuator are not removed by subentry registry cleanup. |
-| Can it OFF safely afterward? | Yes, if it retained immutable actuator configuration and its lifetime is not tied to the removed Moisture Loop entities/device. |
+| Can it OFF safely afterward? | Yes, if it retained immutable actuator configuration and its lifetime is not tied to the removed SoilSync entities/device. |
 
 Core's own deletion test confirms that the listener sees an empty subentry mapping, the entity is removed, and integration `async_remove_entry` is not called: [`tests/test_config_entries.py:602-655`](https://github.com/home-assistant/core/blob/2025.9.0/tests/test_config_entries.py#L602-L655).
 
@@ -134,7 +134,7 @@ Tests also confirm that add, update, and removal all notify the same update list
 - `ConfigSubentryFlowManager.async_finish_flow` calls `async_add_subentry`; add notifies listeners but does not reload: [`config_entries.py:3315-3350`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L3315-L3350).
 - `async_update_subentry` mutates the existing `ConfigSubentry` object in place and then notifies. Runtime must retain an immutable normalized shadow/fingerprint rather than a reference to the Core object: [`config_entries.py:2488-2533`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L2488-L2533).
 - `ConfigSubentryFlow.async_update_and_abort` updates without reload: [`config_entries.py:3417-3443`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L3417-L3443).
-- `async_update_reload_and_abort` updates first, then raises `ValueError` if an update listener exists. It therefore cannot remain once Moisture Loop adds a listener: [`config_entries.py:3446-3479`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L3446-L3479).
+- `async_update_reload_and_abort` updates first, then raises `ValueError` if an update listener exists. It therefore cannot remain once SoilSync adds a listener: [`config_entries.py:3446-3479`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L3446-L3479).
 - `async_schedule_reload` merely creates an `async_reload` task; reload takes the entry setup lock, unloads, and sets up again. Native subentry deletion never calls it: [`config_entries.py:2238-2282`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py#L2238-L2282).
 
 ## Supported lifecycle hooks available in 2025.9.0
@@ -184,15 +184,15 @@ Specification §24.3 requires safe preparation before deletion. Home Assistant's
 
 Current implementation evidence:
 
-- `custom_components/moisture_loop/config_flow.py:257` manually schedules add reloads and explicitly excludes an update listener.
-- `custom_components/moisture_loop/config_flow.py:320` pre-prepares reconfiguration, then uses `async_update_reload_and_abort`.
-- `custom_components/moisture_loop/runtime.py:628` implements `async_prepare_reconfigure`.
-- `custom_components/moisture_loop/runtime.py:644` implements `async_prepare_delete`, but native Home Assistant never calls it.
-- `custom_components/moisture_loop/runtime.py:255` skips persisted hazardous zones when their current config is absent.
-- `custom_components/moisture_loop/runtime.py:274` constructs configuration only from current subentries.
-- `custom_components/moisture_loop/models.py:922` has no persisted actuator identity or tombstone lifecycle in `ZoneRecord`.
-- `custom_components/moisture_loop/zone_controller.py:1166` performs freshness checks before ON, but does not revalidate current subentry membership/config generation.
-- `custom_components/moisture_loop/services.py:64` correctly refuses user services for a deleted subentry, but automatic controller paths remain live.
+- `custom_components/soilsync/config_flow.py:257` manually schedules add reloads and explicitly excludes an update listener.
+- `custom_components/soilsync/config_flow.py:320` pre-prepares reconfiguration, then uses `async_update_reload_and_abort`.
+- `custom_components/soilsync/runtime.py:628` implements `async_prepare_reconfigure`.
+- `custom_components/soilsync/runtime.py:644` implements `async_prepare_delete`, but native Home Assistant never calls it.
+- `custom_components/soilsync/runtime.py:255` skips persisted hazardous zones when their current config is absent.
+- `custom_components/soilsync/runtime.py:274` constructs configuration only from current subentries.
+- `custom_components/soilsync/models.py:922` has no persisted actuator identity or tombstone lifecycle in `ZoneRecord`.
+- `custom_components/soilsync/zone_controller.py:1166` performs freshness checks before ON, but does not revalidate current subentry membership/config generation.
+- `custom_components/soilsync/services.py:64` correctly refuses user services for a deleted subentry, but automatic controller paths remain live.
 
 Consequences under the current implementation:
 
@@ -262,7 +262,7 @@ Recommendation: preferred.
 
 ### Option E
 
-Provide a Moisture Loop-specific "Delete Zone" workflow/action.
+Provide a SoilSync-specific "Delete Zone" workflow/action.
 
 That workflow can prepare safely and then call public `async_remove_subentry`. However, the native Delete control cannot be hidden or replaced in 2025.9.0 or the current frontend. It therefore creates two paths, only one of which is pre-safe.
 
@@ -334,7 +334,7 @@ Recommendation: technically supported but disproportionate and less maintainable
 
 8. **What if another update occurs while preparation runs?**
 
-   Core creates another listener task. Moisture Loop must use:
+   Core creates another listener task. SoilSync must use:
 
    - One entry-wide reconciliation lock/worker.
    - A runtime-owned monotonic generation or immutable snapshot fingerprint.
@@ -566,7 +566,7 @@ Scores are `1–5`, higher is better. Score order is platform correctness / irri
      -> Core removes subentry from entry.subentries
      -> runtime/config mismatch immediately closes the final ON gate
      -> Core schedules update listener
-     -> Core clears Moisture Loop registry device/entities
+     -> Core clears SoilSync registry device/entities
      -> listener/coalesced worker identifies removed runtime ID
      -> controller becomes delete-pending tombstone
      -> queued work/timers are cancelled
@@ -693,17 +693,17 @@ Do not treat this as a local wording correction. Publish `0.1.0-spec.4` with a d
 
 | File | Approximate nature of change | Risk |
 |---|---|---|
-| `custom_components/moisture_loop/__init__.py` | Register/unregister update listener before runtime watering is enabled; coordinate unload | Medium |
-| `custom_components/moisture_loop/runtime.py` | Immutable configuration shadow, generation-coalesced reconciler, tombstone lifecycle, startup union, reload/shutdown joining | High |
-| `custom_components/moisture_loop/config_flow.py` | Replace reload helper with `async_update_and_abort`; remove add-owned reload; retain pre-update reconfigure preparation | Medium-high |
-| `custom_components/moisture_loop/models.py` | Add actuator identity, lifecycle, fingerprint, and tombstone evidence fields | High |
-| `custom_components/moisture_loop/storage.py` | Schema migration, verified tombstone writes, Store-only lookup, history adoption | High |
-| `custom_components/moisture_loop/zone_controller.py` | Final membership/generation gates, no-start tombstone state, in-flight ON/delete ordering, safe detach | High |
-| `custom_components/moisture_loop/slot_manager.py` | Entry-wide configuration-dirty admission barrier and removed-zone request cancellation | Medium-high |
-| `custom_components/moisture_loop/services.py` | Retain deleted-target refusal; route tombstone-safe acknowledgement if service-based | Medium |
-| `custom_components/moisture_loop/repairs.py` | Persistent tombstone issue and entry-level acknowledgement/fix flow | Medium |
-| `custom_components/moisture_loop/diagnostics.py` | Report reconciliation state and active/delete-pending/retired tombstones | Low-medium |
-| `custom_components/moisture_loop/const.py` | Store schema/lifecycle constants | Medium |
+| `custom_components/soilsync/__init__.py` | Register/unregister update listener before runtime watering is enabled; coordinate unload | Medium |
+| `custom_components/soilsync/runtime.py` | Immutable configuration shadow, generation-coalesced reconciler, tombstone lifecycle, startup union, reload/shutdown joining | High |
+| `custom_components/soilsync/config_flow.py` | Replace reload helper with `async_update_and_abort`; remove add-owned reload; retain pre-update reconfigure preparation | Medium-high |
+| `custom_components/soilsync/models.py` | Add actuator identity, lifecycle, fingerprint, and tombstone evidence fields | High |
+| `custom_components/soilsync/storage.py` | Schema migration, verified tombstone writes, Store-only lookup, history adoption | High |
+| `custom_components/soilsync/zone_controller.py` | Final membership/generation gates, no-start tombstone state, in-flight ON/delete ordering, safe detach | High |
+| `custom_components/soilsync/slot_manager.py` | Entry-wide configuration-dirty admission barrier and removed-zone request cancellation | Medium-high |
+| `custom_components/soilsync/services.py` | Retain deleted-target refusal; route tombstone-safe acknowledgement if service-based | Medium |
+| `custom_components/soilsync/repairs.py` | Persistent tombstone issue and entry-level acknowledgement/fix flow | Medium |
+| `custom_components/soilsync/diagnostics.py` | Report reconciliation state and active/delete-pending/retired tombstones | Low-medium |
+| `custom_components/soilsync/const.py` | Store schema/lifecycle constants | Medium |
 | Entity platforms | Verify Core registry removal does not own controller lifetime | Low |
 | Strings/translations | Tombstone Repair and acknowledgement UX | Low |
 

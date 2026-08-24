@@ -53,7 +53,7 @@ jobs:
           --cov --cov-branch --cov-report=term-missing
       - name: Enforce 100% branch coverage for state_machine.py
         run: |
-          if [ -f custom_components/moisture_loop/state_machine.py ]; then
+          if [ -f custom_components/soilsync/state_machine.py ]; then
             coverage report --include="*/state_machine.py" --fail-under=100
           else
             echo "state_machine.py not implemented yet; gate armed but inactive"
@@ -79,17 +79,17 @@ jobs:
         run: python scripts/check_ha_contract.py --expect 2025.9.0
       - name: Run full test suite with coverage
         run: |
-          if [ -d custom_components/moisture_loop ]; then
+          if [ -d custom_components/soilsync ]; then
             python -m pytest --cov --cov-branch --cov-report=term-missing
           else
             python -m pytest
           fi
       - name: Enforce coverage release gates
         run: |
-          if [ -f custom_components/moisture_loop/state_machine.py ]; then
+          if [ -f custom_components/soilsync/state_machine.py ]; then
             coverage report --include="*/state_machine.py" --fail-under=100
           fi
-          if [ -d custom_components/moisture_loop ]; then
+          if [ -d custom_components/soilsync ]; then
             coverage report --fail-under=90
           fi
 

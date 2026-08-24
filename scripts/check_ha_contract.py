@@ -149,7 +149,7 @@ def main() -> int:
             DeviceSelectorConfig,
         )
 
-        cfg = DeviceSelectorConfig(filter={"integration": "moisture_loop"}, multiple=False)
+        cfg = DeviceSelectorConfig(filter={"integration": "soilsync"}, multiple=False)
         DeviceSelector(cfg)
 
     check("nested DeviceSelectorConfig.filter", device_selector_filter)

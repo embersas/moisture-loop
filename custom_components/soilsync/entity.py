@@ -1,4 +1,4 @@
-"""Base entity for Moisture Loop zone entities (SPECIFICATION.md §28).
+"""Base entity for SoilSync zone entities (SPECIFICATION.md §28).
 
 All entities use stable ``{subentry_id}_{key}`` unique IDs,
 ``has_entity_name = True``, translation keys, and the zone device with the
@@ -19,8 +19,8 @@ from .runtime import EntryRuntime
 from .zone_controller import ZoneController
 
 
-class MoistureLoopZoneEntity(Entity):
-    """Common zone-device wiring for all Moisture Loop entities."""
+class SoilSyncZoneEntity(Entity):
+    """Common zone-device wiring for all SoilSync entities."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False

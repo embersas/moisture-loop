@@ -1,7 +1,7 @@
-# Moisture Loop — tooling configuration only.
+# SoilSync — tooling configuration only.
 #
 # This repository ships a Home Assistant custom integration under
-# custom_components/moisture_loop/. It is distributed via HACS, not as a
+# custom_components/soilsync/. It is distributed via HACS, not as a
 # Python package, so there is deliberately no [build-system] / packaging
 # metadata here. This file owns lint, format, test, and coverage settings.
 
@@ -38,7 +38,7 @@ asyncio_mode = "auto"
 
 [tool.coverage.run]
 branch = true
-source = ["custom_components/moisture_loop"]
+source = ["custom_components/soilsync"]
 
 [tool.coverage.report]
 show_missing = true
@@ -48,5 +48,5 @@ precision = 2
 # every real guard/transition branch.
 exclude_also = ["^\\s*assert\\b", "^if TYPE_CHECKING:"]
 # Release gates (enforced by CI commands, see DEVELOPMENT.md):
-#   - custom_components/moisture_loop/state_machine.py: 100% branch coverage
+#   - custom_components/soilsync/state_machine.py: 100% branch coverage
 #   - overall suite: >= 90%
