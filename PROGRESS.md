@@ -6,16 +6,16 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`; the SoilSync canonical pre-release rename is complete and Slice 13 remains `[~] Partial`.
+- Current authorized work: `None`; the 2026-08-24 Slice 13 Phase A continuation closed `[~] Partial`. Phase B remains explicitly unauthorized and `[ ] Not started`.
 - Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository `https://github.com/embersas/soilsync`.
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Only the unfinished live/physical portions of Slice 13 listed below remain. No later slice, release, submission, or specification stage is authorized.`
+- Next implementation work: `Only the unfinished Phase A items and the separately authorized Phase B physical-water items listed under Slice 13 remain. No release/submission or specification stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 in run 32705144394 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives the same exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
-- Slice 13: `[~] Partial on 2026-08-23. The live HA/HACS baseline and an 82.525-minute deployed-sensor cadence sample were recorded. The full UI lifecycle, physical valve matrix, real Registry rename, shutdown timing, ten-zone exercise, longer cadence window, and HACS presentation/install remain incomplete; automated evidence is not substituted.`
-- Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial because the required operator UI sequence did not progress past opening HACS Custom repositories, all identified irrigation actuators were unavailable, and the mandatory physical-water checkpoint was never reached. No prototype absence is recorded as a pass.`
+- Slice 13: `[~] Partial. Prior live HA/HACS baseline evidence and the 82.525-minute deployed-sensor cadence sample are preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. The Phase A continuation is partial; Phase B is not started.`
+- Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial until every applicable Phase A item and the separately authorized Phase B physical-water items are complete. No synthetic runtime result will be described as physical evidence, and no prototype absence is recorded as a pass.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
@@ -50,7 +50,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
 | 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
-| 13 | Prototype validations | [~] Partial live evidence; required items remain blocked/incomplete |
+| 13 | Prototype validations | [~] Partial; Phase A non-water validation in progress, Phase B not started |
 
 Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
 
@@ -1497,7 +1497,82 @@ None. Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 
 
 ### Status
 
-`[~] Partial — authorized and attempted on 2026-08-23; required live/physical evidence remains incomplete`
+`[~] Partial — Phase A non-water live validation is partial; Phase B physical-water validation is [ ] Not started`
+
+### Phase split
+
+#### Phase A - Non-water live validation
+
+`[~] Partial`
+
+Phase A contains only live validation that requires no actual irrigation water
+flow:
+
+- **A1. HACS custom-repository installation and presentation:** add the public
+  SoilSync repository through real HACS, install it, restart when required,
+  and verify the installed component and startup result.
+- **A2. Real SoilSync Home Assistant UI/UX lifecycle:** use isolated synthetic
+  sensor/actuator entities where an actuator is required; validate controller
+  and zone creation, entities, actions, reconfigure, diagnostics, native
+  deletion/re-add, reload/restart survival, and safely observable Repairs.
+- **A3. Real Entity Registry rename and durable identity continuity:** rename a
+  temporary synthetic SoilSync sensor or actuator through the supported real
+  Registry UI, verify the Registry UUID plus `safety_record_id`,
+  `safety_lineage_id`, and `zone_history_id` continuity, then restore the
+  original entity ID and verify restoration.
+- **A4. Approximately ten simultaneously-dry live zones:** create about ten
+  unique live synthetic moisture entities and ten independently observable
+  synthetic actuators in the real HA runtime. Validate serialization, FIFO
+  admission, queue visibility, fairness/no starvation, pulse/soak/recheck,
+  cancellation, and cleanup.
+- **A5. Deployment sensor cadence and live SoilSync freshness:** use the one
+  real deployed moisture sensor read-only, paired only with a synthetic
+  actuator, to extend cadence evidence and validate changed/unchanged report,
+  `state_reported`, and SoilSync `fresh_until` behavior.
+- **A6. Final non-water HACS/integration presentation review:** inspect the
+  HACS card, README, icon, name, description, version, integration search,
+  Devices & services, device/entities/actions, diagnostics, Repairs where
+  observed, links, and current UI terminology.
+
+Phase A safety and evidence rules:
+
+- Physical valve OPEN commands are forbidden.
+- No physical irrigation hardware may be energised. This includes physical
+  `switch.turn_on`, physical `valve.open_valve`, a SoilSync manual request
+  targeting physical equipment, or any script/automation known to energise
+  irrigation.
+- Shutdown during active flow is not part of Phase A.
+- The approximately ten-zone scheduler/load test does not require purchasing
+  ten physical moisture sensors. Section 46 permits real live Home Assistant
+  synthetic entities for this scale/load validation.
+- Live synthetic entities are real Home Assistant runtime evidence, but they
+  are not physical sensor or valve evidence.
+
+#### Phase B - Physical-water validation
+
+`[ ] Not started`
+
+Phase B contains only:
+
+- **B1. Physical valve state/availability/position/external-interference
+  matrix.**
+- **B2. Actual active-flow Home Assistant/container shutdown and measured
+  shutdown-to-proven-OFF timing.**
+
+Phase B requires known-safe physical irrigation hardware, actual physical
+flow, an explicit operator water checkpoint, a manual stop/fallback, and a
+separate authorization/run. It must not begin during Phase A.
+
+#### Future multi-zone deployment
+
+- Approximately six potential physical irrigation zones currently exist.
+- Only one physical soil-moisture sensor is currently installed.
+- Additional per-zone moisture sensors are planned but have not yet been
+  purchased.
+- The architecture remains one soil-moisture sensor per independently
+  controlled real physical irrigation zone. The single installed sensor must
+  not be configured as the permanent control sensor for all six zones.
+- Purchasing the additional sensors is not a prerequisite for Phase A.
 
 ### Objective
 
@@ -1529,7 +1604,7 @@ The exact current §46 validation list is:
 
 ### Dependencies
 
-- Slices 0-12 complete and public candidate SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` available.
+- Slices 0-12 complete and current SoilSync SHA `f4229cfe040d5542ae5acbfc3510ffe7cb922f4f` available.
 - Appropriate real Home Assistant 2025.9+ environments, physical/test actuators, representative sensors, and any required publication authority available for the relevant item.
 
 ### Expected files
@@ -1583,13 +1658,20 @@ The exact current §46 validation list is:
 
 ### Remaining work
 
-- Install the public candidate through the real HACS custom-repository UI and complete the full §46 native UI lifecycle with screenshots/observations.
-- Restore availability of a positively identified safe physical valve, confirm manual shutoff and interference controls, then pass the explicit operator water checkpoint before the valve matrix or shutdown test.
-- Perform and reverse a supported real Entity Registry rename after a prototype zone exists, recording Registry identity, safety-record/lineage/history continuity, and cleanup.
-- Run the real container shutdown while SoilSync owns safe physical flow and record T0-T4 plus restart/no-resume evidence.
-- Create approximately ten isolated live-HA synthetic sensor/actuator pairs and zones, run the FIFO/slot/fairness exercise, and remove them.
-- Observe the deployed sensor continuously for longer than the two-hour default, retaining report-burst/unchanged-report evidence, before closing the cadence conclusion.
-- Complete real HACS card/README/icon/version/download/install/restart presentation validation. Centralized Brands and HACS default-store submissions remain separately unauthorized.
+- **Phase A:** complete A1 HACS custom-repository add/install/restart; A2 the
+  real SoilSync UI/UX lifecycle with mechanically verified synthetic
+  actuators; A3 the real Registry rename/identity-continuity/restore trial; A4
+  the approximately ten-zone live synthetic FIFO/serialization/fairness test
+  and cleanup; A5 a direct continuous sensor window exceeding two hours plus
+  live SoilSync `state_reported`/`fresh_until` handling through a synthetic
+  actuator; and A6 the final installed HACS/Devices & services/stale-name
+  presentation review.
+- **Phase B B1:** physical valve state/availability/position/external-
+  interference matrix on known-safe hardware after a new authorization and
+  explicit operator water checkpoint.
+- **Phase B B2:** actual active-flow HA/container shutdown and measured
+  shutdown-to-proven-OFF timing after a new authorization and explicit
+  operator water checkpoint.
 
 ### Tests actually run
 
@@ -2448,3 +2530,64 @@ PROGRESS.md updated:
 - Public checks confirm the SoilSync README, manifest (`name: SoilSync`, `domain: soilsync`, version `0.1.0`), `custom_components/soilsync/` directory, and Issues URL resolve from the renamed repository; the active old component directory is absent. GitHub's redirect from the old repository URL is a hosting redirect only, not an active product identifier.
 - This documentation-only tracking closeout commit records the completed external operations and returns current authorization to `None`. Its exact SHA and second six-job hosted result are carried in the final handoff so no further tracking commit invalidates that evidence.
 - No GitHub Release, release tag, HACS default-store submission, Brands submission, integration-version bump, Store-schema bump, compatibility shim, or prototype action occurred. Slice 13 remains `[~] Partial` with its prior observations intact and no new validation claim.
+
+## Session Log — 2026-08-24 (Slice 13 Phase A continuation)
+
+### Authorization and phase split
+
+- The user explicitly authorized only SoilSync Slice 13 Phase A non-water
+  validation, using GPT-5.6 Sol with extra-high reasoning. Phase B physical
+  water, releases, tags, version changes, HACS default-store/Brands
+  submissions, and specification changes were not authorized.
+- Before live mutation, `SPECIFICATION.md` including §46, this complete
+  progress ledger, `PROTOTYPE_VALIDATION.md`, `README.md`, `DEVELOPMENT.md`,
+  the relevant config-flow/subentry/entity/action/Registry/report/slot/
+  reconciliation/diagnostic/Repair source, Git state/remotes/HEAD, and safe
+  live reachability were reviewed.
+- Unfinished Slice 13 work is now formally divided into Phase A A1-A6 and
+  Phase B B1-B2. The six-potential-physical-zone/one-installed-sensor reality
+  and one-sensor-per-real-zone architecture are explicit. Additional sensor
+  purchases are not a Phase A prerequisite.
+
+### Live Phase A result
+
+- Current repository state before documentation edits was clean at
+  `f4229cfe040d5542ae5acbfc3510ffe7cb922f4f`; both remotes and canonical
+  identity were verified. No production or test code changed.
+- The local Home Assistant Container test instance remained reachable: the
+  frontend returned HTTP 200, the unauthenticated API correctly returned HTTP
+  401, and HA plus the previously documented host-control network paths were
+  reachable. No credential was requested, displayed, stored, or committed.
+- Direct browser control was attempted through the supported browser runtime
+  and no browser was available. Following the operator-interaction rule, one
+  precise real-HACS step was requested: add the SoilSync public URL as an
+  Integration custom repository and report exactly what appeared. No result
+  arrived before closeout, so repository acceptance/install/restart and all
+  dependent A2-A4 work remain blocked rather than inferred.
+- Anonymous read-only MQTT connection reached the live broker but was refused
+  as `Not authorized`, as expected. No credentials were sought and no new
+  message/report evidence was captured. The truthful direct physical sample
+  therefore remains the preserved 4951.476 s / 82.525 min, 20-message,
+  eight-burst result from 2026-08-23; no elapsed time was fabricated.
+- A1 is BLOCKED; A2 is BLOCKED; A3 is BLOCKED; A4 is BLOCKED; A5 is PARTIAL;
+  A6 is PARTIAL. Detailed public-safe procedures, observations, evidence
+  classes, and cleanup are in `PROTOTYPE_VALIDATION.md`.
+- Source review noted no live defect because no installed runtime was
+  exercised. Registry rename remains a real prototype obligation; source
+  inspection is not substituted for its outcome. No specification
+  contradiction was observed.
+
+### Safety, cleanup, and closeout
+
+- Zero physical irrigation ON/open commands occurred. Physical valves,
+  irrigation switches, and unrelated irrigation automations/scripts remained
+  untouched.
+- No synthetic helper, test actuator, SoilSync config entry, temporary zone,
+  scale zone, Registry rename, test fault, Repair, restart, or shutdown was
+  created, so no runtime cleanup was required.
+- Phase A closes `[~] Partial`. Phase B remains `[ ] Not started`, specifically
+  B1 physical valve matrix and B2 active-flow shutdown OFF timing.
+- Only `PROGRESS.md` and `PROTOTYPE_VALIDATION.md` changed. Established test
+  suites were not gratuitously rerun; documentation diff checks are the
+  applicable closeout gate. `SPECIFICATION.md` remains unchanged.
+- Current authorization returned to `None`.
