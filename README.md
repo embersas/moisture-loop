@@ -34,10 +34,12 @@ The comparisons are exact:
 - A report exactly at the soak deadline qualifies; an earlier report does not.
 - A report exactly on the freshness boundary is fresh.
 
-Repeated unchanged readings are real reports. SoilSync listens to Home
-Assistant's entity-filtered `state_reported` path, so an identical reading can
-refresh the sensor watchdog or qualify after a soak. A fallback scan never
-invents a new report timestamp.
+When an upstream integration writes an unchanged reading to Home Assistant,
+Home Assistant can expose it through the entity-filtered `state_reported` path
+and SoilSync treats it as a genuine report. Some integrations suppress
+unchanged source updates before they become Home Assistant state writes;
+SoilSync cannot treat those invisible source messages as fresh reports. A
+fallback scan never invents a new report timestamp.
 
 ### Freshness and watchdogs
 
@@ -50,6 +52,26 @@ report, changed or unchanged, replaces that deadline.
 SOAKING uses a separate rule: a report before the soak ends may update the UI
 but cannot decide the session. After the soak, SoilSync waits for a
 qualifying report for at most one sensor-freshness window, then faults stale.
+
+### Sensor freshness compatibility
+
+SoilSync measures freshness from the report timestamp Home Assistant exposes.
+The default Sensor Report Maximum Age is a conservative, configurable two
+hours. During healthy operation, the selected moisture entity must produce Home
+Assistant state writes often enough to remain within that limit, including
+during long periods when the measured moisture does not change. SoilSync can
+use changed reports and unchanged reports that Home Assistant actually exposes,
+but it cannot infer a physical heartbeat that the upstream integration hides.
+Polling or scanning the entity does not substitute for a report.
+
+For MQTT-backed sensors, Home Assistant's MQTT sensor normally has
+`force_update: false`. If unchanged MQTT payloads are suppressed and do not
+advance the moisture entity's report timestamp, configure the MQTT entity or
+source so healthy unchanged reports produce Home Assistant state writes. Where
+appropriate, `force_update: true` is one way to do this; it is not a SoilSync
+requirement or a universal recommendation. Consider the source update rate and
+system impact before forcing every update. See the official
+[Home Assistant MQTT Sensor documentation](https://www.home-assistant.io/integrations/sensor.mqtt/).
 
 ## Safety model
 
@@ -216,6 +238,20 @@ or use the offered Repair flow as instructed. If watering refuses to start,
 check sensor freshness, actuator OFF/availability, Repairs, daily budget,
 minimum interval, and external flow before trying again.
 
+### Troubleshooting `SENSOR_STALE`
+
+First inspect the moisture entity's `last_reported` timestamp and, where
+possible, compare it with the upstream integration or physical device's actual
+reporting cadence. A stale fault can mean either that the sensor genuinely
+stopped reporting or that source reports continued while unchanged updates were
+suppressed before reaching the Home Assistant entity. If the source remains
+healthy but `last_reported` does not advance, correct the upstream entity
+configuration instead of treating a larger SoilSync timeout as the first fix.
+For MQTT sensors, `force_update: true` is one possible integration-specific
+remedy, not a general requirement. A different Sensor Report Maximum Age remains
+available within the configured range when the sensor's legitimate observable
+cadence requires it.
+
 The integration also emits `soilsync_session_started`,
 `soilsync_session_finished`, `soilsync_fault_set`, and
 `soilsync_fault_cleared` events.
@@ -240,14 +276,17 @@ validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
    flow.
 5. Approximately ten simultaneously dry zones in a deployment-scale exercise —
    **validated** live with ten synthetic zones.
-6. Deployment sensor-cadence validation of the two-hour default — **partial**;
-   live freshness derivation is validated against a real sensor, but no clean
-   observation window longer than two hours has been captured.
+6. Deployment sensor-cadence/default validation — **validated / PASS**. A clean
+   2.9974-hour window showed that physical cadence supports the two-hour horizon
+   while the tested default MQTT-to-Home Assistant entity presentation can
+   suppress unchanged writes. The compatibility requirement is documented and
+   the conservative two-hour default is retained.
 7. HACS/brand presentation — **validated** for custom-repository install and
    presentation; the centralized `home-assistant/brands` submission is
    deliberately not made.
 
-Items 2 and 4 involve real water and are the reason this release is not
+Phase A is complete. Items 2 and 4 are the only remaining prototype
+validations; both involve real water and are the reason this release is not
 described as physically validated. `PROTOTYPE_VALIDATION.md` is the evidence
 ledger for all of the above.
 

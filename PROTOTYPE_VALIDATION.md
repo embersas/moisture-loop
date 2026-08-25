@@ -451,6 +451,33 @@ this sensor while its MQTT publisher leaves `force_update` false, and both are
 covered deterministically by the automated suite (`SR1`, `SR6`, `SR13`) and by
 release-source behaviour that §46 already treats as conclusive.
 
+#### Final A5 product decision - retain the two-hour default
+
+The user made the outstanding product decision after reviewing the measured
+result: `sensor_max_age` remains **7200 seconds / 2 hours**. A5 remains `PASS`.
+
+- The physical sensor cadence itself comfortably supports the two-hour horizon:
+  33 genuine publishes in 8 bursts during the clean window, with a median burst
+  interval of approximately 1281.826 s and maximum device silence of
+  approximately 2405.146 s / 40.09 min.
+- The tested default MQTT-to-Home Assistant entity presentation does not support
+  that horizon reliably. Unchanged transport reports were suppressed before
+  becoming moisture-entity state writes, so Home Assistant's authoritative
+  `last_reported` timestamp did not advance even while the device continued
+  publishing normally.
+- The measured assessment remains `CONTRADICTED`: physical cadence supports the
+  two-hour horizon; the tested default MQTT-to-Home Assistant entity presentation
+  does not. The product default is nevertheless retained because increasing it
+  would mask missing observable heartbeat rather than correct it.
+- The chosen mitigation is documentation and upstream entity configuration.
+  The configured moisture entity must produce Home Assistant state writes often
+  enough during healthy operation, including when its value is unchanged. For
+  MQTT-backed sensors, `force_update: true` is one integration-specific example
+  where appropriate, not a universal SoilSync requirement.
+- SoilSync remains hardware agnostic. It does not consume MQTT directly, add an
+  MQTT runtime dependency, or treat polling, fallback scans, or callback time as
+  freshness. There is no runtime change and no specification change.
+
 ### A6 HACS/presentation
 
 | Field | Record |
@@ -888,8 +915,9 @@ is derived from the genuine report timestamp plus exactly 7200 s and never from
 scan, callback, or evaluation time, and settled the §46 item 6 default question
 against a 10.34 day Home Assistant corpus and a 22.9 h transport corpus. That
 assessment is `CONTRADICTED` for this deployment and the root cause is identified
-to Core source level; **the default was not changed and the decision is referred**,
-as §46 item 6 and the run authorisation require.
+to Core source level. The final product decision retains the 7200 s default and
+uses documentation/upstream Home Assistant report visibility as the mitigation;
+no SoilSync runtime or specification change was made.
 
 Findings F1, F2, and F3 are `RESOLVED` as implementation defects against
 existing spec.4, fixed, covered by deterministic automated regression, and

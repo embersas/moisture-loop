@@ -12,7 +12,7 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Only the separately authorized Phase B physical-water items remain: B1 physical valve matrix and B2 active-flow shutdown OFF timing. Phase A is complete. A referred, unactioned decision on the sensor_max_age default is recorded under A5 in PROTOTYPE_VALIDATION.md. No release/submission or specification stage is authorized.`
+- Next implementation work: `Only the separately authorized Phase B physical-water items remain: B1 physical valve matrix and B2 active-flow shutdown OFF timing. Phase A is complete. The final A5 product decision retains sensor_max_age at 7200 seconds and documents the upstream Home Assistant report-visibility contract; no runtime, range, or specification change was made. No release/submission or specification stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives its own exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[~] Partial. All prior live evidence is preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. After the 2026-08-25 A5 run, A1-A6 are all PASS and Phase A is [x] Complete; Phase B is [ ] Not started, so Slice 13 stays partial.`
 - Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial until every applicable Phase A item and the separately authorized Phase B physical-water items are complete. No synthetic runtime result will be described as physical evidence, and no prototype absence is recorded as a pass.`
@@ -3050,3 +3050,66 @@ switch and its backing helper as the only causally related changes.
   evidence changed.
 - `SPECIFICATION.md` remains unchanged at `0.1.0-spec.4`; totals remain
   134 / 37 / 59. Current authorization returned to `None`.
+
+## Session Log — 2026-08-25 (Slice 13 Phase A A5 default decision closeout)
+
+### Authorization and decision
+
+- The user explicitly authorized only SoilSync Slice 13 Phase A A5 default
+  decision and Phase A documentation/UX closeout. This was not a new prototype
+  test, behavioural remediation, or Phase B authorization.
+- The measured A5 result remains `CONTRADICTED` at the tested Home Assistant
+  entity-presentation layer while the physical sensor cadence itself supports
+  the two-hour horizon. The final product decision retains
+  `sensor_max_age = 7200` seconds / 2 hours.
+- The mitigation is a documented hardware-agnostic compatibility contract: the
+  selected moisture entity must expose Home Assistant state writes often enough
+  during healthy operation, including unchanged readings where freshness should
+  advance. MQTT `force_update: true` is one integration-specific example where
+  appropriate, not a SoilSync runtime dependency or universal requirement.
+- No default/range, freshness calculation, listener, fallback-scan, watchdog,
+  fault, state-machine, MQTT dependency, or other runtime behaviour changed.
+  `SPECIFICATION.md` remains `0.1.0-spec.4` with 134 normative IDs, 37
+  invariants, and 59 transitions.
+
+### Documentation and UI closeout
+
+- `README.md` now distinguishes physical/source updates from Home Assistant
+  state writes, documents sensor freshness compatibility and the retained
+  two-hour default, gives the scoped MQTT example and system-impact caution,
+  adds `SENSOR_STALE` diagnosis, and records §46 item 6 as validated / PASS.
+- `custom_components/soilsync/strings.json` and
+  `custom_components/soilsync/translations/en.json` add synchronized generic
+  Safety limits guidance based on the Home Assistant report timestamp. The
+  primary UI copy contains no MQTT-specific requirement.
+- `PROTOTYPE_VALIDATION.md` preserves the complete empirical A5 evidence and
+  `CONTRADICTED` assessment, then records the final user decision and upstream
+  configuration mitigation. A5 remains `[x] PASS`.
+
+### Validation actually run
+
+- `uvx --from ruff==0.16.4 ruff check .` -> PASS; `ruff format --check .` ->
+  PASS, 47 files already formatted.
+- JSON parsing (5 files), YAML parsing (2 files), exact
+  `strings.json`/`translations/en.json` parity, four-service parity,
+  entity/icon parity, manifest version `0.1.0`, empty runtime requirements, and
+  HACS minimum `2025.9.0` -> PASS. An initial inline metadata invocation failed
+  before validation because of command-line quoting; the corrected complete
+  rerun passed.
+- Official local hassfest container -> PASS: 1 integration, 0 invalid
+  integrations, including translations, services, icons, and config flow.
+- Added-line private-data audit and active-scope stale-development-name audit ->
+  PASS.
+- `git diff --check` -> PASS. The full HA/pure suites were not rerun because no
+  Python, runtime, or automated-test file changed; the normal hosted workflow
+  remains the exact-final-SHA regression evidence.
+
+### Status and remaining work
+
+- A1 `[x]`, A2 `[x]`, A3 `[x]`, A4 `[x]`, A5 `[x]`, A6 `[x]`.
+- Phase A `[x] Complete`.
+- Phase B `[ ] Not started`.
+- Slice 13 `[~] Partial`.
+- Remaining work is only B1 physical valve matrix and B2 active-flow shutdown
+  OFF timing.
+- Current authorization returned to `None` at closeout. No Phase B work began.
