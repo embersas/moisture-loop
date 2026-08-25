@@ -10,10 +10,10 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository `https://github.com/embersas/soilsync`.
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Pre-licensing-rewrite rename SHA 46783d2900fd42a13666eb13d8fe78c623456164, whose canonical equivalent is e7f496c94fff4a2d1851bd0fcd9cf778d719f8ac, passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
 - Next implementation work: `Confirm or remediate the deployed controller's Home Assistant valve integration, then separately authorize a fresh B1 physical valve matrix. B2 active-flow shutdown OFF timing remains not started and requires its own future authorization. Phase A is complete. No release/submission or specification stage is authorized.`
-- Release gates: `All six GitHub-hosted jobs passed the Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives its own exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
+- Release gates: `All six GitHub-hosted jobs passed the pre-licensing-rewrite Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync; its canonical equivalent is a61da563ea96d3a7cd7b042dc0da80320022de11. Those historical results remain attributed to the original SHA. The final licensing/branding SHA receives its own six-job run. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[~] Partial. All prior live evidence is preserved. A1-A6 are all PASS and Phase A is [x] Complete. Phase B reached B1, which is [!] Blocked because the deployed physical valve accepted Home Assistant service calls but never produced an actuator transition or physically confirmed flow; B2 is [ ] Not started.`
 - Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial; B1 must be repeated only after the deployed controller's Home Assistant integration is confirmed working, and B2 remains separately unauthorized. No synthetic runtime result or accepted service call is described as physical-flow evidence.`
 
@@ -3204,3 +3204,86 @@ switch and its backing helper as the only causally related changes.
   after B1 passes, separately authorize B2 active-flow shutdown OFF timing.
 - No production or test code changed. `SPECIFICATION.md` remains unchanged at
   `0.1.0-spec.4`. Current authorization returned to `None`.
+
+## Session Log — 2026-08-25 (GPL-3.0-only licensing and branding governance)
+
+### Scope, authority, and retained history
+
+- The user selected GNU GPL version 3 only, SPDX `GPL-3.0-only`, for the
+  SoilSync software. AGPL, LGPL, an or-later option, and custom
+  source-available restrictions were explicitly rejected.
+- The ownership audit found one human author/committer identity,
+  `embersas <30363137+embersas@users.noreply.github.com>`, across all reachable
+  commits and GitHub contributor metadata; no pull requests, external human
+  contributions, contributor/author notices, source-file licence headers,
+  copied third-party source, vendored code, forks, tags, or releases were
+  found. Ordinary dependency declarations were not treated as copied source.
+- After the user confirmed that no recipient outside the user's control is
+  known to have received the repository, the 27-commit linear history was
+  rebuilt as GPL-3.0-only from its root. Commit messages, topology,
+  author/committer identity, author/committer dates, and every file outside
+  `LICENSE`, `COPYRIGHT`, `README.md`, and `PROGRESS.md` were mechanically
+  verified unchanged. No claim is made that a history rewrite could revoke
+  rights already received by any unknown recipient.
+- Before the rewrite, a complete verified private rollback bundle was created
+  outside the repository as
+  `soilsync-pre-gpl-rewrite-20260825-c382b45.bundle` (SHA-256
+  `78D58216061DA1A2FA623D890B85CF5C2E400143EE31A111CCB15536E4C4037C`).
+  A complete 27-row private mapping is stored separately as
+  `soilsync-pre-to-canonical-map.tsv`; neither private file is committed.
+
+### Validation-evidence SHA provenance
+
+Historical GitHub Actions runs and live-deployment records remain attributed
+to the original commit objects on which they actually ran. The rewritten
+commits have byte-identical runtime and specification content, but the old
+results are not represented as executions on the new objects. This table maps
+every original SHA that had a GitHub Actions run in the rewritten history:
+
+| Original pre-rewrite SHA | Canonical rewritten SHA | Historical run |
+|---|---|---|
+| `3c8ed445c4e2989ae9d022d53b78838aa379e28c` | `6c61161fbd7671950dc4dcc31629ef52b7bb251b` | `32629158676` (failure) |
+| `25dd9dbdfeae5a1482322f8feec07b01f8d135d9` | `e44919880196399bc0f9d5c98c1950a116bcf890` | `32629563323` (failure) |
+| `43f24b12fc162412b534851b9c1b3762ca57cd98` | `1ae290abaabd68c7ca0ca90ae395e264eff617b7` | `32630108774` (success) |
+| `bbfeee2e18bfa478c79bc41faa7555f7933c9ec6` | `af674e3f1ebec6829b362b07be985dc6fd1f1e04` | `32664087903` (success) |
+| `46783d2900fd42a13666eb13d8fe78c623456164` | `e7f496c94fff4a2d1851bd0fcd9cf778d719f8ac` | `32705144394` (success) |
+| `f4229cfe040d5542ae5acbfc3510ffe7cb922f4f` | `a182bbb07da9dd40ba24223e6da7862897ba60ab` | `32705487895` (success) |
+| `a33dfb04e6f9fe1a0ef7a57b026024e40af3b5b5` | `8dbbb7cb7c448175daec343575333133390d42d1` | `32708293223` (cancelled) |
+| `dcf9036165b02c443e5cc8a5eddf0741676ffe65` | `a997c6096e6e7d13bb63d0d78bf63403ac1164e4` | `32708349239` (success) |
+| `a81f1dc8969c1b83678f1993851b69272df957de` | `8e98216eef01ea4b6b646fc4d678b66e8ef9742e` | `32719843188` (success) |
+| `a54ee2777612d914f216781db5b0f3b7d586ef4c` | `a61da563ea96d3a7cd7b042dc0da80320022de11` | `32792205517` (success) |
+| `3e4823c2358cd991d0cd0ff67c38b16d01e50158` | `43ca9bfa9902dc35b908beab15094dc0d8c52720` | `32792462773` (success) |
+| `5390b18f6d93d55db7c930442c9c38f808f05521` | `1a89674d36cebb3698309e25a735d57f15c8923d` | `32815780286` (success) |
+| `275cf0aa83be1677223c92aef0d046f3bbd1ee13` | `64b588e7b1f158434c7a632339a4aaf5b34ee377` | `32823685047` (success) |
+| `c382b45a2599053c123036ae71e8e960b405ba65` | `4202cf4ce0be78fcb3fcabc197ed200f8bf14ae2` | `32827772217` (success) |
+
+The installed SHA references in `PROTOTYPE_VALIDATION.md` deliberately remain
+the actual pre-rewrite artefact identifiers and now carry their canonical
+equivalents. Older identifiers documenting the separate pre-public identity
+rewrite remain historical records governed by that earlier private mapping;
+they are not members of this licensing-rewrite map.
+
+### Licence, branding, compatibility, and status
+
+- Root `LICENSE` is the complete unmodified GNU GPL version 3 text obtained
+  from GNU; `COPYRIGHT` separately preserves `Copyright (c) 2026 Luke
+  Stanbury`. Existing source files had no per-file licence headers to churn.
+- `TRADEMARKS.md` separately addresses the SoilSync name, logo, and official
+  project identity. It permits GPL rights and factual references while
+  requiring forks not to imply official status, sponsorship, endorsement, or
+  affiliation. It does not modify GPL software rights or claim registration.
+- Current HACS validator source at `hacs/integration` commit
+  `3249355704d1a716e637d4d044b6cb4ae72dc271` requires a detectable SPDX
+  identifier and an OSI-approved licence, explicitly caches `GPL-3.0` as
+  accepted, and tests it as passing. No unsupported licence field was added to
+  `hacs.json` or the integration manifest.
+- No runtime, defaults, state machine, services, entities, config flow,
+  storage, dependencies, or automated tests changed. No behavioural
+  specification text changed: version remains `0.1.0-spec.4`, with 134
+  normative IDs, 37 invariants, and 59 transitions. Product version remains
+  `0.1.0`.
+- No tag, GitHub Release, HACS default-store submission, or Home Assistant
+  Brands submission occurred. Phase A remains `[x] Complete`; B1 remains
+  `[!] Blocked`; B2 remains `[ ] Not started`; Slice 13 remains `[~] Partial`.
+  This governance task does not unblock or complete B1. Current authorization
+  returned to `None`.

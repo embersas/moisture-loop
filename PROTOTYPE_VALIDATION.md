@@ -5,6 +5,20 @@ required by `SPECIFICATION.md` §46. Automated tests, mocks, and source
 inspection are supporting context only and are never counted as live or
 physical evidence.
 
+> **Commit provenance after the licensing-history rewrite:** Source SHAs below
+> continue to identify the exact pre-rewrite artefacts that were installed,
+> deployed, or compared during the recorded validation. They are not silently
+> reattributed to rewritten commit objects. The canonical equivalents are
+> `dcf9036165b02c443e5cc8a5eddf0741676ffe65` ->
+> `a997c6096e6e7d13bb63d0d78bf63403ac1164e4`,
+> `3e4823c2358cd991d0cd0ff67c38b16d01e50158` ->
+> `43ca9bfa9902dc35b908beab15094dc0d8c52720`, and
+> `275cf0aa83be1677223c92aef0d046f3bbd1ee13` ->
+> `64b588e7b1f158434c7a632339a4aaf5b34ee377`. The rewritten commits have
+> byte-identical runtime and specification content; the rewrite changed only
+> licensing and evidence-reference metadata. Historical GitHub Actions and
+> live-deployment claims remain claims about the original SHAs.
+
 The live host, credentials, complete Registry UUIDs, household entity names,
 and MQTT details are intentionally omitted. Exact private identifiers are kept
 only for the duration of a test that needs them.

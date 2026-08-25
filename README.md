@@ -295,5 +295,14 @@ publication are not implied by the local icon or this repository metadata.
 
 ## License
 
-This software is licensed under GNU GPL v3 only (`GPL-3.0-only`); see `LICENSE`.
-Distributed modifications and derivative works are subject to the GPL requirements.
+SoilSync software is licensed under the GNU General Public License version 3
+only (`GPL-3.0-only`); see [LICENSE](LICENSE). Distributed modifications and
+derivative works are subject to the applicable GPL requirements.
+
+### Name and branding
+
+The GPL licence applies to the software code. The SoilSync name, logo, and
+official project branding are addressed separately in
+[TRADEMARKS.md](TRADEMARKS.md). Forks and derivative distributions must not
+falsely imply that they are official SoilSync releases or are endorsed by the
+official project.
