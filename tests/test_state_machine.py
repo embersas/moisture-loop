@@ -1941,6 +1941,50 @@ class TestStartupRecovery:
         )
         assert d2.transition_id == "T48"
 
+    def test_confirmed_off_releases_only_the_matching_blocker(self) -> None:
+        """F1 pure: T48 releases (record, integration_off_unconfirmed).
+
+        SPEC 11.3 step 5: confirmed terminal OFF persists the confirmation,
+        closes accounting, releases the slot and removes ONLY the matching
+        key.  T49 (OFF still unproven) must keep it instead.
+        """
+        armed = decide(
+            make_input(
+                ControllerState.WATERING,
+                StartupPersistedWatering(ActuatorFinding.ON),
+                session=auto_session(),
+                actuator=ACT_ON,
+            )
+        )
+        assert AddBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in armed.actions
+        off_at = NOW + timedelta(minutes=1)
+        confirmed = decide(
+            make_input(
+                ControllerState.WATERING,
+                OffConfirmed(off_at),
+                session=armed.session,
+                now=off_at,
+            )
+        )
+        assert confirmed.transition_id == "T48"
+        assert RemoveBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in confirmed.actions
+        assert ReleaseSlot() in confirmed.actions
+        # Only that one reason is ever removed by this row.
+        removals = [a for a in confirmed.actions if isinstance(a, RemoveBlocker)]
+        assert removals == [RemoveBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED)]
+        # The unproven branch keeps the key instead of releasing it.
+        unproven = decide(
+            make_input(
+                ControllerState.WATERING,
+                OffNotConfirmed(),
+                session=armed.session,
+                actuator=ACT_ON,
+            )
+        )
+        assert unproven.transition_id == "T49"
+        assert not [a for a in unproven.actions if isinstance(a, RemoveBlocker)]
+        assert AddBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in unproven.actions
+
     def test_unproven_commits_and_can_escalate_to_t49(self) -> None:
         d = decide(
             make_input(

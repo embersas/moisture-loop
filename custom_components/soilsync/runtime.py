@@ -572,6 +572,13 @@ class EntryRuntime:
             await self._defensive_reconciliation()
             raise ConfigEntryNotReady(f"run-id persistence failed: {err}") from err
 
+        # Durable actuator/sensor Registry identity is readable only after
+        # the Store is loaded.  Re-observe the public mapping so a verified
+        # same-UUID rename resolves before the first publication and cannot be
+        # misclassified as a missing/conflicting identity (SPEC 25.1 steps
+        # 5-6, 25.1.1).
+        self.coordinator.observe_current()
+
         # The coordinator consumes every generation observed during the
         # awaited Store/run work.  It publishes only the latest stable union.
         try:
@@ -632,7 +639,7 @@ class EntryRuntime:
                     entry_snapshot_fingerprint=snapshot.entry_snapshot_fingerprint,
                     applied_generation=snapshot.observed_generation,
                 ),
-                actuator_identity=self._durable_actuator_identity(zone),
+                actuator_identity=self._durable_actuator_identity(zone, current=False),
                 sensor_identity=SensorIdentity(
                     zone.sensor_identity.registry_entry_id,
                     zone.sensor_identity.last_known_entity_id,
@@ -640,23 +647,111 @@ class EntryRuntime:
             )
         return contexts
 
+    def _durable_identity_hints(self) -> dict[str, tuple[tuple[str, str | None], ...]]:
+        """Persisted durable Registry UUIDs for each current subentry.
+
+        A hint is offered only while the subentry still stores the exact
+        configured reference that produced that record.  An unchanged
+        reference whose durable UUID still resolves is the same entity under
+        a rename (SPEC 23.2 item 1, 25.1.1); a user reconfiguration to a
+        different entity changes the stored text and must therefore resolve
+        independently as the 24.4 A -> B replacement it is.
+        """
+        hints: dict[str, tuple[tuple[str, str | None], ...]] = {}
+        if not self.store.loaded:
+            return hints
+        for record in self.store.data.safety_records.values():
+            subentry_id = record.active_subentry_id
+            shadow = record.applied_config
+            if subentry_id is None or shadow is None:
+                continue
+            history = self.store.data.zone_histories.get(record.zone_history_id)
+            sensor_uuid = (
+                history.zone_runtime.sensor_identity.registry_entry_id
+                if history is not None
+                else None
+            )
+            hints[subentry_id] = (
+                (shadow.sensor_identity.last_known_entity_id, sensor_uuid),
+                (
+                    shadow.actuator_identity.last_known_entity_id,
+                    record.actuator_identity.registry_entry_id,
+                ),
+            )
+        return hints
+
+    @staticmethod
+    def _resolve_configured_entity(
+        registry: er.EntityRegistry,
+        configured_entity_id: str,
+        hint: tuple[str, str | None] | None,
+    ) -> tuple[str | None, str, bool]:
+        """Return ``(registry_entry_id, current_entity_id, ambiguous)``.
+
+        SPEC 25.1.1: a stored durable UUID still present in the Entity
+        Registry *is* the entity, and a different current entity ID for that
+        exact UUID is a rename.  SPEC 23.2 item 3 overrides that whenever the
+        configured reference has meanwhile been taken by a *different*
+        durable identity: two candidates then compete for one configured
+        zone, which is ambiguity and must fail closed rather than silently
+        pick either.  Textual resolution remains the fallback otherwise.
+        """
+        if hint is not None:
+            hinted_reference, durable_uuid = hint
+            if durable_uuid is not None and hinted_reference == configured_entity_id:
+                renamed = registry.async_get(durable_uuid)
+                if (
+                    renamed is not None
+                    and renamed.entity_id.split(".", 1)[0]
+                    == (configured_entity_id.split(".", 1)[0])
+                ):
+                    # The durable identity is retained either way, so the
+                    # record is never tombstoned by ambiguity and recovers as
+                    # soon as the competing claim goes away.
+                    competing = registry.async_get(configured_entity_id)
+                    return (
+                        renamed.id,
+                        renamed.entity_id,
+                        competing is not None and competing.id != durable_uuid,
+                    )
+        resolved = registry.async_get(configured_entity_id)
+        if resolved is not None:
+            return resolved.id, resolved.entity_id, False
+        return None, configured_entity_id, False
+
     def _build_immutable_snapshot(self, generation: int) -> ImmutableEntrySnapshot:
         """Copy the current public subentry mapping into immutable values."""
         registry = er.async_get(self.hass)
+        hints = self._durable_identity_hints()
         zones: list[ImmutableZoneSnapshot] = []
         for subentry_id, subentry in sorted(self.entry.subentries.items()):
             if subentry.subentry_type != "zone":
                 continue
             config = zone_config_from_subentry(dict(subentry.data))
-            sensor_entry = registry.async_get(config.moisture_sensor)
-            actuator_entry = registry.async_get(config.actuator)
+            zone_hints = hints.get(subentry_id)
+            sensor_uuid, current_sensor, _sensor_ambiguous = self._resolve_configured_entity(
+                registry,
+                config.moisture_sensor,
+                zone_hints[0] if zone_hints is not None else None,
+            )
+            actuator_uuid, current_actuator, actuator_ambiguous = self._resolve_configured_entity(
+                registry,
+                config.actuator,
+                zone_hints[1] if zone_hints is not None else None,
+            )
+            conflict_detail = (
+                f"configured actuator {config.actuator} for {subentry_id} now resolves to a "
+                "different Entity Registry identity than the durable identity already held"
+                if actuator_ambiguous
+                else None
+            )
             sensor_identity = AppliedEntityIdentity(
-                sensor_entry.id if sensor_entry is not None else None,
+                sensor_uuid,
                 config.moisture_sensor,
                 config.moisture_sensor.split(".", 1)[0],
             )
             actuator_identity = AppliedEntityIdentity(
-                actuator_entry.id if actuator_entry is not None else None,
+                actuator_uuid,
                 config.actuator,
                 config.actuator.split(".", 1)[0],
             )
@@ -674,16 +769,25 @@ class EntryRuntime:
                     sensor_identity=sensor_identity,
                     actuator_identity=actuator_identity,
                     config_fingerprint=fingerprint,
+                    current_sensor_entity_id=current_sensor,
+                    current_actuator_entity_id=current_actuator,
+                    identity_conflict_detail=conflict_detail,
                 )
             )
         return immutable_entry_snapshot(generation, zones)
 
     @staticmethod
-    def _durable_actuator_identity(zone: ImmutableZoneSnapshot) -> ActuatorIdentity:
+    def _durable_actuator_identity(
+        zone: ImmutableZoneSnapshot, *, current: bool = True
+    ) -> ActuatorIdentity:
+        # SPEC 23.2 item 1/PI24: last_known_entity_id is current addressing
+        # metadata, updated only after verified same-UUID resolution.
         domain = zone.actuator_identity.domain
         return ActuatorIdentity(
             registry_entry_id=zone.actuator_identity.registry_entry_id,
-            last_known_entity_id=zone.actuator_identity.last_known_entity_id,
+            last_known_entity_id=(
+                zone.current_actuator if current else zone.actuator_identity.last_known_entity_id
+            ),
             domain=domain,
             identity_status=(
                 IdentityStatus.REGISTRY_CONFIRMED
@@ -703,7 +807,7 @@ class EntryRuntime:
         return (
             record.active_subentry_id == zone.subentry_id
             and stored.identity_status is IdentityStatus.REGISTRY_UNAVAILABLE
-            and stored.last_known_entity_id == zone.actuator_identity.last_known_entity_id
+            and stored.last_known_entity_id == zone.current_actuator
         )
 
     async def _apply_configuration_snapshot(
@@ -784,7 +888,20 @@ class EntryRuntime:
         # proven OFF removes only that record's startup/external keys.
         for subentry_id, binding in self.bindings.items():
             zone = zones[subentry_id]
-            final = ActuatorAdapter(self.hass, zone.config.actuator).current()
+            record = self.store.data.safety_records.get(binding.safety_record_id)
+            history = (
+                self.store.data.zone_histories.get(record.zone_history_id)
+                if record is not None
+                else None
+            )
+            # SPEC 11.4/21: external_flow describes a genuinely non-session
+            # IDLE/DISABLED zone.  An actuator observed ON while this record
+            # owns a session is integration-owned possible flow, whose key is
+            # integration_off_unconfirmed and whose release belongs to the
+            # session's own OFF path.  Labelling it external here would leave
+            # a key that no OFF evidence for this record can clear.
+            session_owned = history is not None and history.zone_runtime.session is not None
+            final = ActuatorAdapter(self.hass, zone.current_actuator).current()
             if final.proven_off:
                 await self.slots.async_remove_blocker(
                     binding.safety_record_id,
@@ -795,10 +912,11 @@ class EntryRuntime:
                     BlockerReason.EXTERNAL_FLOW,
                 )
             elif final.observed_on:
-                await self.slots.async_add_blocker(
-                    binding.safety_record_id,
-                    BlockerReason.EXTERNAL_FLOW,
-                )
+                if not session_owned:
+                    await self.slots.async_add_blocker(
+                        binding.safety_record_id,
+                        BlockerReason.EXTERNAL_FLOW,
+                    )
             else:
                 await self.slots.async_add_blocker(
                     binding.safety_record_id,
@@ -835,7 +953,7 @@ class EntryRuntime:
         assessments: dict[str, object] = {}
         for zone in snapshot.zones:
             assessments[f"zone:{zone.subentry_id}"] = ActuatorAdapter(
-                self.hass, zone.config.actuator
+                self.hass, zone.current_actuator
             ).current()
         if not self.store.loaded:
             return assessments
@@ -933,7 +1051,7 @@ class EntryRuntime:
                 IdentityStatus.REGISTRY_UNAVAILABLE,
             ):
                 continue
-            config = self._config_from_shadow(record.applied_config)
+            config = self._config_from_record(record)
             controller = ZoneController(
                 self.hass,
                 record.zone_id,
@@ -945,6 +1063,7 @@ class EntryRuntime:
                 emit=self._make_emitter(record.zone_id, record.safety_record_id),
                 safety_record_id=record.safety_record_id,
                 authorization=self,
+                on_entity_renamed=self._make_rename_handler(record.zone_id),
             )
             history = self.store.data.zone_histories[record.zone_history_id]
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
@@ -983,7 +1102,7 @@ class EntryRuntime:
                 if zone.actuator_identity.registry_entry_id
                 else (
                     "text",
-                    zone.actuator_identity.last_known_entity_id,
+                    zone.current_actuator,
                 )
             )
             other = seen_current.get(identity_key)
@@ -1030,7 +1149,31 @@ class EntryRuntime:
             prior = original_active.get(zone.subentry_id)
             created_new = False
             current_uuid = zone.actuator_identity.registry_entry_id
-            current_entity = zone.actuator_identity.last_known_entity_id
+            current_entity = zone.current_actuator
+
+            if zone.identity_conflict_detail is not None:
+                # SPEC 23.2 item 3/25.5 item 8: competing durable identities
+                # for one configured reference are ambiguous.  Keep every
+                # record and its evidence, close admission, and Repair.
+                conflicts.append(zone.identity_conflict_detail)
+                for candidate in [
+                    record
+                    for record in records.values()
+                    if record.actuator_identity.registry_entry_id == current_uuid
+                    or record.active_subentry_id == zone.subentry_id
+                    or record.zone_id == zone.subentry_id
+                ]:
+                    records[candidate.safety_record_id] = candidate.evolve(
+                        identity_incident=IdentityIncident(
+                            IdentityIncidentKind.IDENTITY_CONFLICT,
+                            zone.identity_conflict_detail,
+                        ),
+                        blocker_reasons=self._with_blocker(
+                            candidate.blocker_reasons,
+                            BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
+                        ),
+                    )
+                continue
 
             exact = [
                 record
@@ -1202,7 +1345,7 @@ class EntryRuntime:
                 state=runtime_state,
                 sensor_identity=SensorIdentity(
                     zone.sensor_identity.registry_entry_id,
-                    zone.sensor_identity.last_known_entity_id,
+                    zone.current_sensor,
                 ),
                 zone_fault=zone_fault,
                 secondary_fault=secondary_zone_fault,
@@ -1245,7 +1388,7 @@ class EntryRuntime:
         return records, histories
 
     def _current_zone_fault(self, zone: ImmutableZoneSnapshot):
-        state = self.hass.states.get(zone.config.moisture_sensor)
+        state = self.hass.states.get(zone.current_sensor)
         observation = classify_moisture(
             state,
             state.last_reported if state is not None else None,
@@ -1296,6 +1439,7 @@ class EntryRuntime:
     def _reconcile_retained_record(
         self, record: SafetyRecord, history: ZoneHistory, assessment
     ) -> SafetyRecord:
+        record = self._retained_identity_after_rename(record)
         record = self._reconcile_active_record(record, history, assessment)
         resolved = assessment is not None
         identity = record.actuator_identity
@@ -1321,6 +1465,34 @@ class EntryRuntime:
             runtime_lifecycle=(
                 RuntimeLifecycle.RETIRED if safe_to_retire else RuntimeLifecycle.DELETE_PENDING
             )
+        )
+
+    def _retained_identity_after_rename(self, record: SafetyRecord) -> SafetyRecord:
+        """Update a tombstone's last-known entity ID after a verified rename.
+
+        SPEC 25.1.1: a stored ``registry_entry_id`` that still resolves *is*
+        that actuator, and a different current entity ID for the exact same
+        UUID is a rename.  Only addressing metadata changes; the lineage,
+        blockers, accounting and faults stay on the same record (PI24, TB8).
+        """
+        identity = record.actuator_identity
+        if identity.registry_entry_id is None or identity.domain is None:
+            return record
+        registry_entry = er.async_get(self.hass).async_get(identity.registry_entry_id)
+        if (
+            registry_entry is None
+            or registry_entry.entity_id == identity.last_known_entity_id
+            or registry_entry.entity_id.split(".", 1)[0] != identity.domain
+        ):
+            return record
+        _LOGGER.info(
+            "Retained safety record %s follows actuator rename %s -> %s (same Registry identity)",
+            record.safety_record_id,
+            identity.last_known_entity_id,
+            registry_entry.entity_id,
+        )
+        return record.evolve(
+            actuator_identity=replace(identity, last_known_entity_id=registry_entry.entity_id)
         )
 
     def _new_safety_record(
@@ -1366,7 +1538,7 @@ class EntryRuntime:
                 secondary_fault=None,
                 sensor_identity=SensorIdentity(
                     zone.sensor_identity.registry_entry_id,
-                    zone.sensor_identity.last_known_entity_id,
+                    zone.current_sensor,
                 ),
                 last_session_summary=None,
                 session=None,
@@ -1442,7 +1614,7 @@ class EntryRuntime:
                 return
             controller = self._create_controller(zone, record)
             history = self.store.data.zone_histories[record.zone_history_id]
-            assessment = ActuatorAdapter(self.hass, zone.config.actuator).current()
+            assessment = ActuatorAdapter(self.hass, zone.current_actuator).current()
             watering_recovery = (
                 history.zone_runtime.state is ControllerState.WATERING
                 and history.zone_runtime.session is not None
@@ -1503,7 +1675,7 @@ class EntryRuntime:
                 continue
             if not is_current():
                 return
-            config = self._config_from_shadow(record.applied_config)
+            config = self._config_from_record(record)
             controller = ZoneController(
                 self.hass,
                 record.zone_id,
@@ -1515,6 +1687,7 @@ class EntryRuntime:
                 emit=self._make_emitter(record.zone_id, record.safety_record_id),
                 safety_record_id=record.safety_record_id,
                 authorization=self,
+                on_entity_renamed=self._make_rename_handler(record.zone_id),
             )
             history = self.store.data.zone_histories[record.zone_history_id]
             assessment = ActuatorAdapter(self.hass, config.actuator).current()
@@ -1576,6 +1749,30 @@ class EntryRuntime:
             ):
                 await controller.async_detach()
                 self.retained_controllers.pop(record_id, None)
+
+    def _config_from_record(self, record: SafetyRecord) -> ZoneConfig:
+        """Retained-record configuration bound to current addressing.
+
+        The applied shadow keeps the configured subentry reference, while
+        ``actuator_identity``/``sensor_identity`` hold the entity IDs the same
+        durable Registry identities are addressable at now (SPEC 23.2 item 1).
+        A retained tombstone must command and observe the current entity.
+        """
+        assert record.applied_config is not None
+        history = self.store.data.zone_histories.get(record.zone_history_id)
+        sensor_entity_id = (
+            history.zone_runtime.sensor_identity.last_known_entity_id
+            if history is not None and history.zone_runtime.sensor_identity.last_known_entity_id
+            else record.applied_config.sensor_identity.last_known_entity_id
+        )
+        return replace(
+            self._config_from_shadow(record.applied_config),
+            moisture_sensor=sensor_entity_id,
+            actuator=(
+                record.actuator_identity.last_known_entity_id
+                or record.applied_config.actuator_identity.last_known_entity_id
+            ),
+        )
 
     @staticmethod
     def _config_from_shadow(shadow: AppliedConfigurationShadow) -> ZoneConfig:
@@ -1692,7 +1889,7 @@ class EntryRuntime:
         return ZoneController(
             self.hass,
             zone.subentry_id,
-            zone.config,
+            zone.current_config(),
             self.store,
             self.slots,
             run_id=self.run_id,
@@ -1700,7 +1897,35 @@ class EntryRuntime:
             emit=self._make_emitter(zone.subentry_id, record.safety_record_id),
             safety_record_id=record.safety_record_id,
             authorization=self,
+            on_entity_renamed=self._make_rename_handler(zone.subentry_id),
         )
+
+    def _make_rename_handler(self, zone_id: str):
+        """Reconcile durable metadata after a controller followed a rename.
+
+        The controller has already re-pointed its adapters/listeners under the
+        verified same-UUID rule without an observation gap.  Admission closes
+        synchronously here, then one ordinary reconciliation pass republishes
+        the applied shadow and current ``last_known_entity_id`` metadata.  The
+        zone fingerprint is unchanged, so this is never a T21/T39 change.
+        """
+
+        @callback
+        def _renamed(kind: str, old_entity_id: str, new_entity_id: str) -> None:
+            _LOGGER.info(
+                "Zone %s: configured %s renamed %s -> %s; same Registry identity retained",
+                zone_id,
+                kind,
+                old_entity_id,
+                new_entity_id,
+            )
+            self.coordinator.observe_current()
+            self.hass.async_create_task(
+                self._async_reconcile_and_sync_repairs(),
+                f"soilsync rename reconciliation {zone_id}",
+            )
+
+        return _renamed
 
     def _make_emitter(self, zone_id: str, safety_record_id: str | None = None):
         def emit(kind: str, payload: dict) -> None:
@@ -1866,6 +2091,21 @@ class EntryRuntime:
                         "Actuator identity incident for safety record %s: %s",
                         record.safety_record_id,
                         record.identity_incident.detail,
+                    )
+            else:
+                # A resolved incident must clear its exact-record Repair even
+                # when this runtime never raised it, because a reload or
+                # restart starts with an empty in-memory incident set and a
+                # stale identity Repair would otherwise outlive its cause.
+                for issue_type in (
+                    repairs.ISSUE_IDENTITY_CONFLICT,
+                    repairs.ISSUE_TOMBSTONE_ACTUATOR_MISSING,
+                ):
+                    repairs.async_delete_record_issue(
+                        self.hass,
+                        self.entry.entry_id,
+                        record.safety_record_id,
+                        issue_type,
                     )
 
         for issue_id in self._known_identity_incidents - current_identity_incidents:

@@ -14,7 +14,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .models import (
@@ -36,13 +36,53 @@ class ReconciliationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ImmutableZoneSnapshot:
-    """Normalized immutable values copied from one public ConfigSubentry."""
+    """Normalized immutable values copied from one public ConfigSubentry.
+
+    ``config``/``sensor_identity``/``actuator_identity`` keep the *configured*
+    subentry references together with the durable Registry UUID each one
+    resolves to, so ``config_fingerprint`` never moves for a textual rename
+    (§6, §9, §12.2, §23.2 item 1).  ``current_*_entity_id`` is the entity ID
+    that same durable identity is addressable at right now; it follows a
+    verified same-UUID rename (§25.1.1) and is what listeners, adapters,
+    service calls and ``last_known_entity_id`` metadata must use.
+    """
 
     subentry_id: str
     config: ZoneConfig
     sensor_identity: AppliedEntityIdentity
     actuator_identity: AppliedEntityIdentity
     config_fingerprint: str
+    current_sensor_entity_id: str | None = None
+    current_actuator_entity_id: str | None = None
+    identity_conflict_detail: str | None = None
+
+    @property
+    def current_sensor(self) -> str:
+        """Entity ID the configured moisture sensor is addressable at now."""
+        return self.current_sensor_entity_id or self.sensor_identity.last_known_entity_id
+
+    @property
+    def current_actuator(self) -> str:
+        """Entity ID the durable configured actuator is addressable at now."""
+        return self.current_actuator_entity_id or self.actuator_identity.last_known_entity_id
+
+    @property
+    def renamed(self) -> bool:
+        """Whether current addressing differs from the configured reference."""
+        return (
+            self.current_sensor != self.sensor_identity.last_known_entity_id
+            or self.current_actuator != self.actuator_identity.last_known_entity_id
+        )
+
+    def current_config(self) -> ZoneConfig:
+        """Configuration bound to the current addressable entity IDs."""
+        if not self.renamed:
+            return self.config
+        return replace(
+            self.config,
+            moisture_sensor=self.current_sensor,
+            actuator=self.current_actuator,
+        )
 
     def applied_shadow(
         self, *, entry_snapshot_fingerprint: str, applied_generation: int
@@ -127,7 +167,13 @@ def normalized_zone_fingerprint(
     actuator_identity: AppliedEntityIdentity,
     ha_timezone: str,
 ) -> str:
-    """Hash immutable normalized zone values, including Registry identities."""
+    """Hash immutable normalized zone values, including Registry identities.
+
+    The hashed entity IDs are the *configured* subentry references.  Durable
+    Entity Registry identity is the equivalence key (§6, §23.2 item 1), so a
+    verified same-UUID rename leaves this fingerprint byte-identical while a
+    genuine reconfiguration to a different actuator still changes it.
+    """
     settings = NormalizedZoneSettings.from_config(config)
     payload = {
         "version": 2,

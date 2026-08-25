@@ -378,6 +378,254 @@ async def env(hass, hass_storage, freezer):
     yield SimpleNamespace(hass=hass, storage=hass_storage, freezer=freezer, switch=switch)
 
 
+SWITCH_B = "switch.valve_2"
+
+
+def _with_second_record(data: StoreData, *, blockers, actuator_fault) -> StoreData:
+    """Add one Store-only record owning its own keyed blockers (F1-D).
+
+    The extra record is a durable tombstone for a *different* actuator: its
+    keys are ``(other_safety_record_id, reason)`` and can never be released by
+    another record's OFF evidence (SPEC 21, I19, ER8).
+    """
+    histories = dict(data.zone_histories)
+    records = dict(data.safety_records)
+    template = next(iter(records.values()))
+    histories["other-history"] = ZoneHistory(
+        zone_history_id="other-history",
+        active_subentry_id=None,
+        previous_subentry_ids=("other-zone",),
+        last_session_end_utc=None,
+        last_auto_session_start_utc=None,
+        zone_runtime=ZoneRuntime(
+            enabled=True,
+            state=ControllerState.FAULT,
+            zone_fault=None,
+            secondary_fault=None,
+            sensor_identity=SensorIdentity(None, SENSOR),
+            last_session_summary=None,
+            session=None,
+        ),
+        daily=None,
+    )
+    records["other-record"] = replace(
+        template,
+        safety_record_id="other-record",
+        zone_id="other-zone",
+        active_subentry_id=None,
+        previous_subentry_ids=("other-zone",),
+        safety_lineage_id="other-lineage",
+        zone_history_id="other-history",
+        runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+        actuator_identity=ActuatorIdentity(
+            registry_entry_id=None,
+            last_known_entity_id=SWITCH_B,
+            domain="switch",
+            identity_status=IdentityStatus.REGISTRY_UNAVAILABLE,
+            off_service="switch.turn_off",
+            confirm_timeout_s=30,
+        ),
+        blocker_reasons=blockers,
+        possible_flow_owner=PossibleFlowOwner.INTEGRATION,
+        actuator_fault=actuator_fault,
+        acknowledgement_required=actuator_fault is not None and actuator_fault.requires_user_ack,
+    )
+    return StoreData(
+        generation_id=data.generation_id,
+        store_revision=data.store_revision,
+        run=data.run,
+        zone_histories=histories,
+        safety_records=records,
+    )
+
+
+class TestF1RestartRecoveryBlockerRelease:
+    """Live-defect F1: exact OFF proof must release the matching blocker.
+
+    SPEC 11.3 step 5 and 21: confirmed terminal OFF persists the confirmation,
+    closes accounting, releases the slot and removes ONLY the matching
+    ``(safety_record_id, integration_off_unconfirmed)`` key.  T48 restart
+    recovery reaches the same confirmed-OFF finalization, so a proven
+    defensive OFF must not leave permanent resource occupancy (I18, I19).
+    """
+
+    async def test_f1a_proven_defensive_off_releases_matching_blocker(self, env) -> None:
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        env.switch.set_state("on")
+        await env.hass.async_block_till_done()
+        seed_store(
+            env.storage,
+            entry,
+            store_snapshot({zone_id: watering_record(NOW - timedelta(minutes=30))}),
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+
+        # Startup never resumed the pulse and drove the actuator OFF (I13).
+        assert env.switch.on_calls == 0
+        assert env.switch.off_calls >= 1
+        assert controller.session is None
+        assert controller.state is ControllerState.IDLE
+        summary = controller.last_summary
+        assert summary is not None
+        assert summary.reason is CompletionReason.RESTART_RECOVERY
+        assert summary.runtime_estimated
+
+        # The exact matching blocker is released and durably persisted.
+        record = runtime.store.data.safety_records[zone_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED not in record.blocker_reasons
+        assert record.possible_flow_owner is None
+        assert runtime.slots.blockers() == frozenset()
+
+        # Read back through a fresh Store: removal is durable, not in-memory.
+        reloaded = SafetyStore(env.hass, entry.entry_id, GEN)
+        classification, _ = await reloaded.async_classify_setup(True)
+        assert classification is SetupClassification.INITIALIZED_OK
+        persisted = reloaded.data.safety_records[zone_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED not in persisted.blocker_reasons
+        assert persisted.possible_flow_owner is None
+
+        # A later synthetic grant is possible again.
+        probe = await runtime.slots.async_request("probe-zone")
+        assert probe.granted.done()
+        await runtime.slots.async_release("probe-zone")
+        await advance(env, 901)  # clear the minimum AUTO interval
+        env.hass.states.async_set(SENSOR, "5")
+        await settle(env.hass)
+        assert env.switch.on_calls == 1
+        assert runtime.controllers[zone_id].state is ControllerState.WATERING
+        await runtime.async_unload()
+
+    async def test_f1b_unproven_off_retains_blocker_and_open_accounting(self, env) -> None:
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        env.switch.set_state("on")
+        env.switch.off_behavior = "silent"
+        await env.hass.async_block_till_done()
+        seed_store(
+            env.storage,
+            entry,
+            store_snapshot({zone_id: watering_record(NOW - timedelta(minutes=30))}),
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        for _ in range(3):
+            await advance(env, 30)
+
+        # T49: latched fault, retained key, still-open conservative accounting.
+        assert controller.state is ControllerState.FAULT
+        assert controller.active_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+        assert controller.session is not None
+        assert controller.session.runtime_estimation_reason is (
+            RuntimeEstimationReason.OFF_UNCONFIRMED
+        )
+        assert (zone_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in runtime.slots.blockers()
+        record = runtime.store.data.safety_records[zone_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
+        assert record.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+        assert not runtime.slots.snapshot().admission_open or runtime.slots.blockers()
+        await runtime.async_unload()
+
+    async def test_f1c_later_exact_off_closes_but_keeps_acknowledgement(self, env) -> None:
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        env.switch.set_state("on")
+        env.switch.off_behavior = "silent"
+        await env.hass.async_block_till_done()
+        seed_store(
+            env.storage,
+            entry,
+            store_snapshot({zone_id: watering_record(NOW - timedelta(minutes=30))}),
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        for _ in range(3):
+            await advance(env, 30)
+        assert controller.active_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+
+        # Later exact-identity terminal OFF evidence for the same actuator.
+        env.switch.set_state("off")
+        await settle(env.hass)
+        assert controller.session is None  # open accounting closed
+        assert controller.last_summary is not None
+        assert (zone_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED) not in (
+            runtime.slots.blockers()
+        )
+        record = runtime.store.data.safety_records[zone_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED not in record.blocker_reasons
+        # SPEC 11.3 step 6/26.1: the acknowledgement-required fault remains.
+        assert controller.state is ControllerState.FAULT
+        assert controller.active_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+        refused = await controller.async_manual_start(600.0)
+        assert refused.transition_id == "T41"
+        await runtime.async_unload()
+
+    async def test_f1d_recovery_clears_only_the_matching_record_and_reason(self, env) -> None:
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        env.switch.set_state("on")
+        env.hass.states.async_set(SWITCH_B, "on")
+        await env.hass.async_block_till_done()
+        seed_store(
+            env.storage,
+            entry,
+            _with_second_record(
+                store_snapshot({zone_id: watering_record(NOW - timedelta(minutes=30))}),
+                blockers=(
+                    BlockerReason.EXTERNAL_FLOW,
+                    BlockerReason.INTEGRATION_OFF_UNCONFIRMED,
+                ),
+                actuator_fault=FaultCode.ACTUATOR_OFF_TIMEOUT,
+            ),
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        assert controller.state is ControllerState.IDLE
+
+        blockers = runtime.slots.blockers()
+        assert (zone_id, BlockerReason.INTEGRATION_OFF_UNCONFIRMED) not in blockers
+        # The other record keeps BOTH of its own keys, including the same
+        # reason: one record's OFF evidence never clears another's (ER8).
+        assert ("other-record", BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in blockers
+        assert ("other-record", BlockerReason.EXTERNAL_FLOW) in blockers
+        other = runtime.store.data.safety_records["other-record"]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in other.blocker_reasons
+        assert BlockerReason.EXTERNAL_FLOW in other.blocker_reasons
+        assert other.actuator_fault is FaultCode.ACTUATOR_OFF_TIMEOUT
+        assert other.acknowledgement_required
+        # Global serialization still refuses every zone while any key remains.
+        probe = await runtime.slots.async_request("probe-zone")
+        assert not probe.granted.done()
+        await runtime.slots.async_cancel_request("probe-zone")
+        await runtime.async_unload()
+
+    async def test_f1e_startup_actuator_already_off_leaves_no_blocker(self, env) -> None:
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        seed_store(
+            env.storage,
+            entry,
+            store_snapshot({zone_id: watering_record(NOW - timedelta(minutes=45))}),
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        assert controller.state is ControllerState.IDLE
+        assert controller.session is None
+        summary = controller.last_summary
+        assert summary is not None
+        assert summary.runtime_estimation_reason is (
+            RuntimeEstimationReason.RESTART_FOUND_OFF_UNKNOWN_STOP
+        )
+        assert runtime.slots.blockers() == frozenset()
+        record = runtime.store.data.safety_records[zone_id]
+        assert record.blocker_reasons == ()
+        assert record.possible_flow_owner is None
+        assert runtime.slots.snapshot().admission_open
+        assert env.switch.on_calls == 0
+        await runtime.async_unload()
+
+
 class TestFirstInstallAndIdentity:
     async def test_first_install_transaction(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)

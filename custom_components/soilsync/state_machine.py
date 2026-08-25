@@ -810,6 +810,12 @@ def _finalize_watering(
         actions=(
             *extra_actions,
             PersistState("session_finalized"),
+            # §11.3 step 5: terminal OFF proof closes accounting, releases
+            # the slot and removes ONLY this record's matching
+            # integration_off_unconfirmed key.  T48 restart recovery reaches
+            # this row through the same OFF evidence, so exact defensive-OFF
+            # proof must not leave permanent resource occupancy behind.
+            RemoveBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED),
             ReleaseSlot(),
             EmitSessionFinished(),
             *clear_actions,
@@ -831,6 +837,9 @@ def _finalize_manual_complete(
     base_actions = (
         *extra_actions,
         PersistState("session_finalized"),
+        # §11.3 step 5, same exact-key release as every other confirmed-OFF
+        # WATERING exit; unrelated reasons/records stay untouched.
+        RemoveBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED),
         ReleaseSlot(),
         EmitSessionFinished(),
     )

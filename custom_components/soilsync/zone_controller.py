@@ -29,13 +29,14 @@ import math
 import uuid
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, tzinfo
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Context, Event, HomeAssistant, State, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_track_entity_registry_updated_event,
     async_track_point_in_time,
@@ -301,6 +302,22 @@ class MoistureAdapter:
             unsubscribe()
         self._unsubscribers = []
 
+    def async_rebind(self, entity_id: str) -> None:
+        """Follow a verified same-UUID rename with no observation gap.
+
+        New listeners are installed before the old ones are removed, so no
+        changed state or unchanged report can fall between them.
+        """
+        if entity_id == self._entity_id:
+            return
+        previous = self._unsubscribers
+        self._entity_id = entity_id
+        self._unsubscribers = []
+        if previous:
+            self.async_start()
+            for unsubscribe in previous:
+                unsubscribe()
+
     def scan_current(self) -> MoistureObservation:
         """Fallback scan: re-evaluate the latest stored report (§10.3).
 
@@ -341,16 +358,11 @@ class MoistureAdapter:
             return
         if action == "update" and "old_entity_id" in event.data:
             new_entity_id = event.data["entity_id"]
-            # Rename auto-fixup is a §46 prototype validation; instrument
-            # without inventing fallback semantics.
-            _LOGGER.warning(
-                "Configured moisture sensor %s was renamed to %s; "
-                "rename tracking is pending prototype validation",
-                self._entity_id,
-                new_entity_id,
-            )
-            if self._on_renamed is not None:
-                self._on_renamed(new_entity_id)
+            if new_entity_id == self._entity_id or self._on_renamed is None:
+                return
+            # §46 item 3 auto-fixup: the controller verifies durable identity
+            # and re-points this adapter; no fallback semantics are invented.
+            self._on_renamed(new_entity_id)
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +387,16 @@ class ActuatorAdapter:
     @property
     def entity_id(self) -> str:
         return self._entity_id
+
+    def async_rebind(self, entity_id: str) -> None:
+        """Re-point commands/observation after a verified same-UUID rename.
+
+        The Entity Registry UUID is durable identity; the entity ID is
+        current addressing metadata (§6, §23.2 item 1).  A rename can never
+        change the domain, so the OFF/ON service mapping is unchanged.
+        """
+        self._entity_id = entity_id
+        self._domain = entity_id.partition(".")[0]
 
     def assess(self, state: State | None) -> ActuatorAssessment:
         if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
@@ -465,6 +487,7 @@ class ZoneController:
         emit: Callable[[str, dict], None] | None = None,
         clock: Callable[[], datetime] | None = None,
         safety_record_id: str | None = None,
+        on_entity_renamed: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self._hass = hass
         self.zone_id = zone_id
@@ -488,6 +511,7 @@ class ZoneController:
         self._tz = local_tz
         self._authorization = authorization
         self._emit = emit if emit is not None else (lambda kind, payload: None)
+        self._on_entity_renamed = on_entity_renamed
         self._clock = clock if clock is not None else dt_util.utcnow
 
         self._lock = asyncio.Lock()
@@ -515,6 +539,7 @@ class ZoneController:
             config.sensor_max_age_s,
             sink=self._on_moisture,
             on_removed=self._on_sensor_removed,
+            on_renamed=self._on_sensor_renamed,
             clock=self._clock,
         )
         self._fingerprint = config_fingerprint(config, str(local_tz))
@@ -522,6 +547,7 @@ class ZoneController:
         self._timers: dict[TimerKind, Callable[[], None]] = {}
         self._watchdog_unsub: Callable[[], None] | None = None
         self._unsubscribers: list[Callable[[], None]] = []
+        self._actuator_unsubs: list[Callable[[], None]] = []
 
         self._session_task: asyncio.Task | None = None
         self._wake = asyncio.Event()
@@ -589,11 +615,7 @@ class ZoneController:
         # semantics: the stored last_reported, never the scan time).
         self._observation = self._adapter.scan_current()
         self._adapter.async_start()
-        self._unsubscribers.append(
-            async_track_state_change_event(
-                self._hass, [self._config.actuator], self._on_actuator_event
-            )
-        )
+        self._actuator_unsubs = self._install_actuator_listeners(self._config.actuator)
 
     async def async_detach(self) -> None:
         """Tear down listeners/timers/tasks; no state decisions here."""
@@ -623,9 +645,119 @@ class ZoneController:
             with contextlib.suppress(asyncio.CancelledError):
                 await off_task
         self._adapter.async_stop()
-        for unsubscribe in self._unsubscribers:
+        for unsubscribe in (*self._unsubscribers, *self._actuator_unsubs):
             unsubscribe()
         self._unsubscribers = []
+        self._actuator_unsubs = []
+
+    def _install_actuator_listeners(self, entity_id: str) -> list[Callable[[], None]]:
+        """Observe one actuator entity: state changes plus Registry updates."""
+        return [
+            async_track_state_change_event(self._hass, [entity_id], self._on_actuator_event),
+            async_track_entity_registry_updated_event(
+                self._hass, entity_id, self._on_actuator_registry_update
+            ),
+        ]
+
+    def _durable_registry_entry_id(self, actuator: bool) -> str | None:
+        """Read the persisted durable Registry UUID for this zone."""
+        if not self._store.loaded:
+            return None
+        record = self._store.data.safety_records.get(self.safety_record_id)
+        if record is None:
+            return None
+        if actuator:
+            return record.actuator_identity.registry_entry_id
+        history = self._store.data.zone_histories.get(record.zone_history_id)
+        if history is None:
+            return None
+        return history.zone_runtime.sensor_identity.registry_entry_id
+
+    def _verified_rename_target(self, new_entity_id: str, current: str, *, actuator: bool) -> bool:
+        """Whether ``new_entity_id`` is the same durable identity renamed.
+
+        §23.2 item 1/§25.1.1: only an exact Entity Registry UUID match proves
+        equivalence.  Anything else fails closed here and is left to ordinary
+        reconciliation, which raises the exact-record identity Repair.
+        """
+        durable = self._durable_registry_entry_id(actuator)
+        if durable is None:
+            _LOGGER.error(
+                "Zone %s: %s renamed to %s without a durable Registry identity; "
+                "runtime addressing is not updated",
+                self.zone_id,
+                "actuator" if actuator else "moisture sensor",
+                new_entity_id,
+            )
+            return False
+        entry = er.async_get(self._hass).async_get(new_entity_id)
+        if entry is None or entry.id != durable:
+            _LOGGER.error(
+                "Zone %s: %s rename %s -> %s does not resolve to the stored Registry "
+                "identity; failing closed",
+                self.zone_id,
+                "actuator" if actuator else "moisture sensor",
+                current,
+                new_entity_id,
+            )
+            return False
+        return entry.entity_id.split(".", 1)[0] == current.split(".", 1)[0]
+
+    @callback
+    def _on_actuator_registry_update(self, event: Event) -> None:
+        """Follow a verified actuator rename with no observation gap."""
+        data = event.data
+        if data.get("action") != "update" or "old_entity_id" not in data:
+            return
+        new_entity_id = data["entity_id"]
+        current = self._config.actuator
+        if new_entity_id == current:
+            return
+        if not self._verified_rename_target(new_entity_id, current, actuator=True):
+            return
+        # Subscribe to the new entity ID before dropping the old listeners so
+        # no ON/OFF state change can be missed across the rename, and before
+        # Core removes the old state object, so the removal of the old entity
+        # ID is never observed as actuator unavailability.
+        previous = self._actuator_unsubs
+        self._config = replace(self._config, actuator=new_entity_id)
+        self._actuator.async_rebind(new_entity_id)
+        self._actuator_unsubs = self._install_actuator_listeners(new_entity_id)
+        for unsubscribe in previous:
+            unsubscribe()
+        self._fingerprint = config_fingerprint(self._config, str(self._tz))
+        state = self._hass.states.get(new_entity_id)
+        if state is not None:
+            self._assessment = self._actuator.assess(state)
+        _LOGGER.info(
+            "Zone %s: actuator rename %s -> %s tracked by durable Registry identity",
+            self.zone_id,
+            current,
+            new_entity_id,
+        )
+        self._notify_listeners()
+        if self._on_entity_renamed is not None:
+            self._on_entity_renamed("actuator", current, new_entity_id)
+
+    def _on_sensor_renamed(self, new_entity_id: str) -> None:
+        """Follow a verified moisture-sensor rename (§10.4 registry-first)."""
+        current = self._config.moisture_sensor
+        if new_entity_id == current:
+            return
+        if not self._verified_rename_target(new_entity_id, current, actuator=False):
+            return
+        self._config = replace(self._config, moisture_sensor=new_entity_id)
+        self._adapter.async_rebind(new_entity_id)
+        self._fingerprint = config_fingerprint(self._config, str(self._tz))
+        _LOGGER.info(
+            "Zone %s: moisture sensor rename %s -> %s tracked by durable Registry identity",
+            self.zone_id,
+            current,
+            new_entity_id,
+        )
+        self._notify_listeners()
+        if self._on_entity_renamed is not None:
+            self._on_entity_renamed("moisture sensor", current, new_entity_id)
 
     def begin_quiescing(self) -> None:
         """Synchronously revoke commands/timers for changed/deleted config."""
@@ -1044,20 +1176,27 @@ class ZoneController:
                 # ON without an integration command: external (§11.4).
                 await self._decide_and_apply_locked(ExternalActuatorOn())
                 return
-            if assessment.proven_off and not previous.proven_off:
-                # Terminal OFF proof always releases this zone's startup
-                # not-proven-off key (exact-key, idempotent; §21, §25.4).
+            if assessment.proven_off:
+                # §21/§25.4: observed terminal OFF releases this record's
+                # exact not-proven-off key.  The release is keyed on the
+                # evidence, not on a state *transition*: a key added while
+                # the actuator was momentarily unobservable (reconciliation
+                # during an Entity Registry rename, for example) would
+                # otherwise never clear.  Removal is idempotent and touches
+                # no other record or reason.
                 await self._slots.async_remove_blocker(
                     self.safety_record_id, BlockerReason.ACTUATOR_NOT_PROVEN_OFF
                 )
-                if off_op_active:
-                    return  # the OFF operation consumes this proof
-                if self._inflight_on is not None:
-                    # OFF observed before an in-flight ON returns cannot
-                    # close/release the session: the command may still reach
-                    # hardware afterwards.  Post-call compensation owns it.
-                    return
-                await self._decide_and_apply_locked(ExternalActuatorOff(observed_at))
+                if not previous.proven_off:
+                    if off_op_active:
+                        return  # the OFF operation consumes this proof
+                    if self._inflight_on is not None:
+                        # OFF observed before an in-flight ON returns cannot
+                        # close/release the session: the command may still
+                        # reach hardware afterwards.  Post-call compensation
+                        # owns it.
+                        return
+                    await self._decide_and_apply_locked(ExternalActuatorOff(observed_at))
 
     # -- decide/apply core -------------------------------------------------------
 

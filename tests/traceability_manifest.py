@@ -138,14 +138,39 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             HA,
         ),
     ),
-    "PI12": ha(
-        "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi12_found_on_defensive_off_and_estimate"
+    "PI12": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi12_found_on_defensive_off_and_estimate",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1a_proven_defensive_off_releases_matching_blocker",
+            HA,
+        ),
+        Evidence(
+            "tests/test_state_machine.py::TestStartupRecovery::test_confirmed_off_releases_only_the_matching_blocker",
+            PURE,
+        ),
     ),
-    "PI13": ha(
-        "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi13_found_off_estimates_to_reconciliation"
+    "PI13": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi13_found_off_estimates_to_reconciliation",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1e_startup_actuator_already_off_leaves_no_blocker",
+            HA,
+        ),
     ),
-    "PI14": ha(
-        "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi14_unproven_actuator_blocks_and_faults"
+    "PI14": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi14_unproven_actuator_blocks_and_faults",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1b_unproven_off_retains_blocker_and_open_accounting",
+            HA,
+        ),
     ),
     "PI15": ha(
         "tests/test_lifecycle.py::TestPersistedWateringRecovery::test_pi15_large_downtime_exhausts_budget"
@@ -216,11 +241,29 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             "tests/test_storage.py::TestVerifiedMigration::test_pi23_migration_payload_tamper", HA
         ),
     ),
-    "PI24": ha(
-        "tests/test_reconciliation.py::TestRuntimeReconciliation::test_registry_rename_reuses_same_record"
+    "PI24": both(
+        Evidence(
+            "tests/test_reconciliation.py::TestRuntimeReconciliation::test_registry_rename_reuses_same_record",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r1_idle_rename_keeps_one_record_and_follows_addressing",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r9_native_delete_after_rename_keeps_a_safe_tombstone",
+            HA,
+        ),
     ),
-    "PI25": ha(
-        "tests/test_reconciliation.py::TestRuntimeReconciliation::test_same_entity_id_new_registry_uuid_fails_closed"
+    "PI25": both(
+        Evidence(
+            "tests/test_reconciliation.py::TestRuntimeReconciliation::test_same_entity_id_new_registry_uuid_fails_closed",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r6_entity_id_reuse_by_a_different_uuid_fails_closed",
+            HA,
+        ),
     ),
     "PI26": both(
         Evidence(
@@ -233,6 +276,10 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
         ),
         Evidence(
             "tests/test_stage4_on_gate.py::TestTerminalAndOffRaces::test_same_record_reactivation_retains_unconfirmed_open_accounting",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r5_restart_after_rename_resolves_by_registry_uuid",
             HA,
         ),
     ),
@@ -263,8 +310,19 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "AC3": ha(
         "tests/test_lifecycle.py::TestShutdownAndReload::test_shutdown_fallback_cancels_and_best_effort_off"
     ),
-    "AC4": ha(
-        "tests/test_zone_controller.py::TestTerminationRaces::test_ac4_off_timeout_delayed_proof_closes_later"
+    "AC4": both(
+        Evidence(
+            "tests/test_zone_controller.py::TestTerminationRaces::test_ac4_off_timeout_delayed_proof_closes_later",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1c_later_exact_off_closes_but_keeps_acknowledgement",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r10_rename_during_an_off_operation_keeps_one_off_path",
+            HA,
+        ),
     ),
     "ER1": pure(
         "tests/test_slot_manager.py::TestKeyedBlockers::test_er1_external_flow_blocks_other_zone"
@@ -284,11 +342,25 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "ER6": pure(
         "tests/test_slot_manager.py::TestStartupGating::test_er6_no_grant_before_reconciliation_completes"
     ),
-    "ER7": pure(
-        "tests/test_slot_manager.py::TestKeyedBlockers::test_er7_reasons_coexist_and_release_independently"
+    "ER7": both(
+        Evidence(
+            "tests/test_slot_manager.py::TestKeyedBlockers::test_er7_reasons_coexist_and_release_independently",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1d_recovery_clears_only_the_matching_record_and_reason",
+            HA,
+        ),
     ),
-    "ER8": pure(
-        "tests/test_slot_manager.py::TestAdversarialInterleavings::test_er8_adversarial_interleaving_with_requests"
+    "ER8": both(
+        Evidence(
+            "tests/test_slot_manager.py::TestAdversarialInterleavings::test_er8_adversarial_interleaving_with_requests",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease::test_f1d_recovery_clears_only_the_matching_record_and_reason",
+            HA,
+        ),
     ),
     "ER9": ha(
         "tests/test_zone_controller.py::TestExternalInterference::test_er9_external_off_during_watering"
@@ -314,6 +386,10 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
         ),
         Evidence(
             "tests/test_lifecycle.py::TestShutdownAndReload::test_lc3_generic_reload_terminates_and_keeps_run_ids",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r4_reload_after_rename_loads_and_reuses_the_record",
             HA,
         ),
     ),
@@ -347,6 +423,14 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             "tests/test_reconciliation.py::TestRuntimeReconciliation::test_native_delete_watering_uses_config_changed_and_no_resurrection",
             HA,
         ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r2_rename_during_watering_does_not_terminate_the_session",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r3_rename_during_soaking_keeps_the_same_session",
+            HA,
+        ),
     ),
     # Native deletion and final-ON.
     "ND1": ha(
@@ -355,8 +439,15 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "ND2": ha(
         "tests/test_reconciliation.py::TestRuntimeReconciliation::test_listener_is_single_and_observation_closes_admission"
     ),
-    "ND3": ha(
-        "tests/test_config_flow.py::TestNativeSubentryDeletion::test_idle_delete_uses_real_websocket_path_without_reload_and_keeps_safety_record"
+    "ND3": both(
+        Evidence(
+            "tests/test_config_flow.py::TestNativeSubentryDeletion::test_idle_delete_uses_real_websocket_path_without_reload_and_keeps_safety_record",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r9_native_delete_after_rename_keeps_a_safe_tombstone",
+            HA,
+        ),
     ),
     "ND4": ha(
         "tests/test_config_flow.py::TestNativeSubentryDeletion::test_watering_auto_native_delete_closes_flow_and_final_gate"
@@ -445,9 +536,32 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             "tests/test_reconciliation.py::TestRuntimeReconciliation::test_store_only_missing_identity_stays_delete_pending",
             HA,
         ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r1_rename_keeps_observation_and_off_ability",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r7_missing_durable_identity_fails_closed",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestRenameVerificationFailsClosed::test_rename_without_durable_identity_is_refused",
+            HA,
+        ),
     ),
-    "TB9": ha(
-        "tests/test_reconciliation.py::TestRuntimeReconciliation::test_same_entity_id_new_registry_uuid_fails_closed"
+    "TB9": both(
+        Evidence(
+            "tests/test_reconciliation.py::TestRuntimeReconciliation::test_same_entity_id_new_registry_uuid_fails_closed",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r6_entity_id_reuse_by_a_different_uuid_fails_closed",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestRenameVerificationFailsClosed::test_rename_to_a_different_registry_identity_is_refused",
+            HA,
+        ),
     ),
     "TB10": both(
         Evidence(
@@ -456,6 +570,10 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
         ),
         Evidence(
             "tests/test_stage4_on_gate.py::TestTerminalAndOffRaces::test_same_record_reactivation_retains_unconfirmed_open_accounting",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r5_restart_after_rename_resolves_by_registry_uuid",
             HA,
         ),
     ),
@@ -573,8 +691,15 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "RC7": ha(
         "tests/test_config_flow.py::TestNativeSubentryDeletion::test_rapid_two_zone_native_deletion_materializes_both_without_reload"
     ),
-    "RC8": ha(
-        "tests/test_config_flow.py::TestFlowReconciliationBursts::test_add_reconfigure_delete_before_first_application_latest_empty_wins"
+    "RC8": both(
+        Evidence(
+            "tests/test_config_flow.py::TestFlowReconciliationBursts::test_add_reconfigure_delete_before_first_application_latest_empty_wins",
+            HA,
+        ),
+        Evidence(
+            "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r8_rename_racing_reconciliation_publishes_the_latest_snapshot",
+            HA,
+        ),
     ),
     "RC9": both(
         Evidence(

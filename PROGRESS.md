@@ -6,15 +6,15 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`; the 2026-08-24 Slice 13 Phase A continuation closed `[~] Partial`. Phase B remains explicitly unauthorized and `[ ] Not started`.
+- Current authorized work: `None`; the 2026-08-25 Slice 13 Phase A live-defect remediation closed `[~] Partial`. Phase B remains explicitly unauthorized and `[ ] Not started`.
 - Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository `https://github.com/embersas/soilsync`.
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 838 tests with the one deliberate pure-boundary skip; pure passes 436/436. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
+- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Only the unfinished Phase A items and the separately authorized Phase B physical-water items listed under Slice 13 remain. No release/submission or specification stage is authorized.`
+- Next implementation work: `Only Phase A item A5 (a clean live observation window longer than two hours with an unchanged deployed-sensor report) and the separately authorized Phase B physical-water items listed under Slice 13 remain. No release/submission or specification stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 in run 32705144394 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives the same exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
-- Slice 13: `[~] Partial. Prior live HA/HACS baseline evidence and the 82.525-minute deployed-sensor cadence sample are preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. The Phase A continuation is partial; Phase B is not started.`
+- Slice 13: `[~] Partial. Prior live HA/HACS baseline evidence and the 82.525-minute deployed-sensor cadence sample are preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. After the 2026-08-25 remediation, A1/A2/A3/A4/A6 are PASS and A5 alone is partial; Phase B is not started.`
 - Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial until every applicable Phase A item and the separately authorized Phase B physical-water items are complete. No synthetic runtime result will be described as physical evidence, and no prototype absence is recorded as a pass.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
@@ -50,7 +50,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
 | 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
-| 13 | Prototype validations | [~] Partial; Phase A non-water validation partial, Phase B not started |
+| 13 | Prototype validations | [~] Partial; Phase A A1-A4/A6 PASS and A5 partial, Phase B not started |
 
 Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
 
@@ -1497,7 +1497,7 @@ None. Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 
 
 ### Status
 
-`[~] Partial — Phase A non-water live validation is partial; Phase B physical-water validation is [ ] Not started`
+`[~] Partial — Phase A non-water live validation is partial (A1, A2, A3, A4 and A6 PASS; A5 outstanding); Phase B physical-water validation is [ ] Not started`
 
 ### Phase split
 
@@ -2727,3 +2727,191 @@ PROGRESS.md updated:
   B1 physical valve matrix and B2 active-flow shutdown OFF timing. Slice 13
   remains `[~] Partial`.
 - Current authorization returned to `None`.
+
+## Session Log — 2026-08-25 (Slice 13 Phase A live-defect remediation)
+
+### Authorization and method
+
+- The user explicitly authorized only SoilSync **Slice 13 Phase A live-defect
+  remediation for findings F1, F2 and F3**, using Claude Opus 5 at maximum
+  reasoning with browser automation and the existing self-hosted SSH path to
+  the live Home Assistant host. Phase B physical water, releases, tags, version
+  bumps, HACS default-store submission, Brands submission, and specification
+  changes were not authorized and did not occur.
+- Before any code or live change, `SPECIFICATION.md`, `PROGRESS.md`,
+  `PROTOTYPE_VALIDATION.md`, `README.md` and `DEVELOPMENT.md` were read in full,
+  and the startup/reconciliation, persisted-WATERING recovery, OFF-confirmation,
+  blocker-ownership, SlotManager, actuator observation/identity, Registry
+  listener, immutable snapshot, applied shadow, reconciliation generation,
+  adapter, Repairs, reload/setup-retry and final-ON implementation and their
+  mapped tests were inspected. Local `HEAD`, `origin/main` and `github/main` all
+  matched the documented baseline `a81f1dc8969c1b83678f1993851b69272df957de`.
+- The dedicated 2026-08-24 browser profile no longer existed, so the operator was
+  asked how to proceed and chose to sign in to Home Assistant themselves in the
+  connected Chrome browser. No credential, cookie, token, or password was
+  requested, entered, read, printed, stored, or committed at any point; the
+  authenticated frontend session was used through supported websocket and REST
+  APIs only.
+
+### Specification review outcome
+
+The working hypothesis was confirmed in full and `SPECIFICATION.md` was **not**
+changed. No normative ID, invariant, or transition was added; totals remain
+134 / 37 / 59.
+
+- **F1 — implementation defect against existing spec.4.** §11.3 step 5 requires
+  that confirmed terminal OFF persists the confirmation, closes accounting,
+  releases the slot and removes the corresponding
+  `integration_off_unconfirmed` blocker; §21 allows release exactly when the
+  actuator is observed terminal OFF; §25.2 routes startup persisted WATERING
+  through that same confirmed-OFF finalization (T48). The rule already existed.
+- **F2 — implementation defect against existing spec.4.** §6, §23.2 item 1,
+  §25.1.1 bullet 1, §35.11, §40 and I35 make the Entity Registry UUID durable
+  identity and a different current entity ID for that exact UUID a rename of the
+  same actuator, with `last_known_entity_id` updated after verified resolution.
+  §14 T21/T39 fire on reconfiguration or deletion reconciliation, neither of
+  which a Registry rename is, so terminating sessions as `CONFIG_CHANGED` for a
+  textual rename was never specified.
+- **F3 — consequence of F2, not independent.** Root-cause analysis found a
+  single cause: the immutable snapshot builder resolved the configured actuator
+  by entity ID alone. While loaded that lost the durable UUID and moved the
+  fingerprints (F2); after a reload the same unresolvable reference additionally
+  reached the identity-conflict classification and failed setup (F3).
+
+### Root causes and fixes
+
+- **F1.** `state_machine.py::_finalize_watering` (and its
+  `_finalize_manual_complete` branch) persisted state, released the slot and
+  emitted `session_finished` on confirmed OFF but never emitted the matching
+  `RemoveBlocker`, unlike T33 and the delayed-accounting closure. The exact-key
+  removal is now emitted there. T49's unproven-OFF branch still retains the key,
+  other reasons and other records are untouched, and `ACTUATOR_OFF_TIMEOUT`
+  acknowledgement semantics are unchanged.
+- **F2/F3.** `runtime.py::_build_immutable_snapshot` now resolves each
+  configured entity durable-UUID-first, honouring a record's persisted
+  `registry_entry_id` only while the subentry still stores the exact configured
+  reference that produced it, so a genuine A -> B reconfiguration still resolves
+  independently. `ImmutableZoneSnapshot` separates the configured subentry
+  reference — which alone enters `config_fingerprint`, making a verified rename
+  a non-change — from the current addressable entity ID, which becomes
+  `actuator_identity.last_known_entity_id`. `ZoneController` installs
+  `async_track_entity_registry_updated_event` for the actuator and wires the
+  moisture adapter's existing rename hook; on a rename it verifies the candidate
+  against the stored durable UUID and then re-points adapter, state listener and
+  configuration, subscribing to the new entity ID before unsubscribing the old
+  so no ON/OFF change is missed and the removal of the old state object is never
+  read as actuator loss. Unverifiable candidates change nothing and fall through
+  to ordinary fail-closed reconciliation. A configured reference taken over by a
+  different durable identity while the stored one still exists is explicit
+  ambiguity: every record is retained, admission closes, and the exact-record
+  `actuator_identity_conflict` Repair is raised. A resolved incident now clears
+  its exact-record Repair even after a reload, closing the 2026-08-24
+  observation that the conflict Repair did not auto-clear on recovery.
+- **Two further defects of the same fail-closed family, found by the
+  remediation live run and fixed in it.** The final actuator re-read in
+  `_apply_configuration_snapshot` labelled any actuator observed ON as
+  `external_flow` without §11.4's "genuinely non-session IDLE or DISABLED"
+  condition, so reconciliation during WATERING relabelled the zone's own
+  integration-owned flow as external and left a key that this record's own OFF
+  evidence could not release; that branch is now guarded by the same session
+  condition `_reconcile_active_record` already applies. Separately,
+  `_async_actuator_change` released `actuator_not_proven_off` only on a
+  proven-OFF *transition*, so a key added while the actuator was momentarily
+  unobservable could survive indefinitely; §21 and §25.4 key that release on
+  observed terminal OFF, so the removal now follows the evidence and the
+  transition guard is retained only for the `ExternalActuatorOff` dispatch.
+
+### Automated regression actually run
+
+- Pure (no `homeassistant` installed, Python 3.14.6): **437 passed**;
+  `state_machine.py` 100% branch.
+- Mandatory Home Assistant 2025.9.0 (Python 3.13.12): HA1 contract 12/12;
+  **860 passed, 1 skipped** (the documented pure-boundary skip); overall
+  **92.7% branch**, `state_machine.py` 100% branch.
+- Supported-current Home Assistant 2026.8.3 (Python 3.14.6): contract 12/12;
+  complete suite with branch coverage. The supported-current environment was
+  recreated because its previous interpreter no longer existed; the two
+  machine-local Windows shims it needs (`fcntl`, `resource`) live only inside
+  that virtualenv and are never part of the repository or CI.
+- Executed traceability: **134/134 normative IDs, I1-I37, T1-T59**, with only
+  the documented pure-boundary skip.
+- Quality: `ruff check`, `ruff format --check`, `git diff --check`, JSON/YAML
+  parsing, `strings.json`/`translations/en.json` key parity (206 keys),
+  service/icon key parity, manifest version `0.1.0`, empty runtime
+  requirements, and `hacs.json` minimum `2025.9.0` all clean.
+- New deterministic regression, all mocked-time with no wall-clock sleeps:
+  five F1 cases in `tests/test_lifecycle.py::TestF1RestartRecoveryBlockerRelease`,
+  one pure T48/T49 case in `tests/test_state_machine.py::TestStartupRecovery`,
+  and fifteen rename cases in the new `tests/test_rename_tracking.py`, which
+  drives the real config flow, real setup, real platforms and the real Entity
+  Registry. Verified substantive: with the production fix stashed, three of the
+  five F1 cases and nine of the eleven rename cases fail; the two that still
+  pass are the fail-closed guards that must not regress.
+- Traceability evidence was mapped onto existing IDs only — PI12, PI13, PI14,
+  PI24, PI25, PI26, AC4, ER7, ER8, LC3, LC13, ND3, RC8, TB8, TB9, TB10.
+
+### Live regression actually run
+
+Deployed to the same live Home Assistant instance (Core 2026.7.2, Container on
+Docker) by replacing `/config/custom_components/soilsync` from the exact working
+tree, verified by matching MD5 sums. All actuator testing used temporary
+`template` switches whose stored configuration was read back from the live
+config store and targets only its own dedicated `input_boolean`; a full
+1685-entity before/after state diff around a deliberate ON and OFF showed the
+switch and its backing helper as the only causally related changes.
+
+- **F1 — PASS.** A bounded synthetic MANUAL session was running with the
+  actuator ON when Home Assistant was killed with SIGKILL and restarted, giving a
+  genuinely unclean run. Startup did not resume the pulse, drove the actuator to
+  proven OFF, finalized `restart_recovery` with `runtime_estimated: true`,
+  `off_unconfirmed`, closed accounting and charged the daily budget — and the
+  exact `integration_off_unconfirmed` key was **removed**, read back from the
+  persisted Store. A second record holding `external_flow` and
+  `actuator_not_proven_off` kept both keys, proving per-record and per-reason
+  isolation. After that second actuator was proven OFF, a new synthetic session
+  was granted and ran normally. No fault and no Repair at any point.
+- **F2 — PASS.** A supported Entity Registry rename executed **during** an
+  active synthetic session: runtime addressing followed the rename, the Registry
+  UUID and `safety_record_id`/`safety_lineage_id`/`zone_history_id` were
+  unchanged, the zone and entry fingerprints were unchanged, the session stayed
+  `watering` with `possible_flow_owner: integration` and later ended normally as
+  `user_stop`, no Repair was raised, and a further bounded synthetic manual
+  session completed against the renamed entity.
+- **F3 — PASS.** With the rename left in place, a reload returned the entry to
+  `loaded` with no `setup_retry`, no `actuator_identity_conflict`, the same exact
+  record/lineage/history/UUID, exactly two safety records, and the daily budget
+  and minimum-interval history preserved. A full restart resolved the same
+  Registry UUID with identical results, and synthetic watering remained
+  functional. The original entity ID was then restored and verified.
+
+### Safety, cleanup, and closeout
+
+- **Zero physical irrigation ON or open commands were issued.** No physical
+  valve, irrigation switch, irrigation automation, or script was touched, and
+  the one real moisture sensor was not used at all in this run.
+- Both synthetic zone subentries were deleted through the native supported
+  websocket path and retired cleanly: both tombstones `retired`, no blockers, no
+  faults, no acknowledgement requirement, no identity incidents. The SoilSync
+  config entry, all four temporary `template` helper entries, and all three
+  temporary input helpers were then removed. Verified end state: 0 SoilSync
+  config entries, 0 SoilSync devices, 0 SoilSync registry entities, 0 SoilSync
+  Repairs, and no ON irrigation switch or valve anywhere in the instance.
+- Home Assistant is healthy; SoilSync logged no error. SoilSync intentionally
+  remains installed, now running the remediation candidate; the previously
+  installed HACS build is retained outside the integration scan path at
+  `/opt/docker/homeassistant/soilsync-backups/` as a rollback copy, and HACS
+  still records the older commit until a normal HACS update is performed.
+- Runtime Store files for removed config entries remain in `.storage` as inert
+  orphans, as they did before this run. This project does not hand-edit or
+  delete Home Assistant `.storage` data.
+- Findings F1, F2 and F3 are reclassified from `[?] Requires specification
+  review` to implementation defects against existing spec.4 and are now
+  `RESOLVED`. The original 2026-08-24 finding text is preserved verbatim in
+  `PROTOTYPE_VALIDATION.md`; the original caution was correct in method, and only
+  the conclusion that spec.4 was insufficient did not survive the fuller review.
+- A3 moves to `PASS`. A5 remains `[~] Partial` pending a clean live observation
+  window longer than two hours with an unchanged deployed-sensor report. Phase A
+  therefore closes `[~] Partial` for A5 alone, Phase B remains `[ ] Not started`
+  (B1 physical valve matrix and B2 active-flow shutdown OFF timing), and Slice 13
+  remains `[~] Partial`.
+- `SPECIFICATION.md` remains unchanged. Current authorization returned to `None`.

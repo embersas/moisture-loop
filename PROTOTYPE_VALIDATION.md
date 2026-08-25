@@ -27,6 +27,7 @@ only for the duration of a test that needs them.
 | Initial validation date | 2026-08-23 (Australia/Brisbane) |
 | Phase A continuation date | 2026-08-24 (Australia/Brisbane) |
 | Phase A live-execution date | 2026-08-24; all times below are UTC as reported by the live instance |
+| Phase A remediation date | 2026-08-25 (Australia/Brisbane); live-instance UTC timestamps below run 2026-08-24T22:57Z to 2026-08-24T23:35Z |
 | Home Assistant | Core 2026.7.2 observed live; Home Assistant Container on Docker with host networking |
 | HACS | 2.0.5 confirmed live from the HACS `hacs/info` websocket command |
 | SoilSync candidate | Version 0.1.0; source SHA `dcf9036165b02c443e5cc8a5eddf0741676ffe65` |
@@ -163,7 +164,7 @@ speed; the backend flow, validation, and resulting state are identical.
 | `zone_history_id` | `546a4c06…` before, during, and after |
 | Restore result | Restoring the original entity ID and reloading returned the entry to `loaded`, both zones to `idle`, identical `safety_record_id`/`safety_lineage_id`/`zone_history_id`, `registry_confirmed` identity, no fault, no incident, 2 devices and 22 entities with no duplicates. A subsequent bounded manual watering against the restored synthetic actuator ran and stopped normally, proving full functional recovery |
 | Evidence class | `LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITIES` |
-| Status | `PARTIAL` - durable identity retention passes; live rename handling raised two findings recorded below |
+| Status | `PASS` after remediation - durable identity retention passed here, and the two rename findings raised below were fixed and re-validated live on 2026-08-25 (see **A3 remediation re-validation**) |
 | Cleanup | The rename was fully reversed; the original entity ID is in place |
 
 Durable identity is the part §46 item 3 most cares about, and it held
@@ -215,13 +216,52 @@ The `actuator_identity_conflict` Repair issue also remained listed after the
 entity ID was restored and the entry reloaded cleanly, i.e. it did not
 auto-clear on recovery.
 
-No production or test code was changed in response to either finding. Both are
-carried to specification review rather than patched, because choosing between
-runtime rename fix-up, a narrower per-zone failure, and an explicit
-Repair-and-reconfigure flow is exactly the §46 item 3 decision, and because any
-of those options would introduce new Repair, blocker, or fault semantics that
-must be reconciled with §§21, 25, 26, 27, 34, and the Stage 7 traceability set
-before implementation.
+No production or test code was changed in response to either finding **in the
+2026-08-24 run**. Both were carried to specification review rather than patched,
+because choosing between runtime rename fix-up, a narrower per-zone failure, and
+an explicit Repair-and-reconfigure flow appeared to be the §46 item 3 decision.
+
+**Superseded 2026-08-25.** The complete spec.4 review recorded under
+*Remediation* below found that §23.2 item 1, §25.1.1, §35.11, §40 and I35
+already determine the required behaviour without any new semantics: a different
+current entity ID for the same durable Entity Registry UUID *is* the same
+actuator. Both findings are therefore implementation defects, not open
+behavioural questions. The original text above is retained unchanged as the
+historical record of what was observed and why the original caution was taken;
+the method of that caution was correct, only the conclusion that spec.4 was
+insufficient was later disproved.
+
+### A3 remediation re-validation
+
+Re-validated live on 2026-08-25 against the fixed candidate, using one
+registry-backed synthetic template switch (`switch.soilsync_f1_valve`,
+Registry UUID `c314f72e…`) as `SoilSync F1 Zone`'s actuator.
+
+| Field | Record |
+|---|---|
+| Rename performed | Supported Entity Registry rename `switch.soilsync_f1_valve` -> `switch.soilsync_f1_valve_renamed`, executed **during an active bounded synthetic MANUAL session** |
+| Registry UUID | `c314f72e…` before, during and after. Never re-keyed |
+| `safety_record_id` | `bdcb2d97…` unchanged |
+| `safety_lineage_id` | `474abd29…` unchanged |
+| `zone_history_id` | `9de33327…` unchanged |
+| Runtime addressing | Followed the rename: `actuator_identity.last_known_entity_id` became `switch.soilsync_f1_valve_renamed`; the subentry keeps its durable configured reference `switch.soilsync_f1_valve` |
+| Identity status | `registry_confirmed` throughout; `identity_incident` `null` |
+| Fingerprints | Zone `config_fingerprint` `2597cad0` and entry snapshot `b03c1aab` **unchanged**, so the rename was not processed as a configuration change |
+| Session behaviour | Controller stayed `watering` with `possible_flow_owner: integration`; no `CONFIG_CHANGED`; the session later ended normally as `user_stop` (39.87 s, measured, not estimated) |
+| Repairs | None at any point |
+| Post-rename watering | A further bounded synthetic manual session ran and completed `manual_complete` (45.01 s measured) against the renamed entity |
+| Reload while renamed | Entry returned `loaded`; same record/lineage/history/UUID; no `actuator_identity_conflict`; daily runtime 816.40 s and `last_session_end` preserved |
+| Restart while renamed | Full container restart; startup resolved the same Registry UUID, kept all durable IDs, and preserved the daily budget and interval |
+| Restore | The original entity ID was restored and verified: addressing returned to `switch.soilsync_f1_valve` with every durable ID and the accumulated 861.41 s budget unchanged |
+| Evidence class | `LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITIES` |
+| Status | `PASS` |
+
+§46 item 3 is therefore answered: `async_track_entity_registry_updated_event`
+auto-fix-up **is** reliable for this purpose when the candidate is verified
+against the stored durable UUID before any addressing changes. The specified
+Repair-and-reconfigure fallback is retained for every case that cannot be
+verified that way, and both of those cases were exercised live and in the
+automated suite.
 
 ### A4 Ten-zone live synthetic test
 
@@ -320,12 +360,28 @@ GitHub Release, no version bump, and no release tag occurred in this run.
 
 ## Findings carried to specification review
 
-Phase A produced three live findings. None was patched. Each is recorded here
-with its evidence, and each is marked `[?] Requires specification review`
-because resolving it means choosing new Repair, blocker, or fault semantics
-rather than applying an unambiguous spec.4 rule.
+Phase A produced three live findings on 2026-08-24. None was patched in that
+run. Each was recorded with its evidence and marked
+`[?] Requires specification review` because resolving it appeared to require
+choosing new Repair, blocker, or fault semantics rather than applying an
+unambiguous spec.4 rule.
+
+> **Reclassified 2026-08-25.** A complete re-review of `SPECIFICATION.md`
+> `0.1.0-spec.4` found that all three are determined by rules that already
+> exist. F1 is decided by §11.3 step 5 with §21; F2 by §23.2 item 1, §25.1.1,
+> §35.11, §40 and I35; F3 is the reload/reconciliation manifestation of the
+> same F2 resolution gap. All three are therefore **implementation defects
+> against existing spec.4**, all three are now **RESOLVED**, and
+> `SPECIFICATION.md` was not changed. The original finding text below is
+> preserved verbatim; nothing about it is retracted. The 2026-08-24 caution was
+> correct in method — the findings were genuinely ambiguous on the evidence then
+> available, and no semantics were invented — and only the conclusion that
+> spec.4 was insufficient did not survive the fuller review.
 
 ### F1 - restart during an active session can permanently block all watering
+
+**Disposition: implementation defect against existing spec.4. RESOLVED
+2026-08-25.** See *Remediation* below.
 
 Reproduced on the live instance. A bounded manual session was started on a
 synthetic zone and Home Assistant was restarted mid-pulse.
@@ -389,11 +445,187 @@ documented operator remedy.
 
 ### F2 - an actuator rename is untracked and silently invalidates the ON gate entry-wide
 
-See A3, finding A3-1.
+**Disposition: implementation defect against existing spec.4. RESOLVED
+2026-08-25.** See A3, finding A3-1, and *Remediation* below.
 
 ### F3 - a rename that outlives a reload fails the entire entry, not just its zone
 
-See A3, finding A3-2.
+**Disposition: implementation consequence of F2, not an independent defect.
+RESOLVED 2026-08-25.** Root-cause analysis showed one cause for both: the
+immutable snapshot builder resolved the configured actuator by entity ID only.
+F2 is that gap observed while the entry stays loaded; F3 is the same gap
+observed after a reload, where the unresolvable reference additionally reaches
+the identity-conflict classification. See A3, finding A3-2, and *Remediation*
+below.
+
+## Remediation - 2026-08-25
+
+### Specification review
+
+| Finding | Determining spec.4 rule | Classification |
+|---|---|---|
+| F1 | §11.3 step 5 ("on confirmation, persist `off_confirmed_at_utc`, close accounting, release the zone's slot, and remove only the corresponding `integration_off_unconfirmed` blocker") together with §21 ("Release of that blocker is allowed only when the actuator is observed terminal OFF/closed") and §25.2. T48 restart recovery finalizes on exactly that confirmed-OFF evidence, so the release is already required | Implementation defect |
+| F2 | §6 ("Actuator durable identity … the last-known entity ID is resolution/display metadata"), §23.2 item 1 ("If that exact registry entry now has a renamed entity ID, it is the same actuator; update `last_known_entity_id` only after verified resolution"), §25.1.1 bullet 1, §35.11, §40 and I35. §14 T21/T39 fire on "configuration change termination (reconfigure or deletion reconciliation)", which a Registry rename is not | Implementation defect |
+| F3 | Same rules as F2, plus §25.1.1's ordered resolution and §25.5 item 8 fail-closed rule for genuine ambiguity | Consequence of F2 |
+
+`SPECIFICATION.md` was **not** changed. No new normative ID, invariant, or
+transition was created; the totals remain 134 / 37 / 59.
+
+### F1 root cause and fix
+
+`state_machine.py::_startup_persisted_watering` adds
+`AddBlocker(INTEGRATION_OFF_UNCONFIRMED)` for a startup actuator found ON or
+unproven, and requests the defensive OFF. When that OFF confirms, the decision
+lands on `_finalize_watering` (row T48). `_finalize_watering` persisted state,
+released the slot and emitted `session_finished`, but — unlike
+`_finalize_soaking_external` (T33) and `_close_open_accounting` — it never
+emitted the matching `RemoveBlocker`. The key therefore outlived the exact
+terminal-OFF proof that §11.3 step 5 says releases it, and because the session
+was cleared at the same moment no later event could reach a removal site.
+
+The fix adds `RemoveBlocker(BlockerReason.INTEGRATION_OFF_UNCONFIRMED)` to the
+confirmed-OFF finalization in `_finalize_watering` and `_finalize_manual_complete`,
+positioned exactly where `_close_open_accounting` already places it. Removal is
+exact-key and idempotent, so unrelated reasons and other records are untouched,
+T49's unproven-OFF branch still retains the key, and `ACTUATOR_OFF_TIMEOUT`
+acknowledgement semantics are unchanged.
+
+### F2/F3 root cause and fix
+
+`runtime.py::_build_immutable_snapshot` resolved each configured entity with
+`registry.async_get(config.actuator)` alone. After a rename that call returns
+`None`, so the snapshot lost the durable UUID; the zone and entry fingerprints
+moved, the §11.2 final gate failed `current_entry_snapshot_matches`
+entry-wide (F2), and on reload `_same_actuator` and the textual-conflict check
+classified the same record as an identity conflict, failing setup (F3).
+`ActuatorAdapter` also installed no Entity Registry listener at all, so the
+runtime never followed the rename.
+
+The fix makes durable identity the resolution authority:
+
+- resolution is UUID-first. A record's persisted `registry_entry_id` is honoured
+  as a hint only while the subentry still stores the exact configured reference
+  that produced it, so a genuine A -> B reconfiguration still resolves
+  independently;
+- `ImmutableZoneSnapshot` now separates the *configured* subentry reference
+  (which alone enters `config_fingerprint`, making a rename a non-change) from
+  the *current* addressable entity ID, which follows the verified rename and
+  becomes `actuator_identity.last_known_entity_id` per §23.2 item 1;
+- `ZoneController` installs `async_track_entity_registry_updated_event` for the
+  actuator and wires the moisture adapter's existing rename hook. On a rename it
+  verifies the candidate against the stored durable UUID, then re-points the
+  adapter, the state listener and its configuration, subscribing to the new
+  entity ID *before* unsubscribing the old one so no ON/OFF state change and no
+  removal of the old state object is missed or misread;
+- if the candidate does not resolve to the stored UUID, nothing is re-pointed
+  and ordinary fail-closed reconciliation owns the outcome;
+- a configured reference that has been taken over by a *different* durable
+  identity while the stored one still exists is explicit ambiguity: the record
+  and all candidates are retained, admission closes, and the exact-record
+  `actuator_identity_conflict` Repair is raised (§23.2 item 3, §25.5 item 8);
+- a resolved incident now clears its exact-record Repair even after a reload,
+  which closes the 2026-08-24 observation that the conflict Repair did not
+  auto-clear on recovery.
+
+### Two further defects found by the remediation live run
+
+Both were exposed by re-running the live rename with the fix in place, and both
+are the same fail-closed family as F1 — a keyed blocker with no reachable
+release path.
+
+1. **`external_flow` on an integration-owned session.** The final actuator
+   re-read in `_apply_configuration_snapshot` labelled any actuator observed ON
+   as `external_flow`, without §11.4's "genuinely non-session IDLE or DISABLED"
+   condition that `_reconcile_active_record` already applies. Reconciliation
+   triggered by a rename during WATERING therefore relabelled the zone's own
+   flow as external, and that key could not be released by this record's own OFF
+   evidence. Observed live: after a normal `user_stop` with the actuator proven
+   OFF, `external_flow` remained and `possible_flow_owner` stayed `external`.
+   The branch is now guarded by the same session condition.
+2. **`actuator_not_proven_off` released only on a transition.**
+   `_async_actuator_change` released that key only when
+   `assessment.proven_off and not previous.proven_off`. A key added while the
+   actuator was momentarily unobservable — exactly the window a rename creates —
+   could therefore survive indefinitely if no fresh OFF *transition* followed.
+   §21 and §25.4 key the release on observed terminal OFF, not on a transition,
+   so the removal is now performed on the evidence and the transition guard is
+   retained only for the `ExternalActuatorOff` dispatch that genuinely needs it.
+
+### F1 live regression - 2026-08-25
+
+Two synthetic zones were created, each with its own source-verified template
+switch backed only by an `input_boolean`, plus template moisture sensors.
+
+| Step | Result |
+|---|---|
+| Active session | `SoilSync F1 Zone` bounded synthetic MANUAL session; `switch.soilsync_f1_valve` ON; store recorded `state: watering` with a live session |
+| Unrelated blocker present | `switch.soilsync_f2_valve` was turned ON **externally** while its zone was IDLE, giving record `481718a1…` an `external_flow` key |
+| Restart | `docker kill --signal=SIGKILL` followed by start, i.e. a genuinely unclean restart; the store came back with `last_clean_shutdown_run_id: null` |
+| No resume | Controller `idle`, no session; `on_calls` unchanged; I13 held |
+| Actuator OFF | `switch.soilsync_f1_valve` `off`, `proven_off: true` |
+| Accounting | `restart_recovery`, `runtime_s 324.78`, `runtime_estimated: true`, `runtime_estimation_reason: off_unconfirmed`, `open_accounting: false`, `last_session_end_utc` set, daily runtime charged (cumulative 649.75 s over the two restart runs) |
+| Blocker before | Added by startup recovery on record `bdcb2d97…` while the actuator was not proven OFF |
+| Blocker after | **Removed.** `blocker_reasons: []`, `possible_flow_owner: null`, SlotManager blocker set free of that key, read back from the persisted Store |
+| Unrelated blockers | Record `481718a1…` kept **both** `external_flow` and `actuator_not_proven_off`. One record's OFF evidence cleared nothing belonging to another record or reason |
+| Subsequent grant | After the second actuator was proven OFF externally, both records cleared and a **new** bounded synthetic manual session was granted and ran normally on `SoilSync F1 Zone` |
+| Faults / Repairs | None at any point; `actuator_fault: null`, zero SoilSync Repairs |
+| Evidence class | `LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITIES` |
+| Status | `PASS` |
+
+The transition ring buffer recorded the decisive event directly:
+`OffConfirmed` at `23:05:22Z` with `reason: restart_recovery`, which is the T48
+row the fix changes.
+
+### F2 live regression - 2026-08-25
+
+Recorded in full in **A3 remediation re-validation** above. `PASS`.
+
+### F3 live regression - 2026-08-25
+
+| Step | Result |
+|---|---|
+| Renamed state | `switch.soilsync_f1_valve_renamed` left in place; the subentry still stored `switch.soilsync_f1_valve` |
+| Reload | Supported `config_entries/reload`. Entry returned `loaded`; **no** `setup_retry` |
+| Repair state | No `actuator_identity_conflict`; zero SoilSync Repairs |
+| Identity continuity | Same `safety_record_id` `bdcb2d97…`, `safety_lineage_id` `474abd29…`, `zone_history_id` `9de33327…`, Registry UUID `c314f72e…`, `registry_confirmed`, `identity_incident: null`; exactly two safety records, i.e. no second record was created |
+| Budget/history | Daily runtime 816.40 s and `last_session_end_utc` preserved across the reload |
+| Restart | Full container restart with the rename still in place: startup resolved the same Registry UUID from the durable record, kept every ID, preserved the budget, and a further bounded synthetic manual session ran to `manual_complete` (45.01 s measured) |
+| Restore | Original entity ID restored and verified with all durable IDs and the accumulated budget intact |
+| Evidence class | `LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITIES` |
+| Status | `PASS` |
+
+### Remediation cleanup
+
+- **Zero physical irrigation ON or open commands were issued.** Every SoilSync
+  ON command targeted a temporary `template` switch whose stored configuration
+  was read back from the live config store and contains only
+  `input_boolean.turn_on`/`turn_off` against its own dedicated backing helper,
+  with no device. Empirically, a full 1685-entity before/after state diff around
+  a deliberate ON and OFF of that switch showed the switch and its backing
+  helper as the only causally related changes; no irrigation entity of any
+  domain changed.
+- The one real physical moisture sensor was not used, referenced, or written to
+  in the remediation run.
+- Both synthetic zone subentries were deleted through the native supported
+  websocket path and retired cleanly: both tombstones `retired`, no blockers, no
+  faults, no acknowledgement requirement, no identity incidents.
+- The SoilSync config entry, all four temporary `template` helper entries, and
+  all three temporary input helpers were removed. Verified end state: 0 SoilSync
+  config entries, 0 SoilSync devices, 0 SoilSync registry entities, 0 SoilSync
+  Repairs, and no ON irrigation switch or valve anywhere in the instance.
+- The Entity Registry rename was restored before cleanup and verified.
+- Home Assistant is healthy. The only ERROR lines in the window belong to
+  unrelated pre-existing integrations; SoilSync logged no error at all.
+- SoilSync intentionally remains installed. The remediation candidate was
+  deployed by replacing `/config/custom_components/soilsync` from the exact
+  working tree (verified by matching MD5 sums). The previously installed HACS
+  build is retained outside Home Assistant's integration scan path at
+  `/opt/docker/homeassistant/soilsync-backups/` as a rollback copy; HACS still
+  records the older commit, so a normal HACS update will restore its own
+  bookkeeping once the fix is published.
+- Runtime Store files for removed config entries remain in `.storage` as inert
+  orphans, as they did before this run. They are referenced by no config entry,
+  and this project does not hand-edit or delete Home Assistant `.storage` data.
 
 ## Phase B - Physical-water validation
 
@@ -472,12 +704,19 @@ correct for it to exist.
 `[~] PARTIAL`.
 
 Phase A moved from mostly blocked to substantially validated. A1, A2, A4, and
-A6 are `PASS` on live evidence. A3 is `PARTIAL`: durable Registry identity
-retention passes completely, while live rename handling produced findings F2
-and F3. A5 is `PARTIAL`: SoilSync's freshness derivation was validated live
-against the real physical sensor, but the run did not produce a clean
-observation window longer than the two-hour default and produced no new
-unchanged-report sample, so the §46 item 6 default decision remains open.
+A6 are `PASS` on live evidence. **A3 is now `PASS`**: durable Registry identity
+retention passed on 2026-08-24, and after the 2026-08-25 remediation the live
+rename, reload-while-renamed, restart-while-renamed, post-rename watering, and
+restore cases all pass with unchanged durable identity, no false
+`CONFIG_CHANGED`, and no Repair, so every §46 item 3 requirement now has live
+evidence. A5 remains `PARTIAL`: SoilSync's freshness derivation was validated
+live against the real physical sensor, but no clean observation window longer
+than the two-hour default and no new unchanged-report sample was produced, so
+the §46 item 6 default decision remains open.
 
-Phase A therefore closes `[~] Partial`, not complete. Phase B remains
-`[ ] Not started`. Slice 13 remains `[~] Partial`.
+Findings F1, F2, and F3 are `RESOLVED` as implementation defects against
+existing spec.4, fixed, covered by deterministic automated regression, and
+re-validated live.
+
+Phase A therefore closes `[~] Partial` solely because A5 is unfinished. Phase B
+remains `[ ] Not started`. Slice 13 remains `[~] Partial`.

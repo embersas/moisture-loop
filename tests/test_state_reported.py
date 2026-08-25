@@ -248,7 +248,13 @@ class TestRegistryTracking:
         await hass.async_block_till_done()
         assert removed == [True]
 
-    async def test_rename_is_instrumented_not_guessed(self, hass, caplog) -> None:
+    async def test_rename_is_reported_but_never_self_applied(self, hass) -> None:
+        """The adapter reports a rename; only its owner may re-point it.
+
+        SPEC 23.2 item 1/25.1.1: equivalence needs an exact Registry UUID
+        match, which the adapter cannot perform.  It therefore hands the
+        candidate entity ID upward and leaves its own addressing untouched.
+        """
         renamed: list[str] = []
         adapter = MoistureAdapter(
             hass,
@@ -270,11 +276,13 @@ class TestRegistryTracking:
         )
         await hass.async_block_till_done()
         assert renamed == ["sensor.new_name"]
-        assert "rename tracking is pending prototype validation" in caplog.text
+        assert adapter.entity_id == SENSOR
 
-    async def test_rename_without_callback_only_logs(self, hass, caplog) -> None:
+    async def test_rename_without_owner_callback_changes_nothing(self, hass) -> None:
+        """Without a verifying owner the adapter never guesses new addressing."""
+        observations: list[MoistureObservation] = []
         adapter = MoistureAdapter(
-            hass, SENSOR, MAX_AGE_S, sink=lambda o: None, on_removed=lambda: None
+            hass, SENSOR, MAX_AGE_S, sink=observations.append, on_removed=lambda: None
         )
         assert adapter.entity_id == SENSOR
         adapter.async_start()
@@ -288,7 +296,35 @@ class TestRegistryTracking:
             },
         )
         await hass.async_block_till_done()
-        assert "renamed" in caplog.text
+        assert adapter.entity_id == SENSOR
+        # The original entity is still the only observed source.
+        hass.states.async_set("sensor.new_name", "41")
+        await hass.async_block_till_done()
+        assert observations == []
+        hass.states.async_set(SENSOR, "42")
+        await hass.async_block_till_done()
+        assert [o.value for o in observations] == [42.0]
+
+    async def test_rebind_moves_observation_without_a_gap(self, hass) -> None:
+        """A verified rebind observes the new entity and drops the old one."""
+        observations: list[MoistureObservation] = []
+        adapter = MoistureAdapter(
+            hass, SENSOR, MAX_AGE_S, sink=observations.append, on_removed=lambda: None
+        )
+        adapter.async_start()
+        adapter.async_rebind("sensor.renamed_moisture")
+        assert adapter.entity_id == "sensor.renamed_moisture"
+        hass.states.async_set("sensor.renamed_moisture", "37")
+        await hass.async_block_till_done()
+        assert [o.value for o in observations] == [37.0]
+        hass.states.async_set(SENSOR, "12")
+        await hass.async_block_till_done()
+        assert [o.value for o in observations] == [37.0]
+        # Rebinding to the same entity ID is a no-op and never duplicates.
+        adapter.async_rebind("sensor.renamed_moisture")
+        hass.states.async_set("sensor.renamed_moisture", "38")
+        await hass.async_block_till_done()
+        assert [o.value for o in observations] == [37.0, 38.0]
 
     async def test_unrelated_update_is_ignored(self, hass) -> None:
         renamed: list[str] = []

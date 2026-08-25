@@ -228,16 +228,28 @@ multi-sensor/multi-actuator zone, stuck-sensor detection, adaptive learning, or
 unbounded manual watering.
 
 Automated mocked-time implementation evidence is not physical deployment
-validation. The seven SPECIFICATION.md §46 / Slice 13 validations remain
-unstarted:
+validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
 
-1. Real Home Assistant UI/UX lifecycle validation.
-2. A physical valve state/availability/position matrix.
-3. A real entity-registry rename trial.
-4. Measured physical shutdown OFF timing.
-5. Approximately ten simultaneously dry zones in a deployment-scale exercise.
-6. Deployment sensor-cadence validation of the two-hour default.
-7. HACS/brand presentation and centralized `home-assistant/brands` submission.
+1. Real Home Assistant UI/UX lifecycle validation — **validated** on a live
+   Home Assistant deployment using synthetic actuators.
+2. A physical valve state/availability/position matrix — **not started**;
+   requires physical irrigation hardware.
+3. A real entity-registry rename trial — **validated** live, including rename
+   during an active session, reload and restart while renamed, and restore.
+4. Measured physical shutdown OFF timing — **not started**; requires physical
+   flow.
+5. Approximately ten simultaneously dry zones in a deployment-scale exercise —
+   **validated** live with ten synthetic zones.
+6. Deployment sensor-cadence validation of the two-hour default — **partial**;
+   live freshness derivation is validated against a real sensor, but no clean
+   observation window longer than two hours has been captured.
+7. HACS/brand presentation — **validated** for custom-repository install and
+   presentation; the centralized `home-assistant/brands` submission is
+   deliberately not made.
+
+Items 2 and 4 involve real water and are the reason this release is not
+described as physically validated. `PROTOTYPE_VALIDATION.md` is the evidence
+ledger for all of the above.
 
 Centralized brand submission, HACS default-store submission, and public release
 publication are not implied by the local icon or this repository metadata.
