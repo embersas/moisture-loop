@@ -6,16 +6,16 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`; the 2026-08-25 Slice 13 Phase A5 deployed-sensor cadence/freshness run closed Phase A `[x] Complete`. Phase B remains explicitly unauthorized and `[ ] Not started`.
+- Current authorized work: `None`; the 2026-08-25 Slice 13 Phase B1 physical-valve attempt is closed `[!] Blocked` pending a confirmed-working Home Assistant integration for the deployed four-channel irrigation controller. Phase A remains `[x] Complete`; B2 remains explicitly unauthorized and `[ ] Not started`.
 - Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository `https://github.com/embersas/soilsync`.
 - Specification version: `0.1.0-spec.4`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Only the separately authorized Phase B physical-water items remain: B1 physical valve matrix and B2 active-flow shutdown OFF timing. Phase A is complete. The final A5 product decision retains sensor_max_age at 7200 seconds and documents the upstream Home Assistant report-visibility contract; no runtime, range, or specification change was made. No release/submission or specification stage is authorized.`
+- Next implementation work: `Confirm or remediate the deployed controller's Home Assistant valve integration, then separately authorize a fresh B1 physical valve matrix. B2 active-flow shutdown OFF timing remains not started and requires its own future authorization. Phase A is complete. No release/submission or specification stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives its own exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
-- Slice 13: `[~] Partial. All prior live evidence is preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. After the 2026-08-25 A5 run, A1-A6 are all PASS and Phase A is [x] Complete; Phase B is [ ] Not started, so Slice 13 stays partial.`
-- Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial until every applicable Phase A item and the separately authorized Phase B physical-water items are complete. No synthetic runtime result will be described as physical evidence, and no prototype absence is recorded as a pass.`
+- Slice 13: `[~] Partial. All prior live evidence is preserved. A1-A6 are all PASS and Phase A is [x] Complete. Phase B reached B1, which is [!] Blocked because the deployed physical valve accepted Home Assistant service calls but never produced an actuator transition or physically confirmed flow; B2 is [ ] Not started.`
+- Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial; B1 must be repeated only after the deployed controller's Home Assistant integration is confirmed working, and B2 remains separately unauthorized. No synthetic runtime result or accepted service call is described as physical-flow evidence.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
@@ -50,7 +50,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
 | 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
-| 13 | Prototype validations | [~] Partial; Phase A [x] Complete (A1-A6 all PASS), Phase B not started |
+| 13 | Prototype validations | [~] Partial; Phase A [x] Complete, B1 [!] Blocked, B2 [ ] Not started |
 
 Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
 
@@ -100,7 +100,7 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 10 | `[x]` | Schema-2 entities/actions and all lifecycle/reconciliation refusal surfaces pass final traceability. |
 | 11 | `[x]` | Exact-record Repairs, incidents, diagnostics, deleted-safe events, delayed closure, and logging pass final traceability. |
 | 12 | `[x] Exact-public-SHA hosted gates complete` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, package, local-only, Recorder, metadata, hosted hassfest, and hosted HACS gates pass SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`. |
-| 13 | `[~] Partial live evidence` | Phase A is complete on live evidence: HACS install, UI/UX lifecycle, Registry rename, ten-zone scale, deployed-sensor cadence/freshness, and HACS presentation all PASS. The physical valve matrix and active-flow shutdown timing obligations remain. Existing mocks and harness tests do not satisfy them. |
+| 13 | `[~] Partial live evidence; B1 blocked` | Phase A is complete on live evidence. B1 reached a genuine physical Home Assistant `valve`, but its integration accepted OPEN without any actuator state transition or operator-confirmed water, so §46 item 2 remains blocked pending a confirmed-working integration. B2 is not started. Existing mocks, accepted service calls, and harness tests do not satisfy either physical obligation. |
 
 ## Spec.4 Implementation Remediation Plan
 
@@ -3113,3 +3113,94 @@ switch and its backing helper as the only causally related changes.
 - Remaining work is only B1 physical valve matrix and B2 active-flow shutdown
   OFF timing.
 - Current authorization returned to `None` at closeout. No Phase B work began.
+
+## Session Log — 2026-08-25 (Slice 13 Phase B1 physical valve matrix)
+
+### Authorization and safety boundary
+
+- The user explicitly authorized **B1 only**. B2 active-flow shutdown timing,
+  Home Assistant/container restart or termination during possible physical
+  flow, releases, tags, version changes, HACS default-store submission, Brands
+  submission, and specification changes were not authorized and did not occur.
+- Before hardware interaction, `SPECIFICATION.md`, `PROGRESS.md`,
+  `PROTOTYPE_VALIDATION.md`, the actuator adapter, relevant physical-actuator
+  and external-flow tests, traceability, and Git state/remotes were reviewed.
+  Local `HEAD`, `origin/main`, and `github/main` matched
+  `275cf0aa83be1677223c92aef0d046f3bbd1ee13`; the working tree was clean.
+- The live actuator adapter, manifest, and config flow were read-only hashed on
+  the Home Assistant container and matched the local candidate byte for byte.
+  Home Assistant Core was 2026.7.2 and `RUNNING`; SoilSync remained 0.1.0 at
+  the reviewed candidate files. Authentication used process-environment
+  credentials without printing, persisting, or documenting them.
+- The required `PROCEED B1 WATER` operator checkpoint was received before the
+  first possible physical OPEN. When the planned 60-second hardware countdown
+  failed to persist while closed, testing stopped and the materially revised
+  condition was separately authorized with
+  `PROCEED B1 WATER WITHOUT COUNTDOWN`. The first OPEN occurred only after both
+  authorizations.
+
+### Physical actuator inventory and precheck
+
+- **Evidence class: `LIVE HOME ASSISTANT` / selected real hardware.** Home
+  Assistant exposed a real Tuya four-channel irrigation controller as one
+  `valve` entity. It was available, `closed`, `is_closed: true`, water device
+  class, supported features 3 (OPEN and CLOSE), with no
+  `current_position`. This is a literal HA `valve`, not a relabelled switch.
+- The separate Home Assistant irrigation-duration entity exposed range
+  0-86400 seconds and read 0. Home Assistant accepted a request for 60 seconds,
+  but the device entity remained 0 without a state transition. It therefore
+  provided no verified hardware failsafe and was not claimed as one.
+- The ordinary HA `close_valve` path was proven addressable while already
+  closed. Two helper-triggered irrigation automations were temporarily disabled
+  immediately before the trial and restored to their original enabled state
+  immediately after abort. The backing helper remained off.
+- An authenticated WebSocket state/event observer was connected before any
+  possible physical ON and remained healthy throughout the attempted trial.
+  Private raw evidence remains only in the git-ignored evidence area.
+
+### Attempted physical ON/OFF trial
+
+- T0 OPEN command: `2026-08-25T08:31:25.131893Z` from a proven-closed start.
+  Home Assistant returned a successful service result at
+  `08:31:26.410064Z`, 1.278 seconds later. This is only HA service acceptance;
+  it is not an actuator response or terminal ON acknowledgement.
+- T1 first actuator response: **none**. No valve state-change event occurred.
+  T2 terminal OPEN: **none**. The entity never left `closed` during the full
+  configured 30-second actuator-confirmation window.
+- T3 safety CLOSE: `2026-08-25T08:31:55.137240Z`. The first fallback attempt
+  returned HTTP 200 and, after approximately 0.75 seconds, independently read
+  the valve as `closed`, `is_closed: true`, with the same pre-trial
+  `last_changed` timestamp. A later reinforcing CLOSE was also accepted and
+  again read terminal `closed`.
+- The operator could not confirm that any outlet produced water. Consequently
+  there is **no `LIVE PHYSICAL` flow evidence**, no physical ON latency, and no
+  physical OFF latency. An unchanged HA `closed` state is not reinterpreted as
+  proof that physical flow occurred and stopped.
+- The user ordered physical testing aborted until the deployed controller's
+  Home Assistant integration is confirmed working. No second OPEN, SoilSync
+  physical manual session, external physical flow, synthetic gap matrix, or
+  global-serialization trial was attempted after the hardware behaved
+  differently from its exposed entity contract.
+
+### Result, cleanup, and remaining work
+
+- B1 is `[!] Blocked`, not PASS or a specification review: the deployed
+  integration/hardware exposure did not produce the live actuator behaviour
+  needed to exercise §46 item 2. This is not a new SoilSync defect and does not
+  contradict spec.4.
+- Cleanup read back Home Assistant 2026.7.2 `RUNNING`; the physical irrigation
+  test actuator terminal `closed`; duration 0; helper off; both temporarily
+  paused automations restored on; zero SoilSync config entries, physical
+  sessions, blockers, faults, accounting, or temporary synthetic entities from
+  B1. The local observer was stopped. Because physical flow could not be
+  observed, the operator used the Tuya app fallback and confirmed the controller
+  disabled/stopped; a final API read found the selected actuator `closed`, zero
+  open valve entities, zero SoilSync config entries, and Home Assistant healthy.
+- Phase A remains `[x] Complete`. Phase B is blocked at B1. B2 remains
+  `[ ] Not started` and separately unauthorized. Slice 13 remains
+  `[~] Partial`.
+- Remaining work is: confirm or remediate a working physical HA valve
+  integration and repeat B1 under a fresh physical-water checkpoint; only
+  after B1 passes, separately authorize B2 active-flow shutdown OFF timing.
+- No production or test code changed. `SPECIFICATION.md` remains unchanged at
+  `0.1.0-spec.4`. Current authorization returned to `None`.

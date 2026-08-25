@@ -777,18 +777,34 @@ Recorded in full in **A3 remediation re-validation** above. `PASS`.
 
 Phase B requires known-safe physical irrigation hardware, actual flow, an
 explicit operator water checkpoint, manual stop/fallback, and separate
-authorization. It was not authorized, not started, and not approached in this
-run.
+authorization. B1 was authorized and attempted on 2026-08-25, then aborted and
+marked blocked when the deployed controller's Home Assistant integration did
+not expose a real actuator transition or confirm physical flow. B2 was not
+authorized and remains not started.
 
 ### B1 Physical valve matrix
 
 | Field | Record |
 |---|---|
-| Prior context | Initial read-only inventory found one deployed valve and separate irrigation switch entities; all identified candidates were unavailable. Existing unrelated irrigation automations/scripts were left unchanged |
-| Required future evidence | Physical `opening`/`open`/`closing`/`closed`, availability, position, acknowledgement, ownership, external interference, blocker behavior, and exact OFF proof on known-safe hardware |
-| Evidence class | `NOT VALIDATED` |
-| Status | `[ ] Not started` |
-| Cleanup | No physical command or configuration change occurred |
+| Date/environment | 2026-08-25; Home Assistant Core 2026.7.2 `RUNNING`; SoilSync 0.1.0 candidate actuator adapter, manifest, and config flow byte-identical between the live container and local HEAD `275cf0aa83be1677223c92aef0d046f3bbd1ee13` |
+| Physical actuator | Real Tuya four-channel irrigation controller, exposed by the Tuya integration as one literal HA `valve`; available, initial `closed`, `is_closed: true`, water device class, supported features 3 (OPEN/CLOSE), no `current_position` |
+| Hardware failsafe | A sibling duration/countdown entity exposed 0-86400 s and read 0. HA accepted a request for 60 s while closed, but the entity remained 0 with no transition. No hardware timeout was therefore established or claimed |
+| Operator checkpoint | `PROCEED B1 WATER` was received before any possible physical OPEN. The missing countdown materially changed the conditions, testing paused while still closed, and `PROCEED B1 WATER WITHOUT COUNTDOWN` was received before the first OPEN |
+| Observer | Authenticated Home Assistant WebSocket `state_changed` observer connected and recording before command; REST used for service invocation support and independent terminal-state reads |
+| T0 / service result | OPEN sent at `2026-08-25T08:31:25.131893Z` from proven `closed`; HA returned successful service acceptance at `08:31:26.410064Z` (1.278 s). Service acceptance is not terminal actuator acknowledgement |
+| T1 / T2 | No actuator response, transitional state, or state-change event. No terminal `open`. The HA entity remained `closed` for the complete 30 s confirmation window |
+| T3 / T5 | Safety CLOSE sent at `08:31:55.137240Z`; the first fallback call returned HTTP 200 and an independent read about 0.75 s later was `closed`, `is_closed: true`, with the unchanged pre-trial `last_changed` timestamp. A reinforcing CLOSE later produced the same result. This is terminal-closed HA evidence, not a measured physical-flow shutdown latency |
+| Physical observation | The operator could not confirm that any outlet produced water. Actual water start and stop are therefore `NOT VALIDATED`; no `LIVE PHYSICAL` flow claim is made |
+| SoilSync manual session | `NOT VALIDATED`; not started after the physical actuator failed to acknowledge OPEN |
+| External physical flow | `NOT VALIDATED`; not attempted after abort |
+| Transitional states / position | `NOT VALIDATED` live in B1. The deployed entity exposed neither transitions nor position, and the planned synthetic gap matrix was not started after the physical abort |
+| Unknown / unavailable | Recorder showed natural availability interruptions only while the entity was closed; this did not validate physical flow semantics. No deliberate physical disconnect occurred |
+| Confirmation timing | OPEN terminal confirmation timed out at the unchanged 30 s default. No physical ON or OFF latency exists because flow was not confirmed. This deployment evidence does not warrant changing SoilSync's default |
+| Serialization | `NOT VALIDATED`; no confirmed physical flow existed to occupy the global slot |
+| Defect classification | Deployment integration/hardware-exposure blocker, not a SoilSync defect and not a spec.4 contradiction |
+| Evidence class | `LIVE HOME ASSISTANT` for registry/platform/service/state evidence; selected real hardware but physical water `NOT VALIDATED` |
+| Status | `[!] Blocked` pending a confirmed-working HA integration for the physical controller, followed by a fresh B1 authorization/checkpoint |
+| Cleanup | No second OPEN. Because physical flow could not be observed, the operator used the Tuya app fallback and confirmed the controller disabled/stopped. A final API read found the selected valve terminal `closed`, duration 0, zero open valves, zero SoilSync config entries, and HA healthy. The helper was off, both briefly paused automations were restored on, no SoilSync session/blocker/fault/accounting or synthetic entity existed, and the observer was stopped |
 
 ### B2 Active-flow shutdown OFF timing
 
@@ -803,11 +819,17 @@ run.
 
 ## Current cleanup inventory
 
-- **Zero physical irrigation ON/open commands were issued at any point.** Every
-  ON command SoilSync executed in this run targeted a source-verified synthetic
-  template switch backed only by an `input_boolean`.
-- Physical irrigation hardware, irrigation switches, and unrelated irrigation
-  automations and scripts were untouched.
+- The 2026-08-25 B1 run issued exactly one direct HA OPEN service call to the
+  selected physical valve after the two explicit operator authorizations. HA
+  accepted the service but the entity never left `closed`, and the operator
+  could not confirm water. No SoilSync physical ON command or session occurred.
+- The B1 safety CLOSE and a reinforcing CLOSE were accepted and independently
+  read terminal `closed`. Two potentially related automations were briefly
+  paused before the attempted OPEN and restored to their original enabled
+  state after abort; their helper remained off. The operator also used the Tuya
+  app fallback and confirmed the physical controller disabled/stopped. A final
+  read found the selected valve `closed`, zero open valves, and Home Assistant
+  healthy.
 - The one real physical moisture sensor was read only. It was never
   reconfigured, renamed, or written to.
 - All synthetic watering was stopped. Every synthetic actuator finished `off`.
@@ -924,6 +946,8 @@ existing spec.4, fixed, covered by deterministic automated regression, and
 re-validated live. The 2026-08-25 A5 continuation produced no new SoilSync
 defect and no specification contradiction.
 
-Phase A therefore closes `[x] Complete`. Phase B remains `[ ] Not started`,
-specifically B1 physical valve matrix and B2 active-flow shutdown OFF timing.
-Slice 13 remains `[~] Partial` because Phase B has not begun.
+Phase A therefore closes `[x] Complete`. B1 is `[!] Blocked` pending a
+confirmed-working Home Assistant integration for the physical irrigation
+controller and a fresh physical-water checkpoint. B2 remains `[ ] Not started`
+and separately unauthorized. Phase B is blocked at B1, and Slice 13 remains
+`[~] Partial`.
