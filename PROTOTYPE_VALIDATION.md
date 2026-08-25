@@ -332,6 +332,125 @@ physical valve evidence.
 No elapsed time was fabricated and no interval that crosses a restart was
 counted as cadence.
 
+The 2026-08-24 record above is preserved unchanged. The clean window it was
+missing was obtained on 2026-08-25 and is recorded next; that continuation also
+identified the platform mechanism that explains both runs.
+
+### A5 continuation - 2026-08-25 clean window longer than two hours
+
+| Field | Record |
+|---|---|
+| Date/time | 2026-08-25; all times UTC as reported by the live instance |
+| HA / SoilSync | HA Core 2026.7.2, Home Assistant Container on Docker. SoilSync 0.1.0; all 24 files of the deployed `custom_components/soilsync` were MD5-compared against the local working tree at `3e4823c2358cd991d0cd0ff67c38b16d01e50158` and every file matched |
+| Real sensor | The one deployed Zigbee soil-moisture probe, delivered by zigbee2mqtt through the MQTT integration. Entity Registry confirms `platform: mqtt`, `original_device_class: moisture`, unit `%`, `state_class: measurement`. It was read only: never written, renamed, reconfigured, or replaced |
+| Synthetic actuators | Two `template` switches created through the supported template helper flow. Stored configuration read back from the live config store shows for each: `template_type: switch`, no device, `value_template` reading only its own dedicated `input_boolean`, and `turn_on`/`turn_off` consisting solely of `input_boolean.turn_on`/`input_boolean.turn_off` against that same helper. Empirically, a deliberate ON and OFF of one of them was diffed across 323 actionable and irrigation-matching entities and the only changes were the template switch itself and its own backing helper. Every real irrigation entity in the instance - the physical valve-domain entities, the entities belonging to the household's real irrigation integration, and every irrigation switch, script, and helper - was untouched, and none was in an energised state at any point in the run |
+| Prototype zones | `A5 Observer Zone` (start 20 %, target 30 %) held the physical sensor's live 41-43 % comfortably **above** its start threshold for the whole window, so it never requested water. `A5 Watchdog Zone` (start 60 %, target 70 %, pulse 30 min, soak 60 s, `max_cycles` 1, `max_session_runtime` 1800 s, `max_daily_runtime` 1860 s) was configured to run exactly one AUTO pulse against the second synthetic switch |
+| Observation layers | **A. Transport:** every zigbee2mqtt publish for the device, from the broker-independent zigbee2mqtt log, giving the device's own `last_seen` per message. No broker credential was used, requested, read, or stored. **B. HA state:** `state`, `last_changed`, `last_updated`, `last_reported`, availability. **C. HA events:** a temporary read-only custom component installed exactly the two supported entity-filtered listeners, `async_track_state_change_event` and `async_track_state_report_event`, on that one sensor, and appended every delivered event plus a 30 s read-only state sample to a JSONL file. It commanded nothing and created no entity. It was loaded by a restart **before** T0 and removed at closeout. **D. SoilSync:** live zone attributes, `sensor_fresh_until_utc`, `moisture_reported_at_utc`, `moisture_classification`, entry diagnostics, and the transition ring buffer, with `custom_components.soilsync` at DEBUG through the supported `logger.set_level` action |
+| Unfiltered subscription | Re-confirmed from Core source that this is a platform property and not a SoilSync limitation: `websocket_api` exposes no `state_reported` subscription at all, and `subscribe_entities` listens to `EVENT_STATE_CHANGED` only. The entity-filtered listener that SoilSync installs is the supported path |
+| T0 | `2026-08-25T02:58:00.464462Z` |
+| T_end | `2026-08-25T05:57:51.238503Z` |
+| Elapsed | **10790.773987 s = 179.8462 min = 2.9974 h**, exceeding the required 7200 s by 3590.773987 s |
+| Window integrity | No Home Assistant restart, no integration reload, no entity rename, no sensor replacement, no manual mutation of the sensor state, and no synthetic write to the real sensor entity occurred between T0 and T_end. The container start at `02:45:54Z` is **before** T0 and the cleanup restart at `06:01:08Z` is **after** T_end, and container uptime spanned the whole window |
+| Genuine device reports (transport) | 33 genuine publishes in 8 bursts, and **0** cached republishes. Burst-to-burst intervals n=7: min 131.238 s, median 1281.826 s, max 2406.275 s, mean 1015.958 s. Longest device silence 2405.146 s (40.09 min). The physical sensor was healthy and talking throughout |
+| Reports Home Assistant actually saw | **2 `state_changed`, 0 `state_reported`.** `2026-08-25T03:31:04.478969Z` 43 -> 42 and `2026-08-25T05:03:45.260265Z` 42 -> 41. Interval between them **5560.781296 s (92.68 min)**. T0 to first HA-visible report 1984.015 s; last HA-visible report to T_end 3245.978 s |
+| Restart repopulation excluded | The `02:47:04.027907Z` state that seeded the window is **not** counted as a genuine report. The transport log proves it: the device's own burst was at `02:46:00.149Z`-`02:46:01.320Z` while Home Assistant was still restarting, and the publish Home Assistant did receive, logged at `02:47:03`, carried the **stale** `last_seen` `02:46:01.320Z`, i.e. zigbee2mqtt replaying cached state. Both the genuine burst and the replay are recorded separately and neither is used as a cadence sample |
+| Why no unchanged report reached Home Assistant | **Root cause identified, with primary evidence.** At `03:05:10` one MQTT message carried an unchanged `soil_moisture` and a changed temperature. The temperature entity's `last_reported` advanced to `03:05:10.651177Z`; the soil-moisture entity's `last_reported` did **not** move at all. Core source explains it exactly: `MqttEntity._message_callback` requests a state write only `if attributes is not None and self._attrs_have_changed(attrs_snapshot)`, and `_attrs_have_changed` returns true only when `_attr_force_update` is set or a tracked attribute actually changed. The MQTT sensor platform tracks `{_attr_native_value, _attr_last_reset, _expired}` and its `DEFAULT_FORCE_UPDATE` is `False`. So for this deployed sensor an identical value produces **no Home Assistant state write of any kind**: no `state_changed`, no `state_reported`, and no `last_reported` advance. A second unchanged burst at `03:07:31`-`03:07:32` reproduced it |
+| Consequence for the earlier evidence | This corrects the reading of the preserved 2026-08-23 sample. The "six consecutive unchanged-soil transitions" observed there were unchanged **device** reports on the MQTT transport. With `force_update` false they never became Home Assistant reports, so they never refreshed `last_reported` and never refreshed SoilSync freshness. The earlier direct-MQTT cadence figures describe the device, not the signal SoilSync consumes |
+| `state_reported` handling | Not exercised against this physical sensor, and now known to be **structurally impossible** for it rather than merely absent by chance. This is recorded as a platform fact, not as a SoilSync gap: `SPECIFICATION.md` §46 already removes `last_reported`/`state_reported` mechanics from the open-question list as conclusive from release source, and SoilSync's entity-filtered `async_track_state_report_event` listener remains installed and correct for sensors that do produce unchanged writes |
+| Freshness derived from report time | At session start the watchdog zone's `sensor_fresh_until_utc` was `2026-08-25T04:47:04.027907Z` against `moisture_reported_at_utc` `2026-08-25T02:47:04.027907Z`: a delta of **exactly 7200.000000 s**. The session opened at `02:57:22Z`, ten minutes after that report, so the deadline was derived from the report timestamp and not from evaluation, callback, or scan time |
+| Scan time never manufactures freshness | Two independent proofs. **Home Assistant:** 360 read-only samples over 10770.353 s produced only 3 distinct `last_reported` values, each held bit-for-bit constant across many reads - 66 reads spanning 1950.058 s, 186 reads spanning 5550.171 s, and 108 reads spanning 3210.121 s. **SoilSync:** the 15-minute fallback scan fired `T56` twice during the live AUTO pulse, at `03:11:03.873016Z` and `03:26:03.871704Z`, and `sensor_fresh_until_utc` read back over the supported API at `02:57:27Z`, `03:11:26Z` and `03:26:45Z` was the identical `2026-08-25T04:47:04.027907Z` every time. A scan produced a transition but moved the deadline by zero microseconds |
+| Live AUTO pulse | One only, on the synthetic actuator. `T1 SlotGranted` `02:57:28.855023Z` -> `T6 OffConfirmed` `03:27:28.867616Z` = 1800.012593 s wall; SoilSync reported `session_runtime_s` 1800.00384 with `runtime_estimated: false`. `T23 SoakDeadlineReached` `03:28:28.867616Z`. The genuine `03:31:04` report then qualified as the post-soak report and closed the session at `T26` `03:31:04.483779Z` with reason `max_cycles`. Both synthetic switches and both backing helpers finished `off`. No fault, no Repair, no blocker |
+| Freshness extension on a later report | **Still not observed live.** No Home Assistant-visible report occurred inside the 30-minute WATERING window - the first one arrived at `03:31:04`, 3.6 minutes after OFF, while the zone was already SOAKING - so `T56` was never seen to move a deadline forward. The cause is the same platform behaviour recorded above: over three hours the deployed sensor produced only two Home Assistant-visible reports, and a pulse is capped at 30 minutes by `SPECIFICATION.md` §9 |
+| Evidence classes | Device cadence and transport: `LIVE PHYSICAL`. Home Assistant event and state behaviour: `LIVE HOME ASSISTANT`. SoilSync freshness driven by the physical sensor: `LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITIES` |
+
+#### Cadence corpus for the two-hour default
+
+Three independent corpora, all excluding restart repopulation, integration
+reload, browser reconnect, polling, and diagnostic reads:
+
+| Corpus | Span | Device reports | Reports Home Assistant saw | Median HA-visible interval | Max HA-visible interval | Intervals over 7200 s |
+|---|---|---|---|---|---|---|
+| Clean window, 2026-08-25 | 2.9974 h | 33 publishes in 8 bursts | 2 | single interval | 5560.781 s (1.54 h) | 0 of 1 |
+| Transport log, 2026-08-24/25 | 22.9 h | 513 publishes | 21 | 2446.0 s (40.8 min) | 16051.3 s (4.46 h) | 4 of 20 (20 %) |
+| Home Assistant Recorder for that entity | 248.22 h (10.34 days) | not visible to Recorder | 342 numeric states | 751.7 s (12.5 min) | 79464.4 s (22.07 h) | **24 of 341 (7.0 %)** |
+
+The device's own cadence is comfortable: median burst gap 1281.8 s in the clean
+window, maximum observed device silence 2405.1 s (40.09 min), and a 54.88 min
+maximum across the full 22.9 h transport corpus. The signal SoilSync can
+actually see is not. The four transport-corpus gaps over two hours (7231 s,
+8521 s, 12695 s, 16051 s) are all independently confirmed by the transport log
+to be periods in which the device was publishing normally every few minutes, so
+they are not device outages, radio loss, or battery failure.
+
+#### Two-hour default assessment - `CONTRADICTED`
+
+Against `SPECIFICATION.md` §46 item 6 the verdict from physical evidence is
+**CONTRADICTED**, with one precise qualification.
+
+- The contradiction is at the Home Assistant state-write layer, not at the
+  device. This deployed sensor is healthy and reports every few minutes.
+- `SPECIFICATION.md` §10.2 and §18 define staleness against `reported_at_utc`,
+  which is Home Assistant `last_reported`. That is the only signal SoilSync can
+  observe, and for this sensor it advances only on **value changes**.
+- Measured against that signal, normal healthy operation exceeded
+  `sensor_max_age = 2 h` on 7.0 % of intervals over 10.34 days, with a maximum
+  of 22.07 h; and on 20 % of intervals in the 22.9 h stretch where the transport
+  log independently proves the device never stopped talking.
+- The clean >2 h window did not itself breach the default - its single
+  HA-visible interval was 5560.781 s, 77.2 % of the 7200 s budget - but it
+  reproduced the mechanism directly, and that interval is far above the
+  device-level cadence.
+
+**No default was changed and no freshness semantics were touched.** §46 item 6
+permits adjusting the default only, and the authorisation for this run requires
+stopping and reporting before any such change. The decision is therefore
+referred, with these options recorded and deliberately not chosen:
+
+1. Leave the default at 7200 s. It sits inside the configurable 5 min-24 h range
+   of §9 and users calibrate per deployment; the failure mode is fail-closed - no
+   automatic start, or a `SENSOR_STALE` termination of a flowing AUTO pulse -
+   never an unsafe ON.
+2. Document that MQTT-sourced moisture sensors should be published with
+   `force_update: true`, which makes `_attrs_have_changed` return true
+   unconditionally, restores the unchanged-write path, and would have turned this
+   deployment's 21 Home Assistant-visible reports in 22.9 h into 513. That fixes
+   the deployment rather than weakening the safety horizon, and it is the option
+   that also restores the `state_reported` path §10.3 is written for.
+3. Raise the default. This weakens the detection horizon for a sensor that has
+   genuinely died, which is the property §40 relies on, and would need to be
+   justified on its own terms rather than by one deployment.
+
+This is a deployment-default and platform-integration finding. It is **not** a
+SoilSync implementation defect: freshness is correctly derived from
+`last_reported`, scans correctly never manufacture a report time, and the
+entity-filtered `state_reported` listener is correctly installed. It is **not** a
+specification contradiction: §46 item 6 exists precisely to receive this
+evidence, and no normative rule, invariant, or transition is inconsistent with
+what was observed.
+
+Raw evidence for this continuation is kept under the git-ignored
+`evidence/slice13-phaseA5/`: `a5observer.jsonl` (every entity-filtered event and
+read-only sample), `z2m_transport.txt` (every device publish), `transitions.txt`
+(the SoilSync transition ring buffer), and `A5_ANALYSIS.txt` (the computed
+window, transport, and Recorder analyses).
+
+No elapsed time was fabricated, no interval crossing a restart was counted as
+cadence, and no unchanged report was invented.
+
+#### A5 status after the continuation
+
+`PASS` for §46 item 6. The item requires validating the two-hour default against
+a deployment sensor and adjusting only the default. That validation is now
+complete on a clean, restart-free, 2.9974 h continuous window plus a 10.34 day
+Home Assistant corpus and a 22.9 h transport corpus: the default is
+`CONTRADICTED` for this deployment, the mechanism is identified to Core source
+level, and the decision is referred rather than taken. The one sub-observation
+that remains unobtained live - a `T56` deadline advancing from a new physical
+report, and a physical `state_reported` - is now known to be unobtainable from
+this sensor while its MQTT publisher leaves `force_update` false, and both are
+covered deterministically by the automated suite (`SR1`, `SR6`, `SR13`) and by
+release-source behaviour that §46 already treats as conclusive.
+
 ### A6 HACS/presentation
 
 | Field | Record |
@@ -699,24 +818,84 @@ is HACS's own update entity for a downloaded repository. It is a normal
 consequence of leaving SoilSync installed, not a test artifact, and it is
 correct for it to exist.
 
+### A5 continuation cleanup - 2026-08-25
+
+- **Zero physical irrigation ON or open commands were issued.** The only ON
+  command in the run was the single AUTO pulse and one deliberate proof ON/OFF,
+  both against a `template` switch whose stored configuration targets nothing but
+  its own dedicated `input_boolean`.
+- The one real physical moisture sensor was read only for the entire run. It was
+  never written to, renamed, reconfigured, or replaced, and no synthetic value was
+  ever pushed to it.
+- Both zone subentries were removed through the supported native websocket
+  deletion path and retired cleanly; the log shows exactly the two expected
+  `retained as retired after configuration removal` notices and nothing else.
+- The SoilSync config entry, both temporary `template` switch entries, and both
+  temporary `input_boolean` helpers were removed.
+- `custom_components.soilsync` logging was returned to `warning` through the
+  supported `logger.set_level` action.
+- The temporary read-only observer component was deleted and its JSONL output
+  moved off the Home Assistant instance. `configuration.yaml` was restored from
+  the pre-run backup and verified **byte-identical** by MD5
+  (`c914d27a80e6dba89a8808d75ac18757` both sides).
+- One restart was performed after T_end to unload the observer. The system log
+  after it contains **zero** `a5observer` references and zero SoilSync errors.
+
+Verified end state, read back live at `2026-08-25T06:03:15Z`:
+
+| Check | Result |
+|---|---|
+| Home Assistant | `RUNNING`, Core 2026.7.2 |
+| SoilSync config entries | 0 |
+| SoilSync devices | 0 |
+| SoilSync registry entities | 0 |
+| Temporary A5 `template` switch entries | 0 |
+| Temporary A5 `input_boolean` helpers | 0 |
+| Any entity matching the temporary A5 fixture | 0 |
+| Open Repairs, all domains | 0 |
+| Open SoilSync Repairs | 0 |
+| Valves in `open` state | 0 |
+| Irrigation-matching switches `on` | 0 |
+| Real physical moisture sensor | unchanged at 41 %, never written to |
+| Temporary observer component / its output file | removed from the instance |
+| `configuration.yaml` | byte-identical to the pre-run backup |
+| HACS SoilSync | still installed, intentionally retained |
+
+The only remaining SoilSync-matching entity is `update.soilsync_update`, which is
+HACS's own update entity for a downloaded repository. It is a normal consequence
+of leaving SoilSync installed, not a test artifact.
+
+Two `soilsync` rows dated 2026-08-24 remain in the stored
+`repairs.issue_registry` file from the earlier remediation run. Both are
+`is_persistent: false`, so Home Assistant does not restore them into the active
+issue set across a restart; the live Repairs list read back after this run's
+restart contains **0** issues in total. They are inert file residue, not open
+Repairs.
+
 ## Current slice verdict
 
 `[~] PARTIAL`.
 
-Phase A moved from mostly blocked to substantially validated. A1, A2, A4, and
-A6 are `PASS` on live evidence. **A3 is now `PASS`**: durable Registry identity
-retention passed on 2026-08-24, and after the 2026-08-25 remediation the live
-rename, reload-while-renamed, restart-while-renamed, post-rename watering, and
-restore cases all pass with unchanged durable identity, no false
-`CONFIG_CHANGED`, and no Repair, so every §46 item 3 requirement now has live
-evidence. A5 remains `PARTIAL`: SoilSync's freshness derivation was validated
-live against the real physical sensor, but no clean observation window longer
-than the two-hour default and no new unchanged-report sample was produced, so
-the §46 item 6 default decision remains open.
+**Phase A is complete.** A1, A2, A4, and A6 are `PASS` on live evidence. **A3 is
+`PASS`**: durable Registry identity retention passed on 2026-08-24, and after the
+2026-08-25 remediation the live rename, reload-while-renamed,
+restart-while-renamed, post-rename watering, and restore cases all pass with
+unchanged durable identity, no false `CONFIG_CHANGED`, and no Repair, so every
+§46 item 3 requirement has live evidence. **A5 is now `PASS`**: the 2026-08-25
+continuation obtained a clean, restart-free continuous window of 10790.773987 s
+(2.9974 h) on the deployed physical sensor, proved live that SoilSync freshness
+is derived from the genuine report timestamp plus exactly 7200 s and never from
+scan, callback, or evaluation time, and settled the §46 item 6 default question
+against a 10.34 day Home Assistant corpus and a 22.9 h transport corpus. That
+assessment is `CONTRADICTED` for this deployment and the root cause is identified
+to Core source level; **the default was not changed and the decision is referred**,
+as §46 item 6 and the run authorisation require.
 
 Findings F1, F2, and F3 are `RESOLVED` as implementation defects against
 existing spec.4, fixed, covered by deterministic automated regression, and
-re-validated live.
+re-validated live. The 2026-08-25 A5 continuation produced no new SoilSync
+defect and no specification contradiction.
 
-Phase A therefore closes `[~] Partial` solely because A5 is unfinished. Phase B
-remains `[ ] Not started`. Slice 13 remains `[~] Partial`.
+Phase A therefore closes `[x] Complete`. Phase B remains `[ ] Not started`,
+specifically B1 physical valve matrix and B2 active-flow shutdown OFF timing.
+Slice 13 remains `[~] Partial` because Phase B has not begun.
