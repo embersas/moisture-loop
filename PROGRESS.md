@@ -13,7 +13,7 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
 - Next implementation work: `Only Phase A item A5 (a clean live observation window longer than two hours with an unchanged deployed-sensor report) and the separately authorized Phase B physical-water items listed under Slice 13 remain. No release/submission or specification stage is authorized.`
-- Release gates: `All six GitHub-hosted jobs passed canonical rename content SHA 46783d2900fd42a13666eb13d8fe78c623456164 in run 32705144394 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives the same exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
+- Release gates: `All six GitHub-hosted jobs passed the Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. The documentation-only tracking closeout commit containing this record receives its own exact-SHA run, reported in the final handoff. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[~] Partial. Prior live HA/HACS baseline evidence and the 82.525-minute deployed-sensor cadence sample are preserved. Unfinished work is formally divided below into Phase A non-water live validation and Phase B physical-water validation. After the 2026-08-25 remediation, A1/A2/A3/A4/A6 are PASS and A5 alone is partial; Phase B is not started.`
 - Overall status: `Implementation and automated distribution validation are complete. Slice 13 remains partial until every applicable Phase A item and the separately authorized Phase B physical-water items are complete. No synthetic runtime result will be described as physical evidence, and no prototype absence is recorded as a pass.`
 
@@ -2915,3 +2915,19 @@ switch and its backing helper as the only causally related changes.
   (B1 physical valve matrix and B2 active-flow shutdown OFF timing), and Slice 13
   remains `[~] Partial`.
 - `SPECIFICATION.md` remains unchanged. Current authorization returned to `None`.
+
+### Commit, push, and hosted gates
+
+- Committed as `a54ee2777612d914f216781db5b0f3b7d586ef4c`, authored and
+  committed as `embersas <30363137+embersas@users.noreply.github.com>`, and
+  pushed to both `origin/main` (self-hosted) and `github/main`. The GitHub push
+  required selecting the `embersas` stored credential explicitly with
+  `git -c credential.https://github.com.username=embersas push github main`,
+  because this machine's default GitHub credential is a different account with
+  no push permission on the repository. No credential value was read, entered,
+  printed, or stored.
+- All six required GitHub-hosted jobs passed that exact SHA in run
+  `32792205517`: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and
+  HACS validation.
+- No tag, GitHub Release, version bump, HACS default-store submission, or
+  Brands submission was made.
