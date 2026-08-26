@@ -6,9 +6,9 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`; Slice 13 Phase B1 is `[x] PASS`. One explicitly authorized B2 active-flow trial ran on 2026-08-26 and reached Docker's forced 10 s boundary without shutdown-path terminal OFF proof; fail-closed startup recovery later proved OFF and closed accounting. The B2-1 specification review closed on 2026-08-26 with approved `0.1.0-spec.5`, which moves full-process shutdown ownership from `EVENT_HOMEASSISTANT_STOP` to exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()`. B2 is now `[?] Requires implementation remediation and fresh physical revalidation`; no runtime/test implementation and no repeat physical trial is authorized.
+- Current authorized work: `None`; the 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete except for the two hosted-repository renames recorded as manual actions in the dated session below. Slice 13 is `[x] Complete`; Phase B1 is `[x] PASS`. One explicitly authorized B2 active-flow trial ran on 2026-08-26 and reached Docker's forced 10 s boundary without shutdown-path terminal OFF proof; fail-closed startup recovery later proved OFF and closed accounting. The B2-1 specification review closed on 2026-08-26 with approved `0.1.0-spec.5`, which moves full-process shutdown ownership from `EVENT_HOMEASSISTANT_STOP` to exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()`. B2 is now `[?] Requires implementation remediation and fresh physical revalidation`; no runtime/test implementation and no repeat physical trial is authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
-- Specification version: `0.1.0-spec.5`
+- Specification version: `0.1.0-spec.5` (unchanged by the 2026-08-27 nomenclature-only revision note)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Pre-licensing-rewrite rename SHA 46783d2900fd42a13666eb13d8fe78c623456164, whose canonical equivalent is e7f496c94fff4a2d1851bd0fcd9cf778d719f8ac, passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
@@ -4156,3 +4156,178 @@ terminates through an existing transition. No new ambiguity was found.
 - The temporary B2 zone and its nonphysical MQTT fixture are retained inert
   pending a separate cleanup decision. Physical authorization is consumed and
   current authorization returns to `None`.
+
+## Session Log — 2026-08-27 (Canonical pre-release rename SoilSync -> MoistureLoop)
+
+### Authorization, reason, and scope
+
+- The user explicitly authorized a canonical pre-release rename because a
+  materially overlapping agricultural/software business already uses the
+  SoilSync name. The approved identity is product/display **MoistureLoop**,
+  Home Assistant domain `moisture_loop`, directory
+  `custom_components/moisture_loop/`, Python namespace `moisture_loop`,
+  service/event domain `moisture_loop`, HACS name `MoistureLoop`, public
+  repository `embersas/moisture-loop`, tagline "Soil moisture-driven irrigation
+  for Home Assistant".
+- Not authorized and not done: version change (remains `0.1.0`), any
+  specification behaviour change, Store schema change (remains `2`), controller
+  change, `SHUTDOWN_OFF_BUDGET_S` change (remains `8.0`), tag, GitHub Release,
+  HACS default-store submission, Brands submission, or any physical water trial.
+- Starting state verified before editing: local `HEAD` = `origin/main` =
+  `github/main` = `9cd893bdcb0db6b7a93e3cc7759563a2db62283e`, branch `main`,
+  clean worktree, no tags on either remote, no GitHub Release, public
+  repository `embersas/soilsync` with the expected description and topics.
+
+### Rename architecture and persistence decision
+
+- Precedent inspected: the 2026-08-24 `Rename Moisture Loop to SoilSync`
+  commit changed `DOMAIN` and every domain-bound surface with **no** Store
+  rekey, compatibility shim, or schema bump, and the live instance was
+  re-created fresh. The same architecture is followed here.
+- The active Store namespace is `f"{DOMAIN}.{entry_id}"`, so it becomes
+  `moisture_loop.<entry_id>`; schema stays `2`; no schema 3 and no automatic
+  `soilsync.*` -> `moisture_loop.*` rekey/import was implemented. This is
+  option **B** from the authorization: there is no external user base, and the
+  one live pre-release SoilSync entry was retired only after its safety state
+  was proven closed (below), so no unresolved possible-flow, blocker,
+  accounting, or actuator-fault evidence was abandoned.
+- Stale-Store guard: a fresh MoistureLoop entry has a new random `entry_id`
+  and a new `runtime_store_generation_id`, so its Store key cannot collide with
+  any orphaned pre-SoilSync `moisture_loop.<old_entry_id>` file, and §23.5
+  already classifies a present Store with a mismatched generation as integrity
+  loss rather than first install. Startup remains fail-closed; no code change
+  was needed and no specification ambiguity arose.
+- The retired SoilSync Store file remains inert residue in Home Assistant's
+  `.storage` (the integration owns no removal hook and direct `.storage`
+  manipulation is prohibited); no integration reads that key.
+
+### Pre-rename live cleanup (no water)
+
+- Read-only precheck: all six commandable `tuya_local` irrigation valves
+  terminal `closed` (the seventh valve entity is the unrelated third-party
+  cloud device that has been `unavailable` since before B2); controller `idle`;
+  no session, slot owner, blocker, possible-flow owner, fault, open accounting,
+  or tombstone; 0 Repairs; Store schema 2 revision 45, `previous_run_was_clean:
+  true`.
+- The temporary `SoilSync B2 active shutdown` zone subentry was deleted through
+  the supported native `config_entries/subentries/delete` path. Reconciliation
+  applied generation 3 with `dirty: false`, `failed: false`; the zone's safety
+  record was retained as one `retired` tombstone with no blockers,
+  possible-flow owner, fault, or open accounting; Store revision 47; valve
+  still `closed`; 0 Repairs; 0 SoilSync devices/entities.
+- The nonphysical MQTT moisture fixture was then removed by publishing empty
+  retained payloads to its discovery, state, and availability topics; its
+  Registry row and state disappeared. No physical valve was commanded.
+
+### Files and surfaces renamed
+
+- `git mv custom_components/soilsync custom_components/moisture_loop` (history
+  preserved as renames). `DOMAIN = "moisture_loop"`; config-entry/service/
+  Repairs/translation domain, event prefix `moisture_loop_*`, Store key prefix,
+  device identifiers, task names, `MoistureLoopConfigFlow`,
+  `MoistureLoopZoneEntity`, manifest (`domain`, `name`, documentation and
+  issue-tracker URLs -> `embersas/moisture-loop`), `hacs.json`, `strings.json`,
+  `translations/en.json`, `services.yaml` device-selector filters,
+  `pyproject.toml` coverage source, CI workflow paths, `scripts/`, every test
+  import/expectation/fixture, `README.md`, `DEVELOPMENT.md`, `CLAUDE.md`,
+  `TRADEMARKS.md`, `HOME_ASSISTANT_SUBENTRY_DELETION_INVESTIGATION.md`, and
+  `SPECIFICATION.md` (nomenclature only: identity table, tagline, §7 rewritten,
+  one dated nomenclature revision note; spec version unchanged per precedent).
+- `brand/icon.png` (256x256 RGBA PNG) is a name-neutral water drop with no
+  wordmark and was moved unchanged. `LICENSE` and `COPYRIGHT` are unchanged.
+- New regression audit `test_canonical_identity_has_no_stale_product_name`
+  asserts manifest/hacs/directory identity and scans every non-historical
+  repository file for the abandoned identity and the spaced working name.
+- Historical SoilSync/Moisture Loop text in `PROGRESS.md` and
+  `PROTOTYPE_VALIDATION.md` is retained unchanged; both received only a
+  current-identity heading/note.
+
+### Local validation actually run
+
+- Ruff check and format check pass; `git diff --check` clean.
+- Pure (no homeassistant installed): **443 passed, 0 skipped**;
+  `state_machine.py` 100% branch.
+- Mandatory HA 2025.9.0: HA1 contract check passed; **895 passed, 1 skipped**
+  (the documented pure-boundary node only); overall **92.54%** branch coverage
+  (gate 90%); `state_machine.py` **100%**.
+- Supported-current HA 2026.8.3: contract check passed; **895 passed, 1
+  skipped**; 92.36% coverage.
+- Traceability: **134/134 normative IDs, 37/37 invariants, 59/59
+  transitions**, no new skip/xfail.
+- Metadata: manifest domain/name/version/URLs/codeowners/config_flow/
+  integration_type/iot_class/single_config_entry/empty requirements verified;
+  HACS name `MoistureLoop`, minimum `2025.9.0`; `strings.json` ==
+  `translations/en.json`; service/icon/entity key parity; all four selector
+  filters `integration: moisture_loop`; PNG header/dimensions valid.
+- Local hassfest container preflight could not run because the local Docker
+  daemon was not running; the mandatory result is the hosted job below.
+- Privacy scan of tracked content found no token, LAN address, private entity
+  ID, or local key; `.env` and `evidence/private/` remain ignored and
+  untracked.
+
+### Commit, push, and hosted gates
+
+- Forward commit `ad2ca863b1efcc76645d39133c7f7d0c73a48794` (`Rename SoilSync
+  to MoistureLoop`), author and committer
+  `embersas <30363137+embersas@users.noreply.github.com>`, fast-forwarded to
+  both `origin/main` and `github/main`. No force push, no rewrite, no tag.
+- GitHub Actions run `33019739998` passed all six jobs on that exact SHA:
+  lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, HACS validation.
+
+### Live NON-WATER deployment of the exact CI-passed SHA
+
+- Preconditions re-proven read-only: all commandable valves `closed`, the old
+  entry had zero zones, one `retired` tombstone with no blockers/possible-flow
+  owner/fault/open accounting, Store revision 47.
+- The inert pre-release SoilSync config entry was removed through the supported
+  config-entry delete API (`require_restart: false`); its HACS installation was
+  uninstalled through HACS (`installed: false`), which removes
+  `/config/custom_components/soilsync`. HACS then still cached the stale remote
+  content path, so the custom repository record was removed and re-added by its
+  current GitHub name; HACS re-read the tree as `MoistureLoop` / domain
+  `moisture_loop` / `local_path /config/custom_components/moisture_loop` and
+  downloaded exactly version `ad2ca863b1efcc76645d39133c7f7d0c73a48794`.
+- One supported `homeassistant.restart` with all water OFF; healthy in 33 s on
+  Core 2026.7.2. Flow handlers: `moisture_loop` present, `soilsync` absent;
+  `manifest/get soilsync` -> `not_found`; exactly one integration.
+- A fresh MoistureLoop controller entry (no zones) was created through the
+  config flow: `loaded`, title `MoistureLoop`, loaded manifest domain
+  `moisture_loop`, name `MoistureLoop`, version `0.1.0`, URLs
+  `embersas/moisture-loop`. Diagnostics: `setup_classification:
+  first_install`, schema `2`, `store_revision` 4, `stage1_job_registered:
+  true`, `shutdown_off_budget_s: 8.0`, `process_stopping: false`, no zones,
+  tombstones, blockers, slot owner, or open accounting; **0 Repairs**; the only
+  log line is Core's standard custom-integration notice. A no-water reload
+  returned `initialized_ok`, revision 7, Stage-1 job re-registered.
+  `previous_run_was_clean` is `false` only because a first install has null run
+  IDs; no shutdown occurred after the entry existed.
+- No physical valve was opened, no session started, no active-flow shutdown
+  test performed. B2's physical evidence remains valid because runtime
+  behaviour is unchanged.
+
+### Hosted repository renames — manual actions required
+
+- GitHub: this environment's `gh` login is a different account with only
+  `pull` permission on `embersas/soilsync`, and the stored `embersas` git
+  credential may not be read by the agent, so `embersas/soilsync` was **not**
+  renamed. Manual action: Settings -> General -> Repository name ->
+  `moisture-loop` (description and topics already match the approved values).
+  Until then `https://github.com/embersas/moisture-loop` is served by GitHub's
+  redirect to the same repository ID; the pushed manifest/README URLs already
+  point at the canonical name. After the rename run
+  `git remote set-url github https://github.com/embersas/moisture-loop.git`
+  and refresh the HACS record.
+- Self-hosted origin: `https://git.lukestanbury.com/luke/soilsync.git`
+  requires an administrator token this environment does not hold (API 403);
+  the remote path therefore temporarily retains `soilsync` as an
+  infrastructure naming remainder. Content on it is canonical MoistureLoop and
+  no release-facing URL points to it.
+
+### Status and remaining work
+
+- Phase A `[x]`, B1 `[x]`, B2 `[x]`, Phase B `[x]`, Slice 13 `[x]`; all
+  seven §46 validations remain complete on preserved SoilSync-era evidence.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
+  Brands NOT SUBMITTED. Current authorization returns to `None`.
+- Next: complete the two manual repository renames, then resume the 0.1.0
+  release-readiness audit under the MoistureLoop identity.

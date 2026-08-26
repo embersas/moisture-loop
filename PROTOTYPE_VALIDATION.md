@@ -991,6 +991,18 @@ Verified current state after B2 recovery, read back from the live instance:
 | Home Assistant | `RUNNING`, 2026.7.2 |
 | Observers | stopped |
 
+### Pre-rename cleanup - 2026-08-27
+
+- Before the canonical rename to MoistureLoop, the retained B2 zone
+  `SoilSync B2 active shutdown` was deleted through the native subentry path
+  with all commandable valves terminal `closed`, controller `idle`, and no
+  session, blocker, possible-flow owner, fault, or open accounting. Its safety
+  record was retained as one `retired` tombstone (no hazard) and the nonphysical
+  MQTT fixture was removed. The inert SoilSync config entry and HACS install
+  were then retired and a fresh MoistureLoop entry was loaded from exact SHA
+  `ad2ca863b1efcc76645d39133c7f7d0c73a48794` with no water; see `PROGRESS.md`
+  2026-08-27. No physical result is affected.
+
 ### A5 continuation cleanup - 2026-08-25
 
 - **Zero physical irrigation ON or open commands were issued.** The only ON
