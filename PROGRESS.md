@@ -6,16 +6,16 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`; the 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete except for the two hosted-repository renames recorded as manual actions in the dated session below. Slice 13 is `[x] Complete`; Phase B1 is `[x] PASS`. One explicitly authorized B2 active-flow trial ran on 2026-08-26 and reached Docker's forced 10 s boundary without shutdown-path terminal OFF proof; fail-closed startup recovery later proved OFF and closed accounting. The B2-1 specification review closed on 2026-08-26 with approved `0.1.0-spec.5`, which moves full-process shutdown ownership from `EVENT_HOMEASSISTANT_STOP` to exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()`. B2 is now `[?] Requires implementation remediation and fresh physical revalidation`; no runtime/test implementation and no repeat physical trial is authorized.
+- Current authorized work: `None`. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
 - Specification version: `0.1.0-spec.5` (unchanged by the 2026-08-27 nomenclature-only revision note)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
-- Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Pre-licensing-rewrite rename SHA 46783d2900fd42a13666eb13d8fe78c623456164, whose canonical equivalent is e7f496c94fff4a2d1851bd0fcd9cf778d719f8ac, passed all six GitHub-hosted jobs at embersas/soilsync.`
+- Current spec.5 conformance: `Spec.4 Remediation Stages 1-8, the spec.5 Stage-1 shutdown remediation (implementation c81f598969ff544abd64915fe92e8f5ae13d4086), and the nomenclature-only MoistureLoop canonical rename (ad2ca863b1efcc76645d39133c7f7d0c73a48794) are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 895 tests with the one deliberate pure-boundary skip; pure passes 443/443. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch; overall mandatory coverage 92.54%.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `Implement the approved spec.5 Stage-1 shutdown correction under a separate authorization, then re-run the full mandatory gates, deploy the exact SHA, and obtain a fresh exact physical checkpoint before any repeat B2 trial. No production/test/default change or repeat physical trial is authorized now. Phase A is complete and B1 passed. No release/submission stage is authorized.`
-- Release gates: `All six GitHub-hosted jobs passed the pre-licensing-rewrite Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync; its canonical equivalent is a61da563ea96d3a7cd7b042dc0da80320022de11. Those historical results remain attributed to the original SHA. The final licensing/branding SHA receives its own six-job run. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
-- Slice 13: `[~] Partial. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [?] Requires implementation remediation and fresh physical revalidation: the B2-1 review is resolved by approved spec.5, but no runtime remediation or repeat physical trial has occurred. Phase B remains [~] Partial.`
-- Overall status: `Slices 0-12 and automated distribution validation remain complete. Slice 13 is partial because B2 exposed a specification-level lifecycle/Store contradiction, now resolved normatively by approved spec.5 but not yet implemented. Startup reconciliation remained fail-closed and recovered terminal OFF; that post-restart result is not misclassified as shutdown timing.`
+- Next implementation work: `No implementation work is open. The next substantive work is a controlled real-soil-moisture-sensor AUTO validation on the live deployment, followed by the 0.1.0 release-readiness audit under the MoistureLoop identity; each requires its own explicit authorization. No release/submission stage is authorized.`
+- Release gates: `All six GitHub-hosted jobs passed the MoistureLoop rename SHA ad2ca863b1efcc76645d39133c7f7d0c73a48794 (run 33019739998) and the documentation closeout SHA d34e4f03c231ca1a7af93805ad40dad2c61e39ce (run 33020561431) at the repository now named embersas/moisture-loop: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. Earlier results remain attributed to their original SHAs in the dated logs. Version is 0.1.0; no tag, GitHub Release, HACS default-store submission, or Brands submission has occurred.`
+- Slice 13: `[x] Complete. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [x] PASS: the corrected 2026-08-26 active-flow trial on the byte-verified spec.5 implementation proved shutdown-path terminal CLOSED at T3+1.3596 s with the run recorded clean. Phase B is [x] Complete. All seven §46 prototype validations have live evidence; the physical evidence was recorded under the then-current SoilSync name and remains valid because runtime semantics were unchanged by the rename.`
+- Overall status: `Slices 0-13 are complete. The spec.5 Stage-1 shutdown correction is implemented, fully gated, and physically validated; the first failed B2 attempt is retained unchanged as historical evidence. The product is canonically MoistureLoop with no stale active identity. Release readiness has not yet been audited and no release is authorized.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
@@ -50,7 +50,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 10 | Home Assistant entities and actions | [x] |
 | 11 | Repairs, diagnostics, events, and logging | [x] |
 | 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
-| 13 | Prototype validations | [~] Partial; Phase A [x] Complete, B1 [x] PASS, B2 [?] Requires specification review |
+| 13 | Prototype validations | [x] Complete; Phase A [x], B1 [x] PASS, B2 [x] PASS, Phase B [x] |
 
 Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
 
@@ -100,7 +100,7 @@ This assessment compares the approved spec.4 requirements with the dated spec.3 
 | 10 | `[x]` | Schema-2 entities/actions and all lifecycle/reconciliation refusal surfaces pass final traceability. |
 | 11 | `[x]` | Exact-record Repairs, incidents, diagnostics, deleted-safe events, delayed closure, and logging pass final traceability. |
 | 12 | `[x] Exact-public-SHA hosted gates complete` | README/developer docs and distribution metadata are spec.4-current; HA 2025.9.0 and 2026.8.3, traceability, package, local-only, Recorder, metadata, hosted hassfest, and hosted HACS gates pass SHA `43f24b12fc162412b534851b9c1b3762ca57cd98`. |
-| 13 | `[~] Partial live evidence; B1 passed; B2 requires review` | Phase A is complete on live evidence. B1 passed §46 item 2 using a literal physical HA `valve`, measured physical water, SoilSync/manual/external/serialization behavior, and a proven-nonphysical live MQTT valve for missing transition/availability/position states. One authorized B2 run proved active physical-controller operation and external cooperative-stop initiation, but Docker escalated after 10 s with no T5/T6 observation; startup later recovered OFF conservatively. |
+| 13 | `[x] Complete on live evidence` | Phase A is complete on live evidence. B1 passed §46 item 2 on a literal physical HA `valve` with measured water. B2 passed on 2026-08-26 against the deployed spec.5 Stage-1 shutdown build: shutdown-path terminal CLOSED at T3+1.3596 s, measured (not estimated) runtime, run recorded clean. The first B2 attempt (Docker escalated at 10 s with no T5/T6) is retained as historical evidence and led to spec.5. |
 
 ## Spec.4 Implementation Remediation Plan
 
@@ -1497,7 +1497,7 @@ None. Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 
 
 ### Status
 
-`[~] Partial — Phase A non-water live validation is [x] Complete (A1, A2, A3, A4, A5 and A6 all PASS); Phase B has B1 [x] PASS and B2 [?] Requires implementation remediation and fresh physical revalidation after the B2-1 review closed with approved spec.5`
+`[x] Complete — Phase A non-water live validation is [x] Complete (A1, A2, A3, A4, A5 and A6 all PASS); Phase B is [x] Complete with B1 [x] PASS and B2 [x] PASS on the 2026-08-26 corrected trial against the deployed spec.5 implementation`
 
 ### Phase split
 
@@ -4331,3 +4331,31 @@ terminates through an existing transition. No new ambiguity was found.
   Brands NOT SUBMITTED. Current authorization returns to `None`.
 - Next: complete the two manual repository renames, then resume the 0.1.0
   release-readiness audit under the MoistureLoop identity.
+
+### Hosted rename completion (later on 2026-08-27)
+
+- Under a follow-up authorization, both hosted renames recorded above as
+  manual actions were completed through supported authenticated APIs using the
+  existing stored credentials (secrets stayed opaque; nothing was printed or
+  stored). GitHub `PATCH /repos/embersas/soilsync {"name": "moisture-loop"}`
+  returned 200: repository ID `1343557518` unchanged, `full_name`
+  `embersas/moisture-loop`, public, default branch `main`, description, topics,
+  and Issues retained, `main` at `d34e4f03c231ca1a7af93805ad40dad2c61e39ce`;
+  the old URL answers `301` to the canonical one. Gitea
+  `PATCH /repos/luke/soilsync` returned 200: repository ID `23` renamed in place
+  to private `luke/moisture-loop`, no deletion or recreation.
+- Local remotes are now `origin https://git.lukestanbury.com/luke/moisture-loop.git`
+  and `github https://github.com/embersas/moisture-loop.git`; both `ls-remote`
+  `refs/heads/main` resolve to the same HEAD. No hosted-infrastructure naming
+  remainder is outstanding.
+- HACS: a supported `hacs/repository/refresh` updated the single custom
+  repository record to `embersas/moisture-loop` (name `MoistureLoop`, domain
+  `moisture_loop`, installed version `ad2ca863b1efcc76645d39133c7f7d0c73a48794`
+  unchanged); no uninstall/reinstall was needed and no duplicate record exists.
+  The MoistureLoop entry remained `loaded`, 0 Repairs, all commandable valves
+  `closed`, no water.
+- This closeout corrected only the stale Current Position, Progress Summary,
+  and Slice 13 status fields; dated session logs, including the original failed
+  B2 trial, are unchanged. Next substantive work: controlled real-sensor AUTO
+  validation, then the 0.1.0 release-readiness audit. Authorization returns to
+  `None`.
