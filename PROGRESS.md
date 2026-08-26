@@ -3895,3 +3895,143 @@ terminates through an existing transition. No new ambiguity was found.
 
 `custom_components/soilsync/state_machine.py` and
 `custom_components/soilsync/models.py` are deliberately unchanged.
+
+### Commit, push, and hosted gates
+
+- Committed as `c81f598969ff544abd64915fe92e8f5ae13d4086`, authored and
+  committed as `embersas <30363137+embersas@users.noreply.github.com>`, and
+  pushed to both `origin/main` (self-hosted) and `github/main`. Both remotes
+  resolve `refs/heads/main` to that exact SHA. No force push and no history
+  rewrite. Each remote required its stored credential to be selected explicitly
+  with `git -c credential.https://<remote-host>.username=<account> push ...`,
+  because this machine's default credential for each host is a different
+  account; no credential value was read, entered, printed, or stored.
+- All six required GitHub-hosted jobs passed that exact SHA in run
+  `32949793687`: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and
+  HACS validation.
+- No tag, GitHub Release, version bump, HACS default-store submission, or
+  Brands submission was made.
+
+### Deployment of the exact validated SHA
+
+- Deployment target: the existing live instance, Home Assistant Core `2026.7.2`,
+  Home Assistant Container (`ghcr.io/home-assistant/home-assistant:stable`,
+  `/init`, host networking, `restart: unless-stopped`) with HACS `2.0.5`.
+  Credentials came only from the Git-ignored repository-root `.env`, which was
+  confirmed ignored and untracked before it was loaded; the token was never
+  printed, logged, placed on a command line, or committed.
+- The earlier sessions' SSH file-replacement path was not available: it depends
+  on an operator-supplied temporary SSH password that this session does not
+  have. Deployment therefore used the supported HACS download of the **exact
+  commit** instead. HACS metadata was refreshed, reported
+  `available_version: c81f598` with `pending_upgrade: true`, and the download
+  was requested explicitly for version `c81f598`. HACS then reported
+  `installed_version: c81f598`, `pending_upgrade: false`,
+  `status: pending-restart`, `local_path: /config/custom_components/soilsync`.
+  Nothing from the working tree was deployed; the deployed content is the
+  GitHub zipball of the CI-passed commit.
+- Because no host shell was available, remote MD5/byte-for-byte comparison of
+  the deployed files could not be performed this session. Deployed-source
+  identity rests on two independent facts instead: HACS's own exact-version
+  attestation, and live functional evidence that only `c81f598` can produce —
+  config-entry diagnostics now expose the new `shutdown` section with
+  `stage1_job_registered: true` and `shutdown_off_budget_s: 8.0`, neither of
+  which exists in the previously deployed build. That build's absence of the
+  section was also confirmed immediately before the upgrade.
+- Water safety before any restart, read-only: all six commandable `tuya_local`
+  irrigation valves, including SoilSync's configured actuator
+  (`registry_confirmed`, `valve.close_valve`, 30 s confirm timeout), were
+  terminal `closed`; the physical four-channel controller reported `idle` with a
+  static consumption total and no flow-rate sample; SoilSync was `idle` with no
+  session, slot owner, blocker, possible-flow owner, fault, open accounting, or
+  tombstone. One further valve entity in the instance belongs to an unrelated
+  third-party cloud integration whose **entire** entity set (10 of 10) has been
+  `unavailable` since the previous Home Assistant start; SoilSync neither
+  references nor can command it, and restarting Home Assistant cannot open,
+  close, or otherwise affect it. That pre-existing third-party unavailability is
+  recorded here explicitly rather than treated as SoilSync-relevant uncertainty.
+- Activation used the supported `homeassistant.restart` action with all physical
+  water OFF. The instance returned healthy in 44 s.
+
+### Live NON-WATER validation
+
+- Home Assistant healthy, `RUNNING`, Core `2026.7.2`. SoilSync config entry
+  `loaded` with no failure reason; manifest version still `0.1.0`,
+  `helper`/`calculated`/`single_config_entry`, empty runtime requirements.
+- **0 open Repairs across the whole instance.** The only SoilSync log line is
+  Home Assistant's standard custom-integration notice; there are no SoilSync
+  errors or warnings. The three unrelated `ERROR` lines belong to other
+  integrations and pre-date this deployment.
+- Store: `setup_classification: initialized_ok`, schema `2`, generation
+  unchanged — no integrity issue. Zone lifecycle `active`, controller `idle`,
+  no blockers, no possible-flow owner, no fault, no open accounting, no
+  retained tombstone, `may_be_flowing: false`; the physical valve stayed
+  terminal `closed` throughout.
+- Stage-1 runtime readiness is directly observable through supported runtime
+  behaviour without stopping Home Assistant: diagnostics report
+  `stage1_job_registered: true`, `shutdown_off_budget_s: 8.0`,
+  `process_stopping: false`.
+- A config-entry reload with no water and no session returned the entry to
+  `loaded`, re-registered the Stage-1 job on the fresh runtime, and left the
+  controller `idle` with no blockers and the actuator `closed`. Home Assistant
+  exposes no supported API for enumerating Core's shutdown-job list, so
+  non-accumulation across reloads remains proven by the automated Core-level
+  evidence rather than by live inspection.
+- **First clean run marker in this deployment's history.** A normal no-water
+  Home Assistant restart — used to verify installation, and explicitly not a B2
+  trial — produced `previous_run_was_clean: true`. Every earlier run on this
+  instance, including the failed B2 trial, left the run IDs unequal. This is
+  live proof on the real deployment that the Stage-1 owner runs while Core can
+  still write, completes its Store safety transactions under the unchanged
+  immediate fresh-Store verification that the old stop-event hook could not
+  satisfy, and writes and verifies the clean marker last. It proves the
+  persistence half of finding B2-1 is fixed; it proves nothing about
+  shutdown-path terminal OFF while water is flowing.
+
+### B2 fixture prepared, no water
+
+- The retained B2 zone `SoilSync B2 active shutdown` is intact and inert: one
+  physical `tuya_local` `valve` channel of a four-channel irrigation controller
+  as actuator, and a clearly labelled nonphysical MQTT moisture fixture at
+  `50.0` used only as config-flow plumbing. AUTO thresholds remain `1.0`/`2.0`
+  so automatic watering can never trigger at that value; B2 will use one bounded
+  MANUAL session.
+- Applied settings: `manual_max_duration_s: 120`, `pulse_duration_s: 30`,
+  `max_session_runtime_s: 180`, `max_daily_runtime_s: 180`,
+  `min_session_interval_s: 900`, `sensor_max_age_s: 86400`,
+  `actuator_confirm_timeout_s: 30`. Current-day conservative runtime is
+  `51.649538 s` of the `180 s` budget, carried over from the failed trial's
+  recovery, leaving `128.35 s` — enough for one bounded 120 s MANUAL session.
+- The effective external cooperative stop window is unchanged from the failed
+  trial's measurement: no image, container, or Compose stop-signal or
+  stop-timeout override, so Docker's default SIGTERM plus a 10 s grace applies,
+  measured live at approximately 10.03 s SIGTERM to SIGKILL.
+  `SHUTDOWN_OFF_BUDGET_S` remains `8.0` and is untouched.
+- Host-side control was **not** re-established this session. The external
+  `docker stop` command, live Docker events, container logs, and the host
+  monotonic timeline all require the SSH path whose temporary password the
+  operator supplies interactively. The private observer and orchestration
+  scripts from the failed trial are retained under Git-ignored
+  `evidence/private/`, but nothing is currently armed and no observer is
+  running. Arming them belongs to the authorized physical run.
+- No physical valve was opened, no MANUAL session was started, no AUTO watering
+  occurred, and Home Assistant was never stopped with water flowing. Private
+  identifiers remain out of the repository.
+
+### Status and remaining work
+
+- `0.1.0-spec.5` Stage-1 shutdown ownership is implemented, fully gated locally,
+  green on all six hosted jobs for the exact SHA, and deployed and verified
+  live with no water.
+- **B2 remains `[?] Pending corrected physical revalidation` and is not PASS.**
+  Automated and non-water deployment evidence is not physical evidence: proving
+  shutdown-path terminal OFF requires one real bounded MANUAL session with water
+  flowing followed by one normal external cooperative container stop, and that
+  requires a fresh exact operator water authorization.
+- Phase A remains `[x] Complete`; B1 remains `[x] PASS`; Phase B remains
+  `[~] Partial`; Slice 13 remains `[~] Partial`.
+- Product version remains `0.1.0`. No tag, GitHub Release, HACS default-store
+  submission, or `home-assistant/brands` submission occurred. `.env` remains
+  ignored and untracked.
+- The implementation/deployment authorization for this session is consumed.
+  Current authorization returns to `None`; physical B2 authorization is pending.
