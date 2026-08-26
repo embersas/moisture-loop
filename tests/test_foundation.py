@@ -157,6 +157,62 @@ def test_blocker_ownership_is_safety_record_only() -> None:
     assert calls > 0
 
 
+def test_no_production_stop_event_shutdown_owner() -> None:
+    """spec.5 §24.1: EVENT_HOMEASSISTANT_STOP owns no SoilSync safety work.
+
+    It fires only after Core cancelled background tasks and set
+    CoreState.stopping, where Store.async_save merely queues its payload for
+    final write, so it can never satisfy the §23.4 fresh-read verification.
+    """
+    prohibited = {
+        "EVENT_HOMEASSISTANT_STOP",
+        "EVENT_HOMEASSISTANT_FINAL_WRITE",
+        "async_handle_ha_stop",
+        "install_stop_listener",
+        "async_listen_once",
+    }
+    integration = REPO_ROOT / "custom_components" / "soilsync"
+    for file in integration.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        used: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                used.add(node.attr)
+            elif isinstance(node, ast.Name):
+                used.add(node.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                used.update(alias.asname or alias.name for alias in node.names)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                used.add(node.value)
+        assert not (used & prohibited), f"{file.name} uses {sorted(used & prohibited)}"
+
+
+def test_exactly_one_stage1_shutdown_owner_registration() -> None:
+    """spec.5 §22.1/§24.1: one removable Stage-1 job, owned by entry unload."""
+    runtime = (REPO_ROOT / "custom_components" / "soilsync" / "runtime.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(runtime)
+    registrations = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "async_add_shutdown_job"
+    ]
+    assert len(registrations) == 1
+    assert "self.entry.async_on_unload(self.remove_shutdown_job)" in runtime
+    assert "async def async_stage1_shutdown(" in runtime
+    # No other production module may own or initiate process shutdown.
+    integration = REPO_ROOT / "custom_components" / "soilsync"
+    for file in integration.glob("*.py"):
+        if file.name == "runtime.py":
+            continue
+        text = file.read_text(encoding="utf-8")
+        assert "async_add_shutdown_job" not in text, file.name
+        assert "async_stage1_shutdown" not in text, file.name
+
+
 def test_one_shared_off_implementation() -> None:
     """I16: flow exits converge on the controller's one OFF future."""
     integration = REPO_ROOT / "custom_components" / "soilsync"

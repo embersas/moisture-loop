@@ -386,3 +386,48 @@ class TestAdversarialInterleavings:
             ("zone-b", EXTERNAL),
         )
         assert snap.grants_enabled is True
+
+
+class TestStage1AdmissionClosure:
+    """spec.5 §24.1: the Stage-1 shutdown owner closes slot admission before
+    its own first suspension point, so no grant can be offered while active
+    flow is being signalled."""
+
+    async def test_close_admission_now_revokes_queued_and_future_grants(self) -> None:
+        manager = await enabled_manager()
+        await manager.async_request("zone-a")
+        assert manager.owner == "zone-a"
+        queued = await manager.async_request("zone-b")
+        assert queued.pending
+
+        manager.close_admission_now()  # synchronous; no await
+
+        assert manager.snapshot().grants_enabled is False
+        assert manager.snapshot().admission_open is False
+        assert manager.snapshot().queue == ()
+        assert queued.granted.cancelled()
+        # Ownership, blockers and accounting are untouched.
+        assert manager.owner == "zone-a"
+        # Releasing the owner cannot offer the slot to anybody afterwards.
+        assert await manager.async_release("zone-a")
+        assert manager.owner is None
+        later = await manager.async_request("zone-c")
+        assert later.pending
+        assert manager.owner is None
+
+    async def test_close_admission_now_is_idempotent(self) -> None:
+        manager = await enabled_manager()
+        manager.close_admission_now()
+        manager.close_admission_now()
+        assert manager.snapshot().queue == ()
+        assert manager.snapshot().grants_enabled is False
+
+    async def test_close_admission_now_keeps_keyed_blockers(self) -> None:
+        manager = await enabled_manager()
+        await manager.async_add_blocker("record-a", EXTERNAL)
+        manager.close_admission_now()
+        assert manager.blockers() == frozenset({("record-a", EXTERNAL)})
+        # Proven OFF still removes exactly one key without reopening grants.
+        await manager.async_remove_blocker("record-a", EXTERNAL)
+        assert manager.blockers_empty()
+        assert manager.snapshot().admission_open is False

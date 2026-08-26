@@ -170,12 +170,95 @@ def main() -> int:
 
     check("ValveEntityFeature OPEN/CLOSE", valve_features)
 
-    def stop_event() -> None:
+    def lifecycle_events() -> None:
+        for name in ("EVENT_HOMEASSISTANT_STOP", "EVENT_HOMEASSISTANT_FINAL_WRITE"):
+            _assert(isinstance(getattr(ha_const, name), str), f"{name} missing")
+
+    check("EVENT_HOMEASSISTANT_STOP / EVENT_HOMEASSISTANT_FINAL_WRITE", lifecycle_events)
+
+    def shutdown_job_api() -> None:
+        """§24.1: the Stage-1 shutdown owner and its removal callback."""
+        from homeassistant.core import CoreState, HassJob, HomeAssistant
+
         _assert(
-            isinstance(ha_const.EVENT_HOMEASSISTANT_STOP, str), "EVENT_HOMEASSISTANT_STOP missing"
+            hasattr(HomeAssistant, "async_add_shutdown_job"),
+            "HomeAssistant.async_add_shutdown_job missing",
+        )
+        sig = inspect.signature(HomeAssistant.async_add_shutdown_job)
+        _assert(
+            "hassjob" in sig.parameters,
+            f"async_add_shutdown_job signature is {sig}",
+        )
+        source = inspect.getsource(HomeAssistant.async_add_shutdown_job)
+        _assert(
+            "self._shutdown_jobs.append(job_with_args)" in source
+            and "def remove_job()" in source
+            and "self._shutdown_jobs.remove(job_with_args)" in source
+            and source.rstrip().endswith("return remove_job"),
+            "async_add_shutdown_job no longer returns a removal callback",
+        )
+        job_sig = inspect.signature(HassJob.__init__)
+        for name in ("target", "name", "cancel_on_shutdown", "job_type"):
+            _assert(name in job_sig.parameters, f"HassJob.{name} missing: {job_sig}")
+        for name in ("running", "stopping", "final_write", "not_running"):
+            _assert(hasattr(CoreState, name), f"CoreState.{name} missing")
+
+    check(
+        "HomeAssistant.async_add_shutdown_job + removal callback + HassJob/CoreState",
+        shutdown_job_api,
+    )
+
+    def shutdown_stage_ordering() -> None:
+        """§5.5/§24.1: Stage 1 runs and awaits shutdown jobs before Stage 2."""
+        from homeassistant import core as ha_core
+        from homeassistant.core import HomeAssistant
+
+        source = inspect.getsource(HomeAssistant.async_stop)
+        stage1 = source.index("for job in self._shutdown_jobs:")
+        gather = source.index("await asyncio.gather(*tasks, return_exceptions=True)")
+        cancel = source.index('task.cancel("Home Assistant is stopping")')
+        stopping = source.index("self.set_state(CoreState.stopping)")
+        stop_event = source.index("EVENT_HOMEASSISTANT_STOP")
+        final_write = source.index("EVENT_HOMEASSISTANT_FINAL_WRITE")
+        _assert(
+            stage1 < gather < cancel < stopping < stop_event < final_write,
+            "async_stop stage ordering changed",
+        )
+        _assert(
+            source.index("STOPPING_STAGE_SHUTDOWN_TIMEOUT") < gather,
+            "Stage-1 shutdown jobs are no longer bounded by the Stage-1 timeout",
+        )
+        _assert(
+            isinstance(ha_core.STOPPING_STAGE_SHUTDOWN_TIMEOUT, (int, float)),
+            "STOPPING_STAGE_SHUTDOWN_TIMEOUT missing",
         )
 
-    check("EVENT_HOMEASSISTANT_STOP", stop_event)
+    check(
+        "async_stop Stage 1 jobs precede background cancellation/stopping/stop event",
+        shutdown_stage_ordering,
+    )
+
+    def store_save_deferred_while_stopping() -> None:
+        """§23.4: async_save only queues once CoreState.stopping is set."""
+        from homeassistant.helpers.storage import Store
+
+        source = inspect.getsource(Store.async_save)
+        guard = source.index("if self.hass.state is CoreState.stopping:")
+        listener = source.index("self._async_ensure_final_write_listener()")
+        immediate = source.index("await self._async_handle_write_data()")
+        _assert(
+            guard < listener < immediate,
+            "Store.async_save stopping-deferral behaviour changed",
+        )
+        _assert(
+            source.index("return", listener) < immediate,
+            "Store.async_save no longer returns before writing while stopping",
+        )
+
+    check(
+        "Store.async_save defers its write while CoreState.stopping",
+        store_save_deferred_while_stopping,
+    )
 
     def service_validation_error() -> None:
         from homeassistant.exceptions import ServiceValidationError  # noqa: F401

@@ -915,6 +915,16 @@ class ZoneController:
         return self._off_operation
 
     @property
+    def persist_failed(self) -> bool:
+        """Whether a §23.4 safety write for this zone has failed.
+
+        A failed verified write is absorbed into fail-closed FAULT state
+        rather than raised out of a dispatch, so lifecycle owners read this
+        flag to aggregate an honest outcome (§24.1 clean-run evidence).
+        """
+        return self._persist_failed
+
+    @property
     def session_owner_task(self) -> asyncio.Task | None:
         """Controller-owned session task used by lifecycle convergence."""
         return self._session_task

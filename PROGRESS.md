@@ -3629,3 +3629,269 @@ they are not members of this licensing-rewrite map.
   ignored and untracked.
 - Next work is spec.5 implementation remediation under a separate
   authorization. Current authorization returned to `None`.
+
+## Session Log — 2026-08-26 (spec.5 Stage-1 shutdown implementation remediation)
+
+### Authorization, baseline, and scope
+
+- The user issued the separate implementation authorization that `PROGRESS.md`
+  requires: implement the approved `0.1.0-spec.5` Stage-1 shutdown
+  architecture, make the production Python changes it requires, add automated
+  regression, update traceability and documentation, run the complete local and
+  hosted validation, commit and push normally, and deploy the exact validated
+  SHA to the existing live Home Assistant instance for NON-WATER verification
+  and B2 fixture preparation.
+- Explicitly not authorized and not done: opening a physical valve, starting a
+  physical MANUAL session, AUTO watering, stopping Home Assistant while water
+  flowed, repeating B2, SIGKILL/crash testing, changing the container stop
+  grace period, a version bump, a tag, a GitHub Release, HACS default-store
+  submission, or a `home-assistant/brands` submission.
+- Baseline verified before editing: local `HEAD`, `origin/main`, and
+  `github/main` were all
+  `799760e1f632524c8b3d0d6739797d197a591e23`, matching the prompt's expected
+  SHA, on branch `main`, with a clean worktree.
+- `SPECIFICATION.md` `0.1.0-spec.5` was read in full, together with
+  `PROGRESS.md`, `PROTOTYPE_VALIDATION.md`, `DEVELOPMENT.md`, `CLAUDE.md`,
+  `README.md`, every affected production module, every shutdown/reload/
+  restart/race and traceability test, and the CI workflow, before any edit.
+
+### Home Assistant lifecycle re-verification
+
+- The normative lifecycle claims were re-checked directly against the installed
+  release sources of both supported environments, `2025.9.0` and the
+  supported-current `2026.8.3`. Both are byte-identical in the relevant paths:
+  `HomeAssistant.async_add_shutdown_job()` appends a `HassJobWithArgs` and
+  returns a `remove_job` callback; `HomeAssistant.async_stop()` runs and gathers
+  the registered shutdown jobs in Stage 1 under
+  `STOPPING_STAGE_SHUTDOWN_TIMEOUT = 20`, then cancels background tasks, then
+  sets `CoreState.stopping`, then fires `EVENT_HOMEASSISTANT_STOP`, and only
+  afterwards `EVENT_HOMEASSISTANT_FINAL_WRITE`; and `Store.async_save()` returns
+  after only registering the final-write listener once `CoreState.stopping` is
+  set.
+- A coroutine shutdown job is created through `create_eager_task`, so its body
+  runs synchronously up to its first suspension point while Core is still
+  iterating its shutdown-job list. The implementation deliberately relies on
+  that only for ordering comfort; correctness does not depend on it, because
+  Core awaits the gathered jobs before Stage 2 either way.
+- These checks were added to `scripts/check_ha_contract.py` (HA1) so both CI
+  environments enforce them mechanically on every run.
+
+### Runtime architecture implemented
+
+- `EntryRuntime.register_shutdown_job()` registers exactly one removable
+  `HomeAssistant.async_add_shutdown_job()` `HassJob` per loaded entry runtime.
+  It is the first thing `async_initialize()` does, so registration completes
+  before the update listener, before the Store/run protocol, and before
+  SlotManager grants are ever enabled. The returned removal callback is stored
+  and also registered through `entry.async_on_unload(...)`, which Home Assistant
+  runs both on ordinary unload and on the `ConfigEntryNotReady` setup-failure
+  path, so neither a reload nor an aborted setup can accumulate or strand a
+  shutdown owner. Registration and removal are both idempotent.
+- `EntryRuntime.async_stage1_shutdown()` is the sole authoritative full-process
+  shutdown owner. Before its first suspension point it synchronously sets
+  `process_stopping`, calls the new
+  `ConfigurationReconciliationCoordinator.close_publication_now()`, calls the
+  new `SlotManager.close_admission_now()` (which disables grants and cancels
+  every queued request), calls `begin_quiescing()` on every snapshotted
+  configured and retained controller, computes one absolute monotonic
+  active-flow deadline, and publishes one shared operation future.
+- `_run_stage1_shutdown()` then executes the §24.1 algorithm in order:
+  immediate active-flow signalling; bounded convergence and join; the
+  reconciliation/lifecycle handoff; per-object verified persistence; clean-run
+  aggregation; and the clean marker.
+- Active-flow signalling is never delayed by reconciliation. Records with no
+  pending live session decision begin or join their one idempotent OFF
+  synchronously; a WATERING record is signalled `HOME_ASSISTANT_SHUTDOWN` first
+  and only then begins or joins that same one OFF, because an `OffConfirmed`
+  arriving before a committed terminal reason would be an ordinary T6 pulse end
+  rather than a shutdown.
+- SOAKING is preserved only when §24.1 permits it: lifecycle `ACTIVE`, the
+  record still owns the current subentry, the freshly read current
+  configuration fingerprint still equals the applied shadow, and the actuator
+  is re-read live and proven OFF. Otherwise the soak terminates through an
+  existing transition — `ExternalActuatorOn` (T33/T34) when the actuator is
+  observed ON, `ActuatorBecameUnavailable` (T32) when it is unavailable, or
+  `ConfigChangedPrepare` (T39) when the configuration or lifecycle already
+  arbitrated the change. No new state and no new transition was introduced.
+- `SHUTDOWN_OFF_BUDGET_S` remains `8.0` and is now one overall Stage-1
+  active-flow closure deadline. `_await_off_within_budget()` takes an absolute
+  monotonic instant and, while process shutdown is in progress, every caller —
+  including nested reconciliation and reconfigure joins — reuses that exact
+  instant, so no operation can receive an independent full budget.
+- Clean-run aggregation is explicit. A run is clean only when the configuration
+  snapshot was readable, no controller reported a failed safety write, every
+  required verified persistence succeeded, the reconciliation handoff completed,
+  no safety record still carries `possible_flow_owner=integration` or an
+  `integration_off_unconfirmed` blocker, every WATERING record and every
+  preserved SOAKING record is live-re-read proven OFF, and the clean marker
+  itself saved and fresh-Store verified. Cancellation, including Core's Stage-1
+  timeout, records `stage1_cancelled` and can never be clean. Every outcome is
+  recorded in a new immutable `Stage1ShutdownReport` and surfaced through
+  config-entry diagnostics.
+- `EVENT_HOMEASSISTANT_STOP` ownership was removed outright.
+  `install_stop_listener()` and `async_handle_ha_stop()` are gone, the constant
+  is no longer imported by any production module, and no dead dual-path code
+  was left behind.
+- Ordinary unload removes the shutdown job first and, if Stage-1 shutdown has
+  already begun, joins that shared operation instead of competing: it creates no
+  second terminal reason, no second OFF, and never writes the clean marker.
+- One pre-existing hazard was closed while implementing per-object persistence:
+  a retained record that shares a continuing `zone_history_id` with an ACTIVE
+  record after an A -> B replacement no longer writes that zone's
+  `zone_runtime`, because §23.2 gives each zone history exactly one operational
+  authority.
+
+### Pure core and contract preservation
+
+- `state_machine.py` and `models.py` were not changed. T19 and T37 keep their
+  exact rows; spec.5 only moved the delivery mechanism of the "full HA
+  shutdown" trigger. Five controller states, T1-T59, I1-I37, the 134 normative
+  behavioural IDs, and Store schema 2 are unchanged, and the §23.4 save ->
+  fresh same-key read -> schema/generation/revision/full-payload verification
+  contract gained no shutdown exception.
+
+### Tests actually written or replaced
+
+- Obsolete spec.4 expectations were replaced, not preserved. In particular the
+  old `test_shutdown_fallback_cancels_and_best_effort_off` asserted a clean run
+  after an OFF that was never proven; under spec.5 that case is now
+  `test_off_timeout_keeps_conservative_evidence_and_is_unclean` and asserts the
+  opposite.
+- LC4 is now exercised through the real `hass.async_stop()` Stage-1
+  shutdown-job path rather than by invoking an internal handler. Two additional
+  probe shutdown jobs and an `EVENT_HOMEASSISTANT_STOP` listener capture Core's
+  own ordering: SoilSync's job both enters and returns while `hass.state` is
+  still `CoreState.running`, a deliberately created background task is still
+  uncancelled at both points, the verified clean marker is already persisted
+  when the stop event fires, and that background task is only cancelled
+  afterwards.
+- New or rewritten coverage includes: exactly one registered job per loaded
+  entry; registration before grants are enabled; unload removal; no
+  accumulation across reload with only the current runtime executing;
+  setup-failure safety; MANUAL and AUTO full shutdown; the clean marker as the
+  final persisted revision; eligible SOAKING preserved with no unnecessary OFF;
+  configuration-changed and not-proven-OFF SOAKING terminated instead of
+  preserved; IDLE, DISABLED and proven-OFF sensor-fault clean shutdowns;
+  external flow respected, keyed, persisted and still clean; OFF timeout, OFF
+  service raise and actuator-unavailable all unclean with conservative
+  evidence; injected revision, payload and generation read-back failures still
+  driving physical OFF while staying unclean; clean-marker write and read-back
+  failures leaving the previous marker untouched; Stage-1 cancellation;
+  repeated invocation joining one operation; joining an OFF already in
+  progress with no duplicate CLOSE; unload during Stage-1 as join-only; a
+  blocked reconciliation handoff proving active-flow signalling was not delayed;
+  handoff failure being unclean; watchdog, report, evaluate, manual and
+  slot-grant callbacks all inert after admission closed; shutdown during
+  reconfigure and during delete; the one absolute shared deadline; unresolved
+  identity never being commanded; and a retained record never overwriting a
+  zone's operational state.
+- Pure-layer additions: `SlotManager.close_admission_now()` semantics, a
+  production audit that no module imports or references
+  `EVENT_HOMEASSISTANT_STOP`/`EVENT_HOMEASSISTANT_FINAL_WRITE`/the removed
+  handler names, and an AST audit that exactly one `async_add_shutdown_job`
+  registration exists, in `runtime.py`, owned by `entry.async_on_unload`.
+- `tests/traceability_manifest.py` was updated: LC4 now maps to the real
+  Core-ordering evidence plus the registration-lifecycle and production-audit
+  nodes, AC3 and RC6 map to their spec.5 replacements, and I14 additionally
+  maps to LC4 because spec.5 strengthened it to cover complete Stage-1 handling.
+
+### Local mandatory validation actually run
+
+Because production and test code changed, the full mandatory gate set was run.
+
+- Ruff lint (`ruff check .`) and format check (`ruff format --check .`) -> PASS
+  (48 files already formatted).
+- Pure/no-Home-Assistant suite (`.venv` Python 3.14.6, `homeassistant` reported
+  not installed): **442 passed**, 0 failed, 0 skipped;
+  `state_machine.py` branch coverage **100.00%**.
+- Mandatory HA 2025.9.0 harness (`.venv-ha` Python 3.13.12,
+  `homeassistant==2025.9.0`): **894 passed, 1 skipped**, 0 failed; overall
+  branch coverage **92.54%** against the 90% release gate;
+  `state_machine.py` **100.00%**. The one skip is exactly the previously
+  accepted pure-boundary node
+  `tests/test_models.py::TestPureBoundary::test_importing_models_does_not_import_homeassistant`,
+  which passes in the pure report.
+- Supported-current HA 2026.8.3 harness (`.venv-ha-current` Python 3.14.6):
+  **894 passed, 1 skipped**, 0 failed; overall branch coverage **92.36%**;
+  `state_machine.py` **100.00%**; the same single accepted skip.
+- HA1 exact-source contract (`scripts/check_ha_contract.py`) -> PASS on both
+  `--expect 2025.9.0` and `--expect 2026.8.3`, including the new
+  `async_add_shutdown_job` plus removal-callback check, the `async_stop()`
+  Stage-1-before-cancellation/`CoreState.stopping`/`EVENT_HOMEASSISTANT_STOP`/
+  `EVENT_HOMEASSISTANT_FINAL_WRITE` ordering check, the Stage-1 timeout
+  constant, `HassJob`/`CoreState` shape, and the `Store.async_save` deferral
+  check.
+- Executed-evidence traceability (`scripts/check_traceability.py`) against both
+  the pure report and each HA report: **134/134 normative IDs**, **37/37
+  invariants**, **59/59 transitions**, no unexpected skip, no xfail.
+- Metadata and audit checks -> PASS: every integration JSON plus `hacs.json`,
+  `services.yaml` and `.github/workflows/ci.yml` parse; the workflow still
+  declares exactly the six required jobs; manifest version `0.1.0`, domain
+  `soilsync`, `helper`/`calculated`/`single_config_entry`, empty runtime
+  requirements; HACS minimum `2025.9.0`; `strings.json` and
+  `translations/en.json` key parity; `services.yaml`, `strings.json` and
+  `icons.json` service parity; no outbound/network import, no Recorder
+  dependency and no `.storage` filesystem probing in any production module;
+  no stale product/domain name and no stale active `0.1.0-spec.4` current-version
+  claim outside the explicitly historical ledgers; no surviving claim that
+  `EVENT_HOMEASSISTANT_STOP` owns SoilSync shutdown; no IP address, token,
+  LAN hostname or vendor/household identifier in the added diff lines; no
+  virtual environment, cache, JUnit report or private evidence tracked; `.env`
+  ignored and untracked; and `git diff --check` clean.
+- hassfest and HACS validation are the required GitHub-hosted jobs; no local
+  Docker daemon is available on this machine, so they were verified on the
+  hosted run for the exact commit rather than locally.
+
+### Post-test self-review
+
+A dedicated review confirmed: exactly one shutdown owner and no surviving
+stop-event owner; no await between coroutine entry and the complete admission
+closure; one idempotent OFF per record with an in-flight ON always converging
+first; the clean marker written last and only on total success; no Store
+verification bypass; no shutdown-job leak across reload or setup failure;
+cancellation recorded and never clean; one absolute monotonic budget shared by
+nested joins; reconciliation joined only after active-flow signalling; external
+flow persisted and never counter-commanded; retained tombstones and their keyed
+evidence untouched; and eligible SOAKING preserved while every ineligible case
+terminates through an existing transition. No new ambiguity was found.
+
+### Documentation updated
+
+- `PROTOTYPE_VALIDATION.md` gains a new `B2-1 spec.5 implementation
+  remediation - 2026-08-26` note directly after the B2-1 review resolution. The
+  original failed physical B2 trial table is untouched and remains historical
+  evidence; nothing in it is reclassified.
+- The prototype-validation slice verdict now records that the remediation was
+  completed while B2 itself remains `[?] Pending corrected physical
+  revalidation`.
+- `README.md` had two stale §46 status items. Item 2 still said the physical
+  valve matrix was "not started" even though B1 is `[x] PASS`; it now records
+  the passing hardware evidence. Item 4 still said "not started" even though one
+  physical trial had been run and stopped by finding B2-1; it now records that
+  history and the implemented spec.5 remediation while stating plainly that a
+  corrected physical revalidation has not been performed. The trailing summary
+  sentence, which claimed items 2 and 4 were both outstanding, was corrected
+  accordingly, and the shutdown-behaviour bullet now describes the Stage-1
+  owner. No behaviour claim was strengthened and no historical evidence was
+  altered.
+
+### Files changed
+
+- `custom_components/soilsync/runtime.py`
+- `custom_components/soilsync/reconciliation.py`
+- `custom_components/soilsync/slot_manager.py`
+- `custom_components/soilsync/zone_controller.py`
+- `custom_components/soilsync/diagnostics.py`
+- `scripts/check_ha_contract.py`
+- `tests/test_lifecycle.py`
+- `tests/test_foundation.py`
+- `tests/test_slot_manager.py`
+- `tests/test_reconciliation.py`
+- `tests/test_stage4_on_gate.py`
+- `tests/traceability_manifest.py`
+- `PROGRESS.md`
+- `PROTOTYPE_VALIDATION.md`
+- `README.md`
+
+`custom_components/soilsync/state_machine.py` and
+`custom_components/soilsync/models.py` are deliberately unchanged.

@@ -464,8 +464,14 @@ class TestRuntimeReconciliation:
         runtime = EntryRuntime(hass, entry)
         await runtime.async_initialize()
         assert len(entry.update_listeners) == 1
-        assert len(callbacks) == 1
+        # §24.1/§24.3: entry unload owns both the Stage-1 shutdown-job removal
+        # callback and the update-listener unsubscribe, in that order.
+        assert len(callbacks) == 2
+        assert callbacks[0] == runtime.remove_shutdown_job
+        assert runtime.shutdown_job_registered
         callbacks[0]()
+        assert not runtime.shutdown_job_registered
+        callbacks[1]()
         assert entry.update_listeners == []
         await runtime.async_unload()
 

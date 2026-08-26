@@ -307,8 +307,15 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "AC2": ha(
         "tests/test_zone_controller.py::TestTerminationRaces::test_ac2_stop_vs_pulse_expiry_single_reason"
     ),
-    "AC3": ha(
-        "tests/test_lifecycle.py::TestShutdownAndReload::test_shutdown_fallback_cancels_and_best_effort_off"
+    "AC3": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_off_timeout_keeps_conservative_evidence_and_is_unclean",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestStage1ShutdownOwner::test_unload_during_stage1_is_cleanup_and_join_only",
+            HA,
+        ),
     ),
     "AC4": both(
         Evidence(
@@ -393,7 +400,42 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             HA,
         ),
     ),
-    "LC4": ha("tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_full_shutdown"),
+    # LC4 is now exercised through the real hass.async_stop() Stage-1
+    # shutdown-job path, never by invoking an internal SoilSync handler.
+    "LC4": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_full_shutdown_through_real_core_stage_ordering",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_manual_watering_full_shutdown",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_shutdown_preserves_eligible_soaking",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_clean_marker_is_the_final_verified_revision",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestStage1ShutdownOwner::test_exactly_one_shutdown_job_per_loaded_entry",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestStage1ShutdownOwner::test_shutdown_job_is_registered_before_watering_capable_runtime",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestStage1ShutdownOwner::test_reload_does_not_accumulate_shutdown_jobs",
+            HA,
+        ),
+        Evidence("tests/test_foundation.py::test_no_production_stop_event_shutdown_owner", PURE),
+        Evidence(
+            "tests/test_foundation.py::test_exactly_one_stage1_shutdown_owner_registration", PURE
+        ),
+    ),
     "LC5": ha("tests/test_lifecycle.py::TestSoakingAdoption::test_lc5_clean_run_adopts_soaking"),
     "LC6": ha(
         "tests/test_lifecycle.py::TestSoakingAdoption::test_lc6_second_clean_run_adopts_again"
@@ -685,8 +727,15 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "RC5": ha(
         "tests/test_lifecycle.py::TestShutdownAndReload::test_rc5_delete_vs_generic_reload_persists_tombstone_and_never_resumes"
     ),
-    "RC6": ha(
-        "tests/test_lifecycle.py::TestShutdownAndReload::test_rc6_delete_vs_shutdown_reconstructs_unresolved_tombstone"
+    "RC6": both(
+        Evidence(
+            "tests/test_lifecycle.py::TestShutdownAndReload::test_rc6_delete_vs_shutdown_reconstructs_unresolved_tombstone",
+            HA,
+        ),
+        Evidence(
+            "tests/test_lifecycle.py::TestStage1ShutdownOwner::test_shutdown_during_reconfigure_preserves_first_terminal_reason",
+            HA,
+        ),
     ),
     "RC7": ha(
         "tests/test_config_flow.py::TestNativeSubentryDeletion::test_rapid_two_zone_native_deletion_materializes_both_without_reload"
@@ -747,7 +796,12 @@ INVARIANT_TRACEABILITY: dict[str, InvariantTrace] = {
     "I11": InvariantTrace(("startup recovery accounting",), ("PI12", "PI13", "PI16")),
     "I12": InvariantTrace(("HA-local accounting split",), ("PI17",)),
     "I13": InvariantTrace(("startup/reload lifecycle",), ("PI12", "PI13", "LC3")),
-    "I14": InvariantTrace(("SafetyStore run protocol",), ("PI18", "PI19")),
+    # spec.5 strengthens I14: the clean marker is the final verified safety
+    # transaction of complete Stage-1 handling, so LC4 is direct evidence.
+    "I14": InvariantTrace(
+        ("SafetyStore run protocol", "Stage-1 full-process shutdown owner"),
+        ("PI18", "PI19", "LC4"),
+    ),
     "I15": InvariantTrace(("controller write-ahead", "final ON fence"), ("ND9", "PI11")),
     "I16": InvariantTrace(
         ("ZoneController shared OFF",),

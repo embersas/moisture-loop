@@ -93,7 +93,11 @@ system impact before forcing every update. See the official
   missing, corrupt, future-version, or mismatched initialized Store blocks both
   AUTO and MANUAL, exhausts the detection day's budget, and raises a Repair.
 - Home Assistant shutdown and entry unload close admission first and route
-  possible flow through the same idempotent OFF operation.
+  possible flow through the same idempotent OFF operation. Full-process
+  shutdown is owned by exactly one Home Assistant Stage-1 shutdown job, which
+  Core runs and awaits while it can still write and verify safety state; a run
+  is recorded as clean only after every required OFF and verified write
+  succeeded.
 
 Software cannot close mechanically failed hardware. Use a valve with a hardware
 maximum runtime, a master valve, or another independent physical failsafe. If
@@ -268,12 +272,17 @@ validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
 
 1. Real Home Assistant UI/UX lifecycle validation — **validated** on a live
    Home Assistant deployment using synthetic actuators.
-2. A physical valve state/availability/position matrix — **not started**;
-   requires physical irrigation hardware.
+2. A physical valve state/availability/position matrix — **validated / PASS**
+   on real irrigation hardware exposed as a Home Assistant `valve`, with the
+   remaining transitional/position/availability cases covered by clearly
+   labelled synthetic entities.
 3. A real entity-registry rename trial — **validated** live, including rename
    during an active session, reload and restart while renamed, and restore.
-4. Measured physical shutdown OFF timing — **not started**; requires physical
-   flow.
+4. Measured physical shutdown OFF timing — **not passed**. A first physical
+   trial on 2026-08-26 was stopped by finding B2-1, a lifecycle defect in the
+   then-current specification. `0.1.0-spec.5` moved full-process shutdown
+   ownership to a single Home Assistant Stage-1 shutdown job and that change is
+   implemented, but a corrected physical revalidation has not been performed.
 5. Approximately ten simultaneously dry zones in a deployment-scale exercise —
    **validated** live with ten synthetic zones.
 6. Deployment sensor-cadence/default validation — **validated / PASS**. A clean
@@ -285,10 +294,11 @@ validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
    presentation; the centralized `home-assistant/brands` submission is
    deliberately not made.
 
-Phase A is complete. Items 2 and 4 are the only remaining prototype
-validations; both involve real water and are the reason this release is not
-described as physically validated. `PROTOTYPE_VALIDATION.md` is the evidence
-ledger for all of the above.
+Phase A is complete and item 2 has passed on real hardware. Item 4 — measured
+physical active-flow shutdown OFF timing — is the only remaining prototype
+validation, and it is the reason this release is not described as physically
+validated. `PROTOTYPE_VALIDATION.md` is the evidence ledger for all of the
+above.
 
 Centralized brand submission, HACS default-store submission, and public release
 publication are not implied by the local icon or this repository metadata.

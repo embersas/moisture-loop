@@ -538,14 +538,25 @@ class ConfigurationReconciliationCoordinator:
             failed=True,
         )
 
-    async def async_stop(self) -> None:
-        """Transfer ownership to reload/unload/shutdown and forbid publication."""
+    def close_publication_now(self) -> None:
+        """Synchronously forbid publication and close configuration admission.
+
+        The Stage-1 full-process shutdown owner (§24.1) must close
+        reconciliation publication/admission before its own first suspension
+        point, so a stale worker completion can never reopen admission or
+        publish a newer watering-capable generation while active flow is
+        being signalled. This contains no suspension point; joining the
+        worker is :meth:`async_join_workers`.
+        """
         self._publication_allowed = False
         self._stopping = True
         self.dirty = True
         self._slots.set_reconciliation_state_now(dirty=True, reconciling=False)
         self._ready.set()
         self._cancel_pending_reload()
+
+    async def async_join_workers(self) -> None:
+        """Join or take over any in-flight reconciliation/reload work."""
         reload_task = self._reload_task
         current = asyncio.current_task()
         if reload_task is not None and not reload_task.done() and reload_task is not current:
@@ -553,3 +564,8 @@ class ConfigurationReconciliationCoordinator:
         worker = self._worker
         if worker is not None and not worker.done() and worker is not current:
             await asyncio.shield(worker)
+
+    async def async_stop(self) -> None:
+        """Transfer ownership to reload/unload/shutdown and forbid publication."""
+        self.close_publication_now()
+        await self.async_join_workers()

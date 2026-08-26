@@ -262,6 +262,18 @@ async def async_get_config_entry_diagnostics(
             "reload_count": coordinator.reload_count,
             "admission_open": slots.admission_open,
         },
+        "shutdown": {
+            # §24.1: exactly one removable Stage-1 shutdown owner per loaded
+            # entry runtime. EVENT_HOMEASSISTANT_STOP owns no safety work.
+            "stage1_job_registered": runtime.shutdown_job_registered,
+            "shutdown_off_budget_s": runtime.shutdown_off_budget_s,
+            "process_stopping": runtime.process_stopping,
+            "last_stage1_report": (
+                _serializable(asdict(runtime.shutdown_report))
+                if runtime.shutdown_report is not None
+                else None
+            ),
+        },
         "slot_manager": {
             "owner": slots.owner,
             "queue": list(slots.queue),

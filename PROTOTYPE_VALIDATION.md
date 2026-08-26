@@ -880,6 +880,31 @@ record is unchanged, and no physical result is reclassified.
   requires separate authorization to implement spec.5, the full mandatory gates,
   a deployed exact SHA, and a fresh exact operator water checkpoint.
 
+#### B2-1 spec.5 implementation remediation - 2026-08-26
+
+This note records the implementation remediation the B2-1 review required. It
+adds nothing to, and reclassifies nothing in, the failed physical B2 trial
+recorded above: every timestamp, measurement, and observation there is
+unchanged, and it remains historical evidence of the spec.4 implementation's
+real behaviour.
+
+| Field | Record |
+|---|---|
+| Authorization | Separate implementation authorization: implement `0.1.0-spec.5`, change production Python, add regression, update traceability/documentation, run complete local and hosted validation, commit/push, deploy the exact validated SHA, perform NON-WATER live verification, and prepare a fresh B2 fixture. Physical water, a MANUAL session, AUTO watering, stopping HA while water flowed, a repeat B2, crash testing, a stop-grace-period change, a version bump, a tag, a release, HACS default submission, and a Brands submission were all out of scope and none occurred |
+| Baseline | Local `HEAD`, `origin/main`, and `github/main` all `799760e1f632524c8b3d0d6739797d197a591e23`; branch `main`; clean worktree |
+| Platform re-verification | `HomeAssistant.async_add_shutdown_job` plus its returned removal callback, the `async_stop()` Stage-1 gather under `STOPPING_STAGE_SHUTDOWN_TIMEOUT = 20`, Stage-2 background-task cancellation, `CoreState.stopping`, `EVENT_HOMEASSISTANT_STOP`, Stage-3 `EVENT_HOMEASSISTANT_FINAL_WRITE`, and `Store.async_save()` deferral while stopping were re-read from installed release source on both HA `2025.9.0` and HA `2026.8.3`; they are identical. These are now mechanical HA1 contract checks that both CI environments run |
+| Shutdown owner | Exactly one removable `HomeAssistant.async_add_shutdown_job()` `HassJob` per loaded `EntryRuntime`, registered before the update listener, before the Store/run protocol, and before SlotManager grants are enabled; the removal callback is owned by `entry.async_on_unload(...)`, which Home Assistant runs on ordinary unload and on the `ConfigEntryNotReady` setup-failure path |
+| Stop-event ownership | Removed. `install_stop_listener()` and `async_handle_ha_stop()` no longer exist, no production module imports or references `EVENT_HOMEASSISTANT_STOP`, and an AST audit in the pure suite enforces both that removal and the single `async_add_shutdown_job` registration |
+| Admission closure | `process_stopping`, reconciliation publication closure, slot-admission closure with queued-grant revocation, and per-controller quiescing all execute synchronously before the Stage-1 coroutine's first suspension point |
+| Active-flow ordering | Active-flow signalling precedes the reconciliation/lifecycle handoff. A WATERING record is signalled `HOME_ASSISTANT_SHUTDOWN` and then begins or joins its one idempotent OFF; a record whose terminal reason is already committed begins or joins that OFF synchronously; an ON still in flight converges first so a compensating OFF cannot be overtaken by the outstanding command |
+| Shutdown budget | `SHUTDOWN_OFF_BUDGET_S` is unchanged at `8.0` and is now one overall absolute monotonic Stage-1 active-flow deadline shared by every nested join, so no operation receives an independent full budget. It is not a pre-OFF delay and not a process-manager setting. Tuning still requires a valid physical measurement (§46 item 4) |
+| Store contract | Unchanged, with no shutdown exception. Every Stage-1 outcome uses the same save -> fresh same-key read -> schema/generation/revision/full-payload verification, and the clean marker is the final verified transaction |
+| Clean-run evidence | A run is clean only after total success: readable configuration snapshot, no failed safety write, completed reconciliation handoff, no record left with `possible_flow_owner=integration` or `integration_off_unconfirmed`, live-re-read proven OFF for every WATERING and every preserved SOAKING record, and a saved and verified clean marker. Cancellation, including Core's Stage-1 timeout, is never clean. Persisted `external_flow` remains successful handling and does not by itself make a run unclean |
+| SOAKING | T37 preservation now requires ACTIVE lifecycle, current-subentry ownership, an unchanged current configuration fingerprint, and a live proven-OFF actuator; otherwise the soak terminates through the existing T32/T33/T34/T39 rows. No new state or transition was added |
+| Pure core | `state_machine.py` and `models.py` unchanged. Five states, T1-T59, I1-I37, the 134 normative IDs, and Store schema 2 are unchanged |
+| LC4 evidence | LC4 is now driven by the real `hass.async_stop()` Stage-1 path, never by invoking an internal handler. Probe shutdown jobs and a stop-event listener capture Core's own ordering: SoilSync's job enters and returns while `hass.state` is still `CoreState.running`, a deliberately created background task is uncancelled at both points, the verified clean marker is already persisted when `EVENT_HOMEASSISTANT_STOP` fires, and that background task is cancelled only afterwards |
+| Status | B2 remains `[?] Pending corrected physical revalidation`. Automated evidence is not physical evidence: no water flowed, no valve opened, and no Home Assistant process was stopped with flow in progress during this remediation |
+
 ## Current cleanup inventory
 
 - The B2 run's terminal safety state supersedes the earlier zero-fixture B1
@@ -1012,5 +1037,15 @@ removable Stage-1 `async_add_shutdown_job` without weakening Store
 verification. B2 is therefore now `[?] Requires implementation remediation and
 fresh physical revalidation` rather than `[?] Requires specification review`,
 and it is still not PASS. Phase B is `[~] Partial`, and Slice 13 remains
-`[~] Partial`. No repeat physical trial is authorized; the next work is
-separately authorized spec.5 implementation remediation.
+`[~] Partial`.
+
+That spec.5 implementation remediation was then separately authorized and
+completed on 2026-08-26 and is recorded above. The runtime now owns full-process
+shutdown through exactly one removable Stage-1 `async_add_shutdown_job`, the
+`EVENT_HOMEASSISTANT_STOP` owner is gone, clean-run evidence is aggregated
+explicitly, and LC4 is driven by the real `hass.async_stop()` Stage-1 path. That
+is automated and deployment evidence only. **B2 is still `[?] Pending corrected
+physical revalidation`**: no water flowed, no valve was opened, and no Home
+Assistant process was stopped with flow in progress. Phase B remains
+`[~] Partial` and Slice 13 remains `[~] Partial`. A repeat physical trial
+requires a fresh exact operator water authorization.

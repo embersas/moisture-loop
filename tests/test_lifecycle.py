@@ -17,6 +17,8 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from homeassistant.config_entries import ConfigSubentryData
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import CoreState, HassJob
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -51,14 +53,20 @@ from custom_components.soilsync.models import (
     SessionContext,
     SessionMode,
     SessionSummary,
+    SlotGranted,
+    StopRequested,
     StoreData,
+    WatchdogFired,
     ZoneDailyRuntime,
     ZoneHistory,
     ZoneRuntime,
     config_fingerprint,
     store_data_to_dict,
 )
-from custom_components.soilsync.reconciliation import normalized_zone_fingerprint
+from custom_components.soilsync.reconciliation import (
+    ReconciliationError,
+    normalized_zone_fingerprint,
+)
 from custom_components.soilsync.storage import (
     SafetyStore,
     SetupClassification,
@@ -368,6 +376,23 @@ async def start_runtime(hass, entry) -> EntryRuntime:
     await runtime.async_initialize()
     await settle(hass)
     return runtime
+
+
+def registered_shutdown_jobs(hass) -> list:
+    """Return Core's public Stage-1 shutdown-job registrations for SoilSync."""
+    return [
+        job for job in hass._shutdown_jobs if "soilsync stage-1 shutdown" in (job.job.name or "")
+    ]
+
+
+async def stage1_shutdown(runtime) -> None:
+    """Invoke the authoritative Stage-1 owner directly (focused injection).
+
+    LC4 and the ordering evidence use the real ``hass.async_stop()`` Stage-1
+    path; this helper exists only for deterministic failure injection where
+    driving the whole Core shutdown would obscure the injected condition.
+    """
+    await runtime.async_stage1_shutdown()
 
 
 @pytest.fixture
@@ -879,9 +904,9 @@ class TestSoakingAdoption:
         )
         run_b = await start_runtime(env.hass, entry)
         assert run_b.soaking_adoptions[zone_id] is True
-        # Run B shuts down cleanly.
-        await run_b.async_handle_ha_stop(None)
-        run_b.process_stopping = True
+        # Run B shuts down cleanly through the real Stage-1 owner.
+        await stage1_shutdown(run_b)
+        assert run_b.shutdown_report is not None and run_b.shutdown_report.clean
         await run_b.async_unload()
         # Run C starts and adopts the same soak from clean Run B.
         run_c = await start_runtime(env.hass, entry)
@@ -1023,25 +1048,131 @@ class TestShutdownAndReload:
         await settle(env.hass)
         assert runtime.controllers[zone_id].state is ControllerState.WATERING
 
-    async def test_lc4_full_shutdown(self, env) -> None:
+    async def test_lc4_full_shutdown_through_real_core_stage_ordering(self, env) -> None:
+        """LC4: the registered Stage-1 job, driven by the real
+        ``hass.async_stop()``, executes before Core cancels background tasks,
+        before ``CoreState.stopping``, and before ``EVENT_HOMEASSISTANT_STOP``;
+        it drives exactly one OFF and writes the verified clean marker last."""
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
         await self._start_watering(env, runtime, zone_id)
-        await runtime.async_handle_ha_stop(None)
+
+        probe_cancelled = asyncio.Event()
+
+        async def _probe() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                probe_cancelled.set()
+                raise
+
+        env.hass.async_create_background_task(_probe(), name="soilsync-test-probe")
+        await asyncio.sleep(0)
+
+        entry_observation: dict = {}
+        exit_observation: dict = {}
+        stop_event_observation: dict = {}
+
+        def _at_stage1_entry() -> None:
+            entry_observation["core_state"] = env.hass.state
+            entry_observation["probe_cancelled"] = probe_cancelled.is_set()
+
+        async def _after_stage1() -> None:
+            for _ in range(2000):
+                if runtime.shutdown_report is not None:
+                    break
+                await asyncio.sleep(0)
+            exit_observation["core_state"] = env.hass.state
+            exit_observation["probe_cancelled"] = probe_cancelled.is_set()
+            exit_observation["clean_marker"] = (
+                runtime.store.data.run.last_clean_shutdown_run_id == runtime.run_id
+            )
+
+        # Registered after SoilSync's own job: both run inside the same Stage 1.
+        env.hass.async_add_shutdown_job(HassJob(_at_stage1_entry, "probe entry"))
+        env.hass.async_add_shutdown_job(HassJob(_after_stage1, "probe exit"))
+
+        def _on_stop_event(_event) -> None:
+            stop_event_observation["report"] = runtime.shutdown_report
+            stop_event_observation["core_state"] = env.hass.state
+            stop_event_observation["clean_marker"] = (
+                runtime.store.data.run.last_clean_shutdown_run_id
+            )
+
+        env.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop_event)
+
+        await env.hass.async_stop()
         await settle(env.hass)
+
+        # Core's Stage-1 ordering, observed from inside Stage 1 itself.
+        assert entry_observation["core_state"] is CoreState.running
+        assert entry_observation["probe_cancelled"] is False
+        assert exit_observation["core_state"] is CoreState.running
+        assert exit_observation["probe_cancelled"] is False
+        assert exit_observation["clean_marker"] is True
+        # SoilSync's own job observed a not-yet-stopping Core.
+        report = runtime.shutdown_report
+        assert report is not None
+        assert report.core_state_at_entry == CoreState.running.name
+        assert report.clean and report.failures == ()
+        assert report.watering_records == (runtime.bindings[zone_id].safety_record_id,)
+        # EVENT_HOMEASSISTANT_STOP fired only after Stage 1 finished and owns
+        # nothing: the clean marker was already verified when it arrived.
+        assert stop_event_observation["report"] is report
+        assert stop_event_observation["core_state"] is CoreState.stopping
+        assert stop_event_observation["clean_marker"] == runtime.run_id
+        # Background tasks were only cancelled after Stage 1 returned.
+        assert probe_cancelled.is_set()
+
         controller = runtime.controllers[zone_id]
-        # WATERING stopped with the shutdown reason and one OFF.
         assert controller.last_summary is not None
         assert controller.last_summary.reason is CompletionReason.HOME_ASSISTANT_SHUTDOWN
         assert env.switch.off_calls == 1
-        # Clean marking happened only after safety persistence.
         run = runtime.store.data.run
         assert run.active_run_id == runtime.run_id
         assert run.previous_run_was_clean
         await runtime.async_unload()
 
-    async def test_lc4_shutdown_preserves_soaking(self, env) -> None:
+    async def test_lc4_manual_watering_full_shutdown(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        await controller.async_manual_start(600)
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+        assert controller.session is not None
+        assert controller.session.mode is SessionMode.MANUAL
+
+        await env.hass.async_stop()
+        await settle(env.hass)
+
+        assert env.switch.off_calls == 1
+        assert controller.last_summary is not None
+        assert controller.last_summary.reason is CompletionReason.HOME_ASSISTANT_SHUTDOWN
+        report = runtime.shutdown_report
+        assert report is not None and report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+        await runtime.async_unload()
+
+    async def test_lc4_clean_marker_is_the_final_verified_revision(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        await self._start_watering(env, runtime, zone_id)
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        data = runtime.store.data
+        assert data.run.previous_run_was_clean
+        # The clean marker is the newest persisted revision, and the fresh
+        # same-key read-back that verified it is what the Store adopted.
+        raw = env.storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
+        assert raw["store_revision"] == data.store_revision
+        assert raw["run"]["last_clean_shutdown_run_id"] == runtime.run_id
+        await runtime.async_unload()
+
+    async def test_lc4_shutdown_preserves_eligible_soaking(self, env) -> None:
         entry = make_entry(env.hass, initialized=True)
         zone_id = zone_subentry_id(entry)
         record = soaking_record(current_fingerprint(), owner="run-a")
@@ -1049,12 +1180,79 @@ class TestShutdownAndReload:
             env.storage, entry, store_snapshot({zone_id: record}, active="run-a", clean="run-a")
         )
         runtime = await start_runtime(env.hass, entry)
-        await runtime.async_handle_ha_stop(None)
+        await env.hass.async_stop()
         await settle(env.hass)
         persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
         assert persisted.state is ControllerState.SOAKING  # T37 preserved
         assert persisted.session is not None
+        report = runtime.shutdown_report
+        assert report is not None and report.clean
+        record_id = runtime.bindings[zone_id].safety_record_id
+        assert report.preserved_soaking_records == (record_id,)
+        assert env.switch.off_calls == 0  # no unnecessary OFF for a proven-OFF soak
         assert runtime.store.data.run.previous_run_was_clean
+        await runtime.async_unload()
+
+    async def test_shutdown_terminates_soaking_whose_configuration_changed(self, env) -> None:
+        """§24.1: only current-configuration eligible SOAKING is preserved; a
+        changed fingerprint terminates as the already-arbitrated CONFIG_CHANGED
+        and can never become trusted on the next run."""
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        record = soaking_record(current_fingerprint(), owner="run-a")
+        seed_store(
+            env.storage, entry, store_snapshot({zone_id: record}, active="run-a", clean="run-a")
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        assert controller.state is ControllerState.SOAKING
+        # Make the live configuration differ from the applied shadow without
+        # letting reconciliation run first: exactly the Stage-1 race.
+        env.hass.config_entries.async_update_subentry(
+            entry,
+            entry.subentries[zone_id],
+            data={**ZONE_DATA, "soak_duration": 1500},
+        )
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
+        assert persisted.state is not ControllerState.SOAKING
+        assert persisted.session is None
+        assert controller.last_summary is not None
+        assert controller.last_summary.reason is CompletionReason.CONFIG_CHANGED
+        report = runtime.shutdown_report
+        assert report is not None
+        assert report.preserved_soaking_records == ()
+        # T39 keeps its existing idempotent OFF assurance; exactly one OFF
+        # operation runs and its proven result still permits a clean run.
+        assert env.switch.off_calls == 1
+        assert report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+        await runtime.async_unload()
+
+    async def test_shutdown_terminates_soaking_when_actuator_not_proven_off(self, env) -> None:
+        """§24.1: unavailable is never OFF proof, so the soak is not preserved
+        for trusted continuation and no new command is invented (T32)."""
+        entry = make_entry(env.hass, initialized=True)
+        zone_id = zone_subentry_id(entry)
+        record = soaking_record(current_fingerprint(), owner="run-a")
+        seed_store(
+            env.storage, entry, store_snapshot({zone_id: record}, active="run-a", clean="run-a")
+        )
+        runtime = await start_runtime(env.hass, entry)
+        controller = runtime.controllers[zone_id]
+        assert controller.state is ControllerState.SOAKING
+        # The Stage-1 owner re-reads live actuator state; this is the race
+        # where the change has not yet reached the controller's listener.
+        env.switch.set_state("unavailable")
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        report = runtime.shutdown_report
+        assert report is not None
+        assert report.preserved_soaking_records == ()
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
+        assert persisted.state is not ControllerState.SOAKING
+        assert env.switch.off_calls == 0  # OFF was already proven before the soak
         await runtime.async_unload()
 
     async def test_lc3_generic_reload_terminates_and_keeps_run_ids(self, env) -> None:
@@ -1116,10 +1314,15 @@ class TestShutdownAndReload:
         runtime.shutdown_off_budget_s = 0
 
         assert env.hass.config_entries.async_remove_subentry(entry, zone_id)
-        shutdown = asyncio.create_task(runtime.async_handle_ha_stop(None))
+        shutdown = asyncio.create_task(stage1_shutdown(runtime))
         await shutdown
         await settle(env.hass)
 
+        # RC6: the Stage-1 owner is the only process-shutdown owner; a
+        # required outcome failed, so the run must not be marked clean.
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert not runtime.store.data.run.previous_run_was_clean
         unresolved = runtime.store.data.safety_records[record_id]
         unresolved_history = runtime.store.data.zone_histories[unresolved.zone_history_id]
         assert unresolved.possible_flow_owner is PossibleFlowOwner.INTEGRATION
@@ -1169,19 +1372,73 @@ class TestShutdownAndReload:
         await runtime.async_prepare_reconfigure("missing-zone")
         await runtime.async_unload()
 
-    async def test_shutdown_fallback_cancels_and_best_effort_off(self, env) -> None:
+    async def test_off_timeout_keeps_conservative_evidence_and_is_unclean(self, env) -> None:
+        """§23.3/I14: honest ``integration_off_unconfirmed`` evidence is not
+        success. Terminal OFF was never proven, so the run stays unclean."""
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
         await self._start_watering(env, runtime, zone_id)
         env.switch.off_behavior = "silent"
         runtime.shutdown_off_budget_s = 0  # immediate bounded fallback
-        await runtime.async_handle_ha_stop(None)
+        await stage1_shutdown(runtime)
         await settle(env.hass)
-        # The fallback still attempted OFF through the same actuator path.
+        # The fallback still attempted OFF through the same one actuator path.
         assert env.switch.off_calls >= 1
-        # Clean marking reflects that the handler completed honestly.
-        assert runtime.store.data.run.previous_run_was_clean
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any("integration_off_unconfirmed" in item for item in report.failures)
+        assert not runtime.store.data.run.previous_run_was_clean
+        record = runtime.store.data.safety_records[record_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
+        assert record.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+        history = runtime.store.data.zone_histories[record.zone_history_id]
+        assert history.zone_runtime.session is not None  # accounting stays open
+        await runtime.async_unload()
+
+    async def test_off_service_raise_is_fail_closed_and_unclean(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
+        await self._start_watering(env, runtime, zone_id)
+
+        async def raising_off(call):
+            env.switch.off_calls += 1
+            raise RuntimeError("scripted OFF failure")
+
+        env.hass.services.async_register("switch", "turn_off", raising_off)
+        runtime.shutdown_off_budget_s = 0
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        assert env.switch.off_calls >= 1
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert not runtime.store.data.run.previous_run_was_clean
+        record = runtime.store.data.safety_records[record_id]
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
+        await runtime.async_unload()
+
+    async def test_actuator_unavailable_during_watering_is_unclean(self, env) -> None:
+        """Requirement 20: conservative blocker/accounting, never clean."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
+        await self._start_watering(env, runtime, zone_id)
+        env.switch.off_behavior = "silent"
+        env.switch.set_state("unavailable")
+        await settle(env.hass)
+        runtime.shutdown_off_budget_s = 0
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert not runtime.store.data.run.previous_run_was_clean
+        record = runtime.store.data.safety_records[record_id]
+        assert record.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+        assert BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
         await runtime.async_unload()
 
 
@@ -1368,36 +1625,190 @@ class TestRuntimeEdges:
         await settle(env.hass)
         assert runtime.slots.blockers() == frozenset()  # listeners removed
 
-    async def test_stop_handler_is_once_only(self, env) -> None:
+    async def test_repeated_stage1_invocation_joins_the_same_operation(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
-        await runtime.async_handle_ha_stop(None)
+        await stage1_shutdown(runtime)
         revision = runtime.store.data.store_revision
-        await runtime.async_handle_ha_stop(None)  # re-entry guard
+        report = runtime.shutdown_report
+        await stage1_shutdown(runtime)  # joins; never a second clean revision
         assert runtime.store.data.store_revision == revision
+        assert runtime.shutdown_report is report
         await runtime.async_unload()
 
     async def test_shutdown_persists_resting_zone(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
         zone_id = zone_subentry_id(entry)
-        await runtime.async_handle_ha_stop(None)
+        await stage1_shutdown(runtime)
         persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
         assert persisted.state is ControllerState.IDLE
         assert runtime.store.data.run.previous_run_was_clean
         await runtime.async_unload()
 
-    async def test_clean_marking_failure_is_fail_safe(self, env, monkeypatch) -> None:
+    async def test_disabled_zone_clean_shutdown(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)
         runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        await controller.async_set_enabled(False)
+        await settle(env.hass)
+        assert controller.state is ControllerState.DISABLED
+        await stage1_shutdown(runtime)
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
+        assert persisted.state is ControllerState.DISABLED
+        assert persisted.enabled is False
+        assert runtime.shutdown_report is not None and runtime.shutdown_report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+        assert env.switch.off_calls == 0
+        await runtime.async_unload()
+
+    async def test_proven_off_sensor_fault_clean_shutdown(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        env.hass.states.async_set(SENSOR, "unavailable")
+        await settle(env.hass)
+        assert controller.state is ControllerState.FAULT
+        assert controller.active_fault is FaultCode.SENSOR_UNAVAILABLE
+        off_calls = env.switch.off_calls
+        await stage1_shutdown(runtime)
+        persisted = canonical_history(runtime.store.data, zone_id).zone_runtime
+        assert persisted.state is ControllerState.FAULT
+        assert persisted.zone_fault is FaultCode.SENSOR_UNAVAILABLE
+        # A proven-OFF sensor-only fault is not integration-owned flow.
+        assert runtime.shutdown_report is not None and runtime.shutdown_report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+        assert env.switch.off_calls == off_calls
+        await runtime.async_unload()
+
+    async def test_external_flow_is_respected_and_still_clean(self, env) -> None:
+        """§23.3/§24.1: SoilSync does not own external water, so it is not
+        counter-commanded, its keyed blocker is verified-persisted, and the
+        process may still be clean."""
+        entry = make_entry(env.hass, initialized=False)
+        env.switch.set_state("on")
+        await env.hass.async_block_till_done()
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        record_id = runtime.bindings[zone_id].safety_record_id
+        assert (record_id, BlockerReason.EXTERNAL_FLOW) in runtime.slots.blockers()
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        assert env.switch.off_calls == 0  # never counter-commanded
+        record = runtime.store.data.safety_records[record_id]
+        assert BlockerReason.EXTERNAL_FLOW in record.blocker_reasons
+        assert record.possible_flow_owner is PossibleFlowOwner.EXTERNAL
+        report = runtime.shutdown_report
+        assert report is not None and report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+        await runtime.async_unload()
+
+    async def test_clean_marker_write_failure_keeps_previous_marker(self, env, monkeypatch) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        previous = runtime.store.data.run.last_clean_shutdown_run_id
 
         async def failing(self):
             raise StoreWriteVerificationError("injected")
 
         monkeypatch.setattr(SafetyStore, "async_mark_clean_shutdown", failing)
-        await runtime.async_handle_ha_stop(None)  # must not raise
+        await stage1_shutdown(runtime)  # must not raise
         # The run stays unclean: exactly the crash-equivalent safe outcome.
+        assert runtime.store.data.run.last_clean_shutdown_run_id == previous
         assert not runtime.store.data.run.previous_run_was_clean
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any("clean_marker_write_failed" in item for item in report.failures)
+        await runtime.async_unload()
+
+    async def test_clean_marker_read_back_failure_is_unclean(self, env, monkeypatch) -> None:
+        """§23.4 has no shutdown exception: a failed fresh-Store read-back of
+        the final transaction is a failed safety write."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        previous = runtime.store.data.run.last_clean_shutdown_run_id
+        original = SafetyStore._save_and_verify_locked
+
+        async def tampering(self, data):
+            if data.run.last_clean_shutdown_run_id == data.run.active_run_id:
+                raise StoreWriteVerificationError("read-back revision mismatch")
+            return await original(self, data)
+
+        monkeypatch.setattr(SafetyStore, "_save_and_verify_locked", tampering)
+        await stage1_shutdown(runtime)
+        assert runtime.store.data.run.last_clean_shutdown_run_id == previous
+        assert not runtime.store.data.run.previous_run_was_clean
+        await runtime.async_unload()
+
+    @pytest.mark.parametrize(
+        "message",
+        (
+            "read-back revision mismatch",
+            "read-back payload mismatch",
+            "read-back generation mismatch",
+        ),
+    )
+    async def test_stage1_store_failure_still_drives_off_and_is_unclean(
+        self, env, monkeypatch, message
+    ) -> None:
+        """§24.1: persistence failure never abandons physical OFF, but the
+        run remains unclean and no persistence success is faked."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert runtime.controllers[zone_id].state is ControllerState.WATERING
+        previous = runtime.store.data.run.last_clean_shutdown_run_id
+
+        original = SafetyStore._save_and_verify_locked
+        broken = {"active": False}
+
+        async def failing(self, data):
+            if broken["active"]:
+                raise StoreWriteVerificationError(message)
+            return await original(self, data)
+
+        monkeypatch.setattr(SafetyStore, "_save_and_verify_locked", failing)
+        broken["active"] = True
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        assert env.switch.off_calls >= 1  # physical safety still had priority
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert runtime.store.data.run.last_clean_shutdown_run_id == previous
+        broken["active"] = False
+        await runtime.async_unload()
+
+    async def test_stage1_cancellation_cannot_mark_clean(self, env) -> None:
+        """Requirements 29/30: a cancelled or timed-out Stage-1 owner (Core's
+        Stage-1 timeout is delivered as cancellation) is never clean."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert runtime.controllers[zone_id].state is ControllerState.WATERING
+        env.switch.off_behavior = "silent"
+        previous = runtime.store.data.run.last_clean_shutdown_run_id
+        runtime.shutdown_off_budget_s = 1_000  # would otherwise wait
+
+        task = asyncio.create_task(stage1_shutdown(runtime))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await settle(env.hass)
+        report = runtime.shutdown_report
+        assert report is not None
+        assert "stage1_cancelled" in report.failures
+        assert not report.clean
+        assert runtime.store.data.run.last_clean_shutdown_run_id == previous
         await runtime.async_unload()
 
     async def test_await_off_budget_without_watering(self, env) -> None:
@@ -1406,25 +1817,6 @@ class TestRuntimeEdges:
         zone_id = zone_subentry_id(entry)
         controller = runtime.controllers[zone_id]
         await runtime._await_off_within_budget(controller)  # idle: no-op
-        await runtime.async_unload()
-
-    async def test_shutdown_fallback_with_raising_off(self, env) -> None:
-        entry = make_entry(env.hass, initialized=False)
-        runtime = await start_runtime(env.hass, entry)
-        zone_id = zone_subentry_id(entry)
-        env.hass.states.async_set(SENSOR, "27")
-        await settle(env.hass)
-        assert runtime.controllers[zone_id].state is ControllerState.WATERING
-
-        async def raising_off(call):
-            env.switch.off_calls += 1
-            raise RuntimeError("scripted OFF failure")
-
-        env.hass.services.async_register("switch", "turn_off", raising_off)
-        runtime.shutdown_off_budget_s = 0
-        await runtime.async_handle_ha_stop(None)
-        await settle(env.hass)
-        assert env.switch.off_calls >= 1  # best effort attempted
         await runtime.async_unload()
 
     async def test_fallback_without_session_task(self, env) -> None:
@@ -1449,6 +1841,33 @@ class TestRuntimeEdges:
         assert env.switch.off_calls == before + 1
         await runtime.async_unload()
 
+    async def test_shutdown_deadline_is_one_overall_absolute_instant(self, env) -> None:
+        """§24.1: nested joins reuse the exact Stage-1 deadline instead of
+        each receiving an independent full SHUTDOWN_OFF_BUDGET_S."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        deadlines: list[float] = []
+        original = runtime._await_off_within_budget
+
+        async def recording(target, deadline=None):
+            resolved = deadline if deadline is not None else runtime._shutdown_deadline
+            deadlines.append(resolved)
+            return await original(target, deadline)
+
+        runtime._await_off_within_budget = recording
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        assert deadlines and all(item == runtime._shutdown_deadline for item in deadlines)
+        # Every nested lifecycle join now inherits the same absolute instant.
+        await runtime._await_off_within_budget(controller)
+        assert deadlines[-1] == runtime._shutdown_deadline
+        await runtime.async_unload()
+
     async def test_prepare_reconfigure_idle_and_soaking(self, env) -> None:
         entry = make_entry(env.hass, initialized=True)
         zone_id = zone_subentry_id(entry)
@@ -1468,4 +1887,331 @@ class TestRuntimeEdges:
         assert controller.last_summary.reason is CompletionReason.CONFIG_CHANGED
         # Idle zone: preparation is a no-op.
         await runtime.async_prepare_reconfigure(zone_id)
+        await runtime.async_unload()
+
+
+class TestStage1ShutdownOwner:
+    """spec.5 §24.1/§22.1 registration lifecycle and ownership races."""
+
+    async def test_exactly_one_shutdown_job_per_loaded_entry(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        assert runtime.shutdown_job_registered
+        assert len(registered_shutdown_jobs(env.hass)) == 1
+        runtime.register_shutdown_job()  # idempotent
+        assert len(registered_shutdown_jobs(env.hass)) == 1
+        await runtime.async_unload()
+
+    async def test_shutdown_job_is_registered_before_watering_capable_runtime(self, env) -> None:
+        """§24.1: no process may reach a commandable ON without an installed
+        authoritative shutdown owner."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = EntryRuntime(env.hass, entry)
+        observed: list[bool] = []
+        original = runtime.slots.async_enable_grants
+
+        async def recording() -> None:
+            observed.append(runtime.shutdown_job_registered)
+            observed.append(bool(registered_shutdown_jobs(env.hass)))
+            await original()
+
+        runtime.slots.async_enable_grants = recording
+        await runtime.async_initialize()
+        await settle(env.hass)
+        assert observed == [True, True]
+        await runtime.async_unload()
+
+    async def test_ordinary_unload_removes_the_shutdown_job(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        await runtime.async_unload()
+        assert not runtime.shutdown_job_registered
+        assert registered_shutdown_jobs(env.hass) == []
+        runtime.remove_shutdown_job()  # idempotent second removal
+
+    async def test_reload_does_not_accumulate_shutdown_jobs(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        first = await start_runtime(env.hass, entry)
+        await first.async_unload()
+        second = await start_runtime(env.hass, entry)
+        assert len(registered_shutdown_jobs(env.hass)) == 1
+        # Only the current runtime owns process shutdown.
+        await env.hass.async_stop()
+        await settle(env.hass)
+        assert first.shutdown_report is None
+        assert second.shutdown_report is not None and second.shutdown_report.clean
+        await second.async_unload()
+
+    async def test_setup_failure_leaves_no_dangling_shutdown_job(self, env, monkeypatch) -> None:
+        entry = make_entry(env.hass, initialized=True)  # store absent -> loss
+
+        async def failing(self, budgets, date_local):
+            raise StoreWriteVerificationError("injected")
+
+        monkeypatch.setattr(SafetyStore, "async_reconstruct_after_integrity_loss", failing)
+        runtime = EntryRuntime(env.hass, entry)
+        with pytest.raises(ConfigEntryNotReady):
+            await runtime.async_initialize()
+        assert not runtime.slots.snapshot().grants_enabled
+        assert env.switch.on_calls == 0
+        # Core runs entry.async_on_unload for ConfigEntryNotReady; the direct
+        # runtime path must be equally safe.
+        runtime.remove_shutdown_job()
+        assert registered_shutdown_jobs(env.hass) == []
+
+    async def test_stage1_joins_an_off_already_in_progress(self, env) -> None:
+        """Requirement 36: no duplicate CLOSE sequence."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+        env.switch.off_behavior = "silent"
+        await controller.async_dispatch(StopRequested())
+        await settle(env.hass)
+        operation = controller.off_operation
+        assert operation is not None and not operation.done()
+        assert env.switch.off_calls == 1
+
+        shutdown = asyncio.create_task(stage1_shutdown(runtime))
+        await asyncio.sleep(0)
+        # Delayed exact OFF proof resolves that same one operation.
+        env.switch.set_state("off")
+        await shutdown
+        await settle(env.hass)
+        assert controller.off_operation is operation  # the same one future
+        assert env.switch.off_calls == 1  # no second normal OFF sequence
+        assert controller.last_summary is not None
+        # First terminal reason remains authoritative (§22.2).
+        assert controller.last_summary.reason is CompletionReason.USER_STOP
+        await runtime.async_unload()
+
+    async def test_unload_during_stage1_is_cleanup_and_join_only(self, env) -> None:
+        """§24.2: a later unload never competes with the Stage-1 owner."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+
+        shutdown = asyncio.create_task(stage1_shutdown(runtime))
+        await asyncio.sleep(0)
+        unload = asyncio.create_task(runtime.async_unload())
+        await shutdown
+        await unload
+        await settle(env.hass)
+        assert env.switch.off_calls == 1  # one OFF operation
+        assert controller.last_summary is not None
+        assert controller.last_summary.reason is CompletionReason.HOME_ASSISTANT_SHUTDOWN
+        report = runtime.shutdown_report
+        assert report is not None and report.clean
+        assert runtime.store.data.run.previous_run_was_clean
+
+    async def test_reconciliation_never_delays_active_flow_signalling(self, env) -> None:
+        """§22.3/§24.1: admission closes synchronously and the OFF signal is
+        not held behind a blocked reconciliation worker."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+
+        release = asyncio.Event()
+        joined = asyncio.Event()
+        original_join = runtime.coordinator.async_join_workers
+
+        async def blocked_join() -> None:
+            joined.set()
+            await release.wait()
+            await original_join()
+
+        runtime.coordinator.async_join_workers = blocked_join
+        shutdown = asyncio.create_task(stage1_shutdown(runtime))
+        for _ in range(80):
+            await asyncio.sleep(0)
+            if joined.is_set():
+                break
+        # Admission was closed and the physical OFF was already issued before
+        # the reconciliation handoff was joined at all.
+        assert joined.is_set()
+        assert runtime.process_stopping
+        assert not runtime.slots.snapshot().admission_open
+        assert env.switch.off_calls == 1
+        release.set()
+        await shutdown
+        await settle(env.hass)
+        assert runtime.shutdown_report is not None and runtime.shutdown_report.clean
+        await runtime.async_unload()
+
+    async def test_reconciliation_handoff_failure_is_unclean(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        original_join = runtime.coordinator.async_join_workers
+
+        async def failing_join() -> None:
+            raise ReconciliationError("injected handoff failure")
+
+        runtime.coordinator.async_join_workers = failing_join
+        await stage1_shutdown(runtime)
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any(item.startswith("reconciliation_handoff:") for item in report.failures)
+        assert not runtime.store.data.run.previous_run_was_clean
+        runtime.coordinator.async_join_workers = original_join
+        await runtime.async_unload()
+
+    async def test_auto_callbacks_cannot_resurrect_after_stage1_starts(self, env) -> None:
+        """Requirement 12: watchdog, report, slot-grant, evaluate and manual
+        inputs are all inert once admission closed."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+        watchdog = controller.armed_watchdog
+        assert watchdog is not None
+
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        on_calls = env.switch.on_calls
+        assert (await controller.async_dispatch(WatchdogFired(watchdog))).no_op
+        assert (await controller.async_evaluate()).no_op
+        assert (await controller.async_manual_start(300)).no_op
+        env.hass.states.async_set(SENSOR, "5")
+        await settle(env.hass)
+        grant = await controller.async_dispatch(SlotGranted())
+        assert all(type(action).__name__ != "TurnOn" for action in grant.actions)
+        assert env.switch.on_calls == on_calls
+        assert not runtime.slots.snapshot().admission_open
+        await runtime.async_unload()
+
+    async def test_shutdown_during_reconfigure_preserves_first_terminal_reason(self, env) -> None:
+        """Requirement 33: one OFF, one terminal reason, no clean-marker race."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        env.hass.states.async_set(SENSOR, "27")
+        await settle(env.hass)
+        assert controller.state is ControllerState.WATERING
+
+        prepare = asyncio.create_task(runtime.async_prepare_reconfigure(zone_id))
+        await asyncio.sleep(0)
+        await stage1_shutdown(runtime)
+        await prepare
+        await settle(env.hass)
+        assert env.switch.off_calls == 1
+        assert controller.last_summary is not None
+        assert controller.last_summary.reason is CompletionReason.CONFIG_CHANGED
+        await runtime.async_unload()
+
+    async def test_unexpected_stage1_error_is_recorded_and_never_clean(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+
+        def exploding(_controller):
+            raise RuntimeError("injected Stage-1 defect")
+
+        runtime._integration_owned_possible_flow = exploding
+        await stage1_shutdown(runtime)  # Core must still finish stopping
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any(item.startswith("stage1_failed:") for item in report.failures)
+        assert not runtime.store.data.run.previous_run_was_clean
+        del runtime._integration_owned_possible_flow
+        await runtime.async_unload()
+
+    async def test_unreadable_configuration_snapshot_fails_closed(self, env) -> None:
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+
+        def exploding(_generation):
+            raise ValueError("injected snapshot failure")
+
+        runtime._build_immutable_snapshot = exploding
+        await stage1_shutdown(runtime)
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any(item.startswith("configuration_snapshot:") for item in report.failures)
+        assert not runtime.store.data.run.previous_run_was_clean
+        del runtime._build_immutable_snapshot
+        await runtime.async_unload()
+
+    async def test_unresolved_identity_is_never_commanded_but_stays_unclean(self, env) -> None:
+        """§25.1.1: an unresolved actuator identity is never commanded as this
+        record's actuator, and its retained evidence keeps the run unclean."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        record_id = controller.safety_record_id
+
+        def _unresolve(data):
+            records = dict(data.safety_records)
+            record = records[record_id]
+            records[record_id] = record.evolve(
+                runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+                active_subentry_id=None,
+                previous_subentry_ids=(zone_id,),
+                actuator_identity=replace(
+                    record.actuator_identity, identity_status=IdentityStatus.MISSING
+                ),
+                blocker_reasons=(BlockerReason.INTEGRATION_OFF_UNCONFIRMED,),
+                possible_flow_owner=PossibleFlowOwner.INTEGRATION,
+            )
+            return records, dict(data.zone_histories)
+
+        await runtime.store.async_reconcile(_unresolve)
+        before = env.switch.off_calls
+        runtime._begin_shutdown_off(controller)
+        assert controller.off_operation is None
+        assert env.switch.off_calls == before
+
+        await stage1_shutdown(runtime)
+        await settle(env.hass)
+        assert env.switch.off_calls == before  # never guessed an actuator
+        report = runtime.shutdown_report
+        assert report is not None and not report.clean
+        assert any("integration_off_unconfirmed" in item for item in report.failures)
+        await runtime.async_unload()
+
+    async def test_retained_record_never_overwrites_the_zone_operational_state(self, env) -> None:
+        """§23.2: each zone history has exactly one operational authority; a
+        retained record sharing it after an A -> B handoff must not write it."""
+        entry = make_entry(env.hass, initialized=False)
+        runtime = await start_runtime(env.hass, entry)
+        zone_id = zone_subentry_id(entry)
+        controller = runtime.controllers[zone_id]
+        record_id = controller.safety_record_id
+        assert runtime._owns_zone_runtime(controller)
+
+        def _add_continuing_owner(data):
+            records = dict(data.safety_records)
+            retained = records[record_id]
+            records[record_id] = retained.evolve(
+                active_subentry_id=None,
+                runtime_lifecycle=RuntimeLifecycle.DELETE_PENDING,
+            )
+            records["b-record"] = retained.evolve(
+                safety_record_id="b-record",
+                safety_lineage_id="b-lineage",
+                runtime_lifecycle=RuntimeLifecycle.ACTIVE,
+            )
+            return records, dict(data.zone_histories)
+
+        await runtime.store.async_reconcile(_add_continuing_owner)
+        assert not runtime._owns_zone_runtime(controller)
+        history_id = controller.zone_history_id
+        state_before = runtime.store.data.zone_histories[history_id].zone_runtime.state
+        await stage1_shutdown(runtime)
+        histories = runtime.store.data.zone_histories
+        assert histories[history_id].zone_runtime.state is state_before
         await runtime.async_unload()

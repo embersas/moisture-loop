@@ -146,6 +146,23 @@ class SlotManager:
         async with self._lock:
             self._grants_enabled = False
 
+    def close_admission_now(self) -> None:
+        """Synchronously revoke every queued and future watering grant.
+
+        The Stage-1 full-process shutdown owner (§24.1) must close slot
+        admission before its own first suspension point, so no grant can be
+        offered while it is signalling active flow. Ownership, keyed
+        blockers, and accounting are untouched: this only stops *new* grants
+        and withdraws the queue. It contains no suspension point and is
+        called on the event-loop thread, exactly like
+        :meth:`set_reconciliation_state_now`.
+        """
+        self._grants_enabled = False
+        queued, self._queue = self._queue, deque()
+        for request in queued:
+            if not request.granted.done():
+                request.granted.cancel()
+
     async def async_set_reconciliation_barrier(
         self,
         *,

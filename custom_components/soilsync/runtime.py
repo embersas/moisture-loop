@@ -6,11 +6,10 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -35,6 +34,7 @@ from .const import (
     DOMAIN,
 )
 from .models import (
+    ActuatorBecameUnavailable,
     ActuatorFinding,
     ActuatorIdentity,
     AppliedConfigurationShadow,
@@ -44,6 +44,7 @@ from .models import (
     ConfigChangedPrepare,
     ConfigEntryReload,
     ControllerState,
+    ExternalActuatorOn,
     FaultCode,
     GraceDeadlineReached,
     HomeAssistantShutdown,
@@ -85,8 +86,28 @@ from .zone_controller import ActuatorAdapter, ZoneController, classify_moisture
 
 _LOGGER = logging.getLogger(__name__)
 
-# Bounded fallback for cooperative OFF at shutdown; tuning is §46 item 4.
+# §24.1/§46 item 4: the one overall Stage-1 active-flow closure deadline. It
+# bounds the total time the authoritative shutdown owner waits for cooperative
+# closure, including convergence of an already in-flight ON and the shared OFF
+# operation. It is not a delay before OFF, not a per-controller allowance, and
+# not a process-manager setting. Tuning is §46 item 4.
 SHUTDOWN_OFF_BUDGET_S = 8.0
+
+
+@dataclass(frozen=True, slots=True)
+class Stage1ShutdownReport:
+    """Immutable record of one §24.1 Stage-1 full-process shutdown.
+
+    Diagnostics-grade evidence only: the authority for the next run remains
+    the persisted run IDs (§23.3). ``clean`` is true only when every required
+    Stage-1 outcome succeeded and the verified clean marker was written.
+    """
+
+    core_state_at_entry: str
+    watering_records: tuple[str, ...]
+    preserved_soaking_records: tuple[str, ...]
+    failures: tuple[str, ...]
+    clean: bool
 
 
 class SafetyRecordAcknowledgementError(RuntimeError):
@@ -131,9 +152,10 @@ PLATFORMS = ["binary_sensor", "button", "sensor", "switch"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the single SoilSync controller entry."""
     runtime = EntryRuntime(hass, entry)
+    # §24.1: async_initialize registers the one Stage-1 shutdown owner before
+    # any watering-capable runtime is armed.
     await runtime.async_initialize()
     entry.runtime_data = runtime
-    runtime.install_stop_listener()
     # Platforms forward only after §25.1 reconciliation completed above.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -169,8 +191,11 @@ class EntryRuntime:
         self.soaking_adoptions: dict[str, bool] = {}
         self.process_stopping = False
         self.shutdown_off_budget_s = SHUTDOWN_OFF_BUDGET_S
+        self.shutdown_report: Stage1ShutdownReport | None = None
         self._activity_unsubs: list[CALLBACK_TYPE] = []
-        self._stop_unsub: CALLBACK_TYPE | None = None
+        self._shutdown_job_remove: CALLBACK_TYPE | None = None
+        self._shutdown_operation: asyncio.Future[None] | None = None
+        self._shutdown_deadline: float | None = None
         self._local_tz = dt_util.get_default_time_zone()
         self._listener_registered = False
         self._on_authorizations: dict[str, FinalOnAuthorizationToken] = {}
@@ -536,6 +561,10 @@ class EntryRuntime:
     async def async_initialize(self) -> None:
         """Reconcile current config + Store union before enabling grants."""
         entry = self.entry
+        # §24.1/§37: registration MUST complete before any watering-capable
+        # runtime is armed, so no process can reach a commandable ON without
+        # an installed authoritative Stage-1 shutdown owner.
+        self.register_shutdown_job()
         self._register_update_listener()
         self.coordinator.observe_current()
         initial_snapshot = self.coordinator.observed_snapshot
@@ -1621,8 +1650,6 @@ class EntryRuntime:
             )
             await self._reconcile_zone(controller, record, assessment)
             if assessment.observed_on and not watering_recovery:
-                from .models import ExternalActuatorOn
-
                 await controller.async_dispatch(ExternalActuatorOn())
             binding = RuntimeControllerBinding(
                 subentry_id=zone.subentry_id,
@@ -2361,40 +2388,333 @@ class EntryRuntime:
         )
 
     # ------------------------------------------------------------------
-    # Full graceful process shutdown (§24.1)
+    # Full graceful process shutdown: the one Stage-1 owner (§24.1, §22.1)
     # ------------------------------------------------------------------
 
-    def install_stop_listener(self) -> None:
-        """Install the once-only EVENT_HOMEASSISTANT_STOP handler."""
-        self._stop_unsub = self.hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STOP, self.async_handle_ha_stop
-        )
+    def register_shutdown_job(self) -> None:
+        """Register this runtime's one removable Stage-1 shutdown job.
 
-    async def async_handle_ha_stop(self, _event: Event) -> None:
-        """Once-only EVENT_HOMEASSISTANT_STOP handler (§24.1)."""
-        if self.process_stopping:
+        §24.1: exactly one active ``EntryRuntime`` registers exactly one
+        removable ``HomeAssistant.async_add_shutdown_job()`` HassJob, and that
+        job is the sole authoritative full-process shutdown owner. Core runs
+        and awaits every registered shutdown job in Stage 1 of
+        ``HomeAssistant.async_stop()``, strictly before it cancels background
+        tasks, before it sets ``CoreState.stopping``, and before it fires
+        ``EVENT_HOMEASSISTANT_STOP`` -- which is precisely why this hook, and
+        only this hook, can complete the mandatory §23.4 immediate fresh-Store
+        verification. The returned removal callback is owned by entry unload
+        (§24.2), including the setup-failure path, so neither a reload nor an
+        aborted setup can accumulate or strand a shutdown owner.
+        """
+        if self._shutdown_job_remove is not None:
             return
+        self._shutdown_job_remove = self.hass.async_add_shutdown_job(
+            HassJob(
+                self.async_stage1_shutdown,
+                f"soilsync stage-1 shutdown {self.entry.entry_id}",
+            )
+        )
+        self.entry.async_on_unload(self.remove_shutdown_job)
+
+    @callback
+    def remove_shutdown_job(self) -> None:
+        """Idempotently remove this runtime's Stage-1 shutdown job (§24.2)."""
+        remove = self._shutdown_job_remove
+        self._shutdown_job_remove = None
+        if remove is not None:
+            remove()
+
+    @property
+    def shutdown_job_registered(self) -> bool:
+        """Whether this runtime currently owns a registered Stage-1 job."""
+        return self._shutdown_job_remove is not None
+
+    async def async_stage1_shutdown(self) -> None:
+        """Authoritative full-process shutdown owner (§24.1).
+
+        Home Assistant creates this job eagerly inside Stage 1, so everything
+        before the first ``await`` below runs synchronously while Core is
+        still iterating its shutdown jobs: admission is therefore closed
+        before any other lifecycle work can observe a commandable runtime.
+        Repeated initiation joins the same operation, so no second OFF and no
+        second clean revision can be produced (§22.3).
+        """
+        operation = self._shutdown_operation
+        if operation is not None:
+            await asyncio.shield(operation)
+            return
+
+        # --- synchronous, before this coroutine's first suspension point ---
         self.process_stopping = True
-        await self.coordinator.async_stop()
-        await self.slots.async_disable_grants()
-        for controller in self._all_controllers():
-            if controller.state is ControllerState.WATERING:
-                await controller.async_dispatch(HomeAssistantShutdown())
-                await self._await_off_within_budget(controller)
-            elif controller.state is ControllerState.SOAKING:
-                # T37: persist the active soak unchanged; no new water.
-                await controller.async_dispatch(HomeAssistantShutdown())
+        self.coordinator.close_publication_now()
+        self.slots.close_admission_now()
+        snapshot = self._all_controllers()
+        for controller in snapshot:
+            # Revokes manual/evaluation admission, queued command intent, and
+            # every armed timer for this runtime safety object.
+            controller.begin_quiescing()
+        # One overall absolute active-flow deadline. Nested joins reuse this
+        # exact instant, so no operation receives an independent full budget.
+        self._shutdown_deadline = self.hass.loop.time() + max(0.0, self.shutdown_off_budget_s)
+        core_state = getattr(self.hass.state, "name", str(self.hass.state))
+        operation = self.hass.loop.create_future()
+        self._shutdown_operation = operation
+        # --- end of the synchronous admission-closure region ---
+
+        failures: list[str] = []
+        watering: list[str] = []
+        preserved: list[str] = []
+        try:
+            await self._run_stage1_shutdown(snapshot, failures, watering, preserved)
+        except asyncio.CancelledError:
+            # Core's Stage-1 timeout or a forced teardown: never clean.
+            failures.append("stage1_cancelled")
+            raise
+        except Exception as err:  # Core must still finish stopping
+            failures.append(f"stage1_failed:{type(err).__name__}")
+            _LOGGER.error("SoilSync Stage-1 shutdown handling failed: %s", err)
+        finally:
+            report = Stage1ShutdownReport(
+                core_state_at_entry=core_state,
+                watering_records=tuple(watering),
+                preserved_soaking_records=tuple(preserved),
+                failures=tuple(dict.fromkeys(failures)),
+                clean=not failures,
+            )
+            self.shutdown_report = report
+            if not operation.done():
+                operation.set_result(None)
+            if report.clean:
+                _LOGGER.info(
+                    "SoilSync Stage-1 shutdown completed cleanly for entry %s",
+                    self.entry.entry_id,
+                )
             else:
-                await controller.async_persist_current_state("shutdown_resting")
-        # Only after every zone's safety handling is honestly persisted.
-        # A failed clean marking is safe: the next run reads unequal IDs
-        # and treats this run as unclean.
+                _LOGGER.warning(
+                    "SoilSync Stage-1 shutdown is unclean for entry %s: %s",
+                    self.entry.entry_id,
+                    ", ".join(report.failures),
+                )
+
+    async def _run_stage1_shutdown(
+        self,
+        snapshot: list[ZoneController],
+        failures: list[str],
+        watering: list[str],
+        preserved: list[str],
+    ) -> None:
+        """Execute the normative §24.1 Stage-1 algorithm after admission closed."""
+        fresh_zones = self._fresh_zone_snapshots(failures)
+
+        # 1. Immediate active-flow signalling. No reconciliation worker,
+        #    reload, platform unload, or diagnostic cleanup may be awaited
+        #    before this (finding B2-1: physical OFF timing is the boundary).
+        for controller in snapshot:
+            if controller.state in (ControllerState.WATERING, ControllerState.SOAKING):
+                continue
+            # No live session decision is pending for these records, so the
+            # one idempotent OFF may begin/join synchronously.
+            self._begin_shutdown_off(controller)
+        for controller in snapshot:
+            state = controller.state
+            if state is ControllerState.WATERING:
+                watering.append(controller.safety_record_id)
+                # Signal first: OffConfirmed before a committed terminal
+                # reason would be an ordinary T6 pulse end, not a shutdown.
+                await controller.async_dispatch(HomeAssistantShutdown())
+                if controller.inflight_on is None:
+                    # An integration-owned WATERING exit always begins or
+                    # joins the one idempotent OFF (§11.3); an ON still in
+                    # flight converges first (§22.3).
+                    controller.begin_off_operation()
+            elif state is ControllerState.SOAKING:
+                event, eligible, needs_off = self._soaking_shutdown_outcome(controller, fresh_zones)
+                await controller.async_dispatch(event)
+                if eligible:
+                    preserved.append(controller.safety_record_id)
+                elif needs_off:
+                    self._begin_shutdown_off(controller)
+
+        # 2. Bounded convergence: any in-flight ON is driven into the same one
+        #    OFF path, and every started/joined OFF operation is directly
+        #    awaited, all inside the one Stage-1 active-flow deadline.
+        for controller in snapshot:
+            operation = controller.off_operation
+            if (
+                controller.safety_record_id in watering
+                or controller.inflight_on is not None
+                or (operation is not None and not operation.done())
+            ):
+                await self._await_off_within_budget(controller)
+
+        # 3. Join or take over the unawaited reconciliation/lifecycle handoff.
+        try:
+            await self.coordinator.async_join_workers()
+        except Exception as err:  # recorded, never swallowed
+            failures.append(f"reconciliation_handoff:{type(err).__name__}")
+            _LOGGER.error("Stage-1 reconciliation handoff failed: %s", err)
+
+        # 4. Per-object outcome: persist honest current state through the one
+        #    §23.4 verified-write contract. There is no shutdown exception.
+        for controller in snapshot:
+            record_id = controller.safety_record_id
+            if controller.persist_failed:
+                failures.append(f"safety_write_failed:{record_id}")
+                continue
+            if not self._owns_zone_runtime(controller):
+                # A retained record that no longer owns its logical zone's
+                # operational authority (§23.2) must not overwrite it.
+                continue
+            try:
+                await controller.async_persist_current_state("stage1_shutdown")
+            except StoreWriteVerificationError as err:
+                failures.append(f"safety_write_failed:{record_id}")
+                _LOGGER.error("Stage-1 safety write failed for %s: %s", record_id, err)
+
+        # 5. Clean-run aggregation (§23.3, I14). Honest evidence is not
+        #    success: integration-owned possible flow that was not proven OFF
+        #    keeps the run unclean, while a correctly persisted external_flow
+        #    owner is successful SoilSync handling.
+        if not self.store.loaded:
+            failures.append("safety_store_not_loaded")
+            return
+        for record in self.store.data.safety_records.values():
+            if (
+                record.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+                or BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
+            ):
+                failures.append(f"integration_off_unconfirmed:{record.safety_record_id}")
+        for controller in snapshot:
+            record_id = controller.safety_record_id
+            if record_id not in watering and record_id not in preserved:
+                continue
+            if not controller.refresh_actuator_for_final_gate().proven_off:
+                failures.append(f"terminal_off_not_proven:{record_id}")
+        if failures:
+            return
+
+        # 6. The clean marker is the final verified safety transaction and is
+        #    reachable only after total success (§23.3 items 1-5).
         try:
             await self.store.async_mark_clean_shutdown()
         except StoreWriteVerificationError as err:
+            # The previous marker is deliberately left unchanged; the next run
+            # reads unequal IDs and treats this run as unclean.
+            failures.append(f"clean_marker_write_failed:{type(err).__name__}")
             _LOGGER.error("Clean-shutdown marking failed: %s", err)
 
-    async def _await_off_within_budget(self, controller: ZoneController) -> None:
+    def _fresh_zone_snapshots(self, failures: list[str]) -> dict[str, ImmutableZoneSnapshot]:
+        """Read current public configuration once for Stage-1 eligibility."""
+        try:
+            snapshot = self._build_immutable_snapshot(self.coordinator.observed_generation)
+        except Exception as err:  # fail closed, never guess
+            failures.append(f"configuration_snapshot:{type(err).__name__}")
+            return {}
+        return snapshot.by_subentry_id()
+
+    def _integration_owned_possible_flow(self, controller: ZoneController) -> bool:
+        """Whether this record is integration-owned physically possible flow."""
+        if controller.inflight_on is not None:
+            return True
+        if not self.store.loaded:
+            return False
+        record = self.store.data.safety_records.get(controller.safety_record_id)
+        if record is None:
+            return False
+        return (
+            record.possible_flow_owner is PossibleFlowOwner.INTEGRATION
+            or BlockerReason.INTEGRATION_OFF_UNCONFIRMED in record.blocker_reasons
+        )
+
+    def _begin_shutdown_off(self, controller: ZoneController) -> None:
+        """Begin or join this record's one idempotent OFF operation (§11.3)."""
+        if controller.inflight_on is not None:
+            # §22.3: an already dispatched ON must converge first. Issuing OFF
+            # while that call is still outstanding could let the ON reach
+            # hardware afterwards; the convergence phase joins the same one
+            # compensating OFF operation once the call returns or is cancelled.
+            return
+        if not self._integration_owned_possible_flow(controller):
+            return
+        if controller.off_operation is None and self.store.loaded:
+            record = self.store.data.safety_records.get(controller.safety_record_id)
+            if record is not None and record.actuator_identity.identity_status in (
+                IdentityStatus.MISSING,
+                IdentityStatus.CONFLICT,
+            ):
+                # §25.1.1: an unresolved identity is never commanded as this
+                # record's actuator. Its evidence is retained instead.
+                return
+        controller.begin_off_operation()
+
+    def _soaking_shutdown_outcome(
+        self,
+        controller: ZoneController,
+        fresh_zones: dict[str, ImmutableZoneSnapshot],
+    ) -> tuple[object, bool, bool]:
+        """Decide T37 preservation versus already-arbitrated termination.
+
+        §24.1 preserves an active soak only while its lifecycle is ACTIVE,
+        the current configuration still matches the applied shadow, and the
+        actuator remains proven OFF. Every other case terminates through an
+        existing transition; no new controller state or transition exists.
+        """
+        live = controller.refresh_actuator_for_final_gate()
+        if live.observed_on or not live.proven_off:
+            if not live.available:
+                # T32: unavailable is not OFF, and no new command is possible.
+                return ActuatorBecameUnavailable(), False, False
+            # T33/T34: interference during an integration-owned soak.
+            return ExternalActuatorOn(), False, True
+        record = (
+            self.store.data.safety_records.get(controller.safety_record_id)
+            if self.store.loaded
+            else None
+        )
+        binding = self.bindings.get(controller.zone_id)
+        applied = controller.applied_config
+        fresh_zone = fresh_zones.get(controller.zone_id)
+        eligible = (
+            record is not None
+            and record.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+            and record.active_subentry_id == controller.zone_id
+            and binding is not None
+            and binding.controller is controller
+            and applied is not None
+            and fresh_zone is not None
+            and fresh_zone.config_fingerprint == applied.config_fingerprint
+        )
+        if eligible:
+            # T37: persist the active soak unchanged; no new water.
+            return HomeAssistantShutdown(), True, False
+        # T39: the configuration change/deletion already arbitrated this.
+        return ConfigChangedPrepare(), False, False
+
+    def _owns_zone_runtime(self, controller: ZoneController) -> bool:
+        """Whether this controller is the logical zone's operational authority.
+
+        §23.2 gives each ``zone_history`` exactly one operational owner. A
+        retained A record sharing the continuing history after an A -> B
+        replacement keeps its own actuator safety authority but must never
+        write B's ``zone_runtime``.
+        """
+        if not self.store.loaded:
+            return False
+        record = self.store.data.safety_records.get(controller.safety_record_id)
+        if record is None or record.zone_history_id != controller.zone_history_id:
+            return False
+        if controller.zone_history_id not in self.store.data.zone_histories:
+            return False
+        return not any(
+            other.safety_record_id != controller.safety_record_id
+            and other.zone_history_id == controller.zone_history_id
+            and other.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+            for other in self.store.data.safety_records.values()
+        )
+
+    async def _await_off_within_budget(
+        self, controller: ZoneController, deadline: float | None = None
+    ) -> None:
         """Join the controller's one OFF operation within the lifecycle budget.
 
         An ON service already in flight must finish or be cancelled before
@@ -2402,14 +2722,20 @@ class EntryRuntime:
         OFF.  Cancellation is handled by ``_perform_on`` as uncertain flow
         and converges on this same operation.  There is no lifecycle-specific
         direct actuator call.
-        """
-        import asyncio
 
+        ``deadline`` is an absolute monotonic instant. During Stage-1 process
+        shutdown every caller shares the one overall active-flow deadline
+        (§24.1), so nested joins cannot receive independent full budgets.
+        """
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(0.0, self.shutdown_off_budget_s)
+        if deadline is None:
+            deadline = self._shutdown_deadline
+        if deadline is None:
+            deadline = loop.time() + max(0.0, self.shutdown_off_budget_s)
+        absolute_deadline = deadline
 
         def remaining() -> float:
-            return max(0.0, deadline - loop.time())
+            return max(0.0, absolute_deadline - loop.time())
 
         task = controller.session_owner_task
         if controller.inflight_on is not None and remaining() > 0:
@@ -2479,9 +2805,14 @@ class EntryRuntime:
     # ------------------------------------------------------------------
 
     async def async_unload(self) -> None:
-        if self._stop_unsub is not None:
-            self._stop_unsub()
-            self._stop_unsub = None
+        # §24.2: an unloaded entry holds no process-shutdown responsibility.
+        self.remove_shutdown_job()
+        operation = self._shutdown_operation
+        if operation is not None and not operation.done():
+            # Stage-1 process shutdown already won: this unload is
+            # cleanup/join only. It creates no competing terminal reason, no
+            # second OFF, and never writes or owns the clean marker.
+            await asyncio.shield(operation)
         await self.coordinator.async_stop()
         await self.slots.async_disable_grants()
         if not self.process_stopping:

@@ -942,7 +942,7 @@ class TestInflightLifecycle:
     async def test_shutdown_during_on_call_preserves_first_reason(self, command_env) -> None:
         env = command_env
         await start_auto_inflight(env)
-        shutdown = asyncio.create_task(env.runtime.async_handle_ha_stop(None))
+        shutdown = asyncio.create_task(env.runtime.async_stage1_shutdown())
         await spin_until(
             lambda: (
                 env.controller.session.pending_termination_reason
@@ -953,7 +953,12 @@ class TestInflightLifecycle:
         await shutdown
         assert env.actuator.on_calls == 1
         assert env.actuator.off_calls == 1
+        # spec.5 §22.3: the ON already dispatched stays integration-owned
+        # possible flow, converges into the one shared OFF, and the run is
+        # clean only because that terminal OFF was actually proven.
         assert env.runtime.store.data.run.previous_run_was_clean
+        report = env.runtime.shutdown_report
+        assert report is not None and report.clean
         _record, _history, summary = persisted_summary(env)
         assert summary is not None
         assert summary.reason is CompletionReason.HOME_ASSISTANT_SHUTDOWN
@@ -966,7 +971,7 @@ class TestInflightLifecycle:
         marker = env.controller.inflight_on
         assert marker is not None
         env.runtime.shutdown_off_budget_s = 0
-        await env.runtime.async_handle_ha_stop(None)
+        await env.runtime.async_stage1_shutdown()
         assert marker.outcome is OnCommandOutcome.CANCELLED
         assert env.actuator.on_calls == 1
         assert env.actuator.off_calls == 1
