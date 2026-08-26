@@ -1,6 +1,6 @@
 # Development guide
 
-`SPECIFICATION.md` version `0.1.0-spec.4` is authoritative. Home Assistant
+`SPECIFICATION.md` version `0.1.0-spec.5` is authoritative. Home Assistant
 2025.9.0 or later is supported; 2025.9.0 is the mandatory minimum and must
 remain tested separately from the explicitly pinned supported-current release.
 No environment may be upgraded in place from one HA line to the other.

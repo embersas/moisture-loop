@@ -846,6 +846,40 @@ separately authorized, executed once on 2026-08-26, and stopped at
 | Evidence classes | Terminal physical actuator/controller behavior: `LIVE PHYSICAL`. HA state/events/Store/restart reconciliation: `LIVE HOME ASSISTANT`. Signal, stop budget, exit 137, and restart: `HOST / CONTAINER EVIDENCE` |
 | Status | `[?] Requires specification review`. B2 is not PASS; Phase B and Slice 13 remain partial. A fresh exact operator authorization is required after any separately authorized specification decision/remediation/deployment before another physical trial |
 
+#### B2-1 review resolution - 2026-08-26
+
+This note records only the outcome of the specification review that the B2 trial
+above required. Every timestamp, measurement, and observation in that trial
+record is unchanged, and no physical result is reclassified.
+
+- Finding B2-1 was accepted as a normative lifecycle defect in `0.1.0-spec.4`,
+  not as an implementation defect. Spec.4 selected a once-only
+  `EVENT_HOMEASSISTANT_STOP` handler as the authoritative full-process shutdown
+  trigger, but Home Assistant cancels background tasks and sets
+  `CoreState.stopping` before firing that event, after which
+  `Store.async_save()` only queues its payload for
+  `EVENT_HOMEASSISTANT_FINAL_WRITE`. The mandatory fresh same-key read-back can
+  therefore never observe the new revision from that hook.
+- The user approved `0.1.0-spec.5` on 2026-08-26. It changes the shutdown owner
+  to exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()`
+  HassJob per loaded entry runtime, which Core awaits before background-task
+  cancellation, `CoreState.stopping`, and `EVENT_HOMEASSISTANT_STOP`. The strict
+  Store save/fresh-read/verify contract is unchanged with no shutdown exception,
+  clean-run evidence is strengthened, and `EVENT_HOMEASSISTANT_STOP` loses all
+  SoilSync safety ownership. Five controller states, T1-T59, I1-I37, and Store
+  schema 2 are unchanged.
+- The failed physical trial above remains historical evidence of what actually
+  happened on the spec.4 implementation. It is not a PASS, and the post-restart
+  terminal OFF remains recovery evidence rather than shutdown timing.
+- `SHUTDOWN_OFF_BUDGET_S` remains `8.0` pending a corrected physical
+  measurement, because this trial produced no valid T3->T6 interval.
+- The table's `Status` row above is the trial's own disposition. As of this note
+  B2 is `[?] Requires implementation remediation and fresh physical
+  revalidation`: the specification question is resolved, but no runtime
+  remediation, deployment, or repeat physical trial has occurred. A repeat
+  requires separate authorization to implement spec.5, the full mandatory gates,
+  a deployed exact SHA, and a fresh exact operator water checkpoint.
+
 ## Current cleanup inventory
 
 - The B2 run's terminal safety state supersedes the earlier zero-fixture B1
@@ -972,6 +1006,11 @@ physical HA-valve evidence plus the permitted live synthetic template matrix.
 **B2 is `[?] Requires specification review`** after one authorized live
 active-flow trial reached Docker's forced 10 s boundary without shutdown-path
 terminal OFF proof. Startup reconciliation failed closed and eventually proved
-OFF, but post-restart OFF cannot satisfy the shutdown timing obligation. Phase B
-is `[~] Partial`, and Slice 13 remains `[~] Partial`. No repeat physical trial is
-authorized; the next work is a separate spec.4 lifecycle/Store review.
+OFF, but post-restart OFF cannot satisfy the shutdown timing obligation. That spec.4 lifecycle/Store review has since closed: the user approved
+`0.1.0-spec.5` on 2026-08-26, moving full-process shutdown ownership to one
+removable Stage-1 `async_add_shutdown_job` without weakening Store
+verification. B2 is therefore now `[?] Requires implementation remediation and
+fresh physical revalidation` rather than `[?] Requires specification review`,
+and it is still not PASS. Phase B is `[~] Partial`, and Slice 13 remains
+`[~] Partial`. No repeat physical trial is authorized; the next work is
+separately authorized spec.5 implementation remediation.

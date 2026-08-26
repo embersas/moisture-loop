@@ -5,13 +5,15 @@
 | | |
 |---|---|
 | Status | Draft for review - implementation source of truth |
-| Spec version | `0.1.0-spec.4` |
-| Date | 2026-08-22 |
+| Spec version | `0.1.0-spec.5` |
+| Date | 2026-08-26 |
 | Integration name | SoilSync |
 | Domain | `soilsync` |
 | Target platform | Home Assistant >= 2025.9.0 |
 | Distribution | HACS custom integration |
 
+> **Revision note:** spec.5 is a normative architectural lifecycle revision. Slice 13 physical validation finding B2-1 exposed a mismatch between the spec.4 `EVENT_HOMEASSISTANT_STOP` shutdown hook and supported Home Assistant Store behaviour: Core cancels background tasks and sets `CoreState.stopping` *before* firing that event, and `Store.async_save()` then only queues its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE` instead of writing immediately, so the mandatory fresh same-key read-back can observe nothing newer than the previous revision. Full-process shutdown safety ownership therefore moves to exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded entry runtime, which Core executes and awaits in Stage 1 of `async_stop()` before background-task cancellation, before `CoreState.stopping`, and before `EVENT_HOMEASSISTANT_STOP`. The strict §23.4 Store save/fresh-read/verify contract is unchanged and gains no shutdown exception. Clean-run evidence is strengthened: the clean marker is the final verified safety transaction and may be written only after complete, successful, verified Stage-1 handling. `EVENT_HOMEASSISTANT_STOP` loses all SoilSync safety ownership. The five controller states, T1-T59, I1-I37, the 134 normative behavioural test IDs, Store schema 2, and the Home Assistant 2025.9.0 minimum are unchanged. All settled spec.4 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
+>
 > **Revision note:** spec.4 is a normative architectural revision that resolves the config-subentry deletion lifecycle mismatch found during implementation. Home Assistant removes a native subentry before scheduling an unawaited config-entry update listener, so configuration-object lifetime is now separated from runtime safety-object lifetime. The approved design is update-listener-driven tombstoned runtime reconciliation with authoritative final pre-ON configuration gates, persisted actuator identity, Store/config startup-union reconciliation, and listener-owned add/reconfigure/delete synchronization. This final corrective edit makes one canonical mutable safety record authoritative for each durable actuator lineage, defines independent zone-budget continuity when reconfiguration replaces actuator A with B, and broadens only the T21/T39 trigger wording to cover both reconfiguration and deletion reconciliation. The Home Assistant 2025.9.0 minimum is unchanged. All settled spec.3 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
 >
 > **Corrective edit:** AUTO freshness callbacks carry a generation/deadline token. A callback superseded by any newer VALID report is a no-op; expiry is decided from the current derived freshness deadline, not by comparing the new report timestamp with the old deadline.
@@ -36,6 +38,7 @@ Key architectural decisions are:
 - one entry-wide update-listener/reconciliation owner for add, reconfigure, and delete, with immutable applied-configuration shadows and a latest-snapshot-wins dirty barrier;
 - authoritative final configuration checks immediately before every integration ON, plus one canonical mutable safety record per durable actuator lineage and durable tombstones that retain actuator identity, blockers, accounting, faults, and history after native deletion;
 - actuator-specific safety identity kept separate from logical zone irrigation history, so replacing actuator A with B preserves A's hazards and the zone's conservative budget/interval independently;
+- exactly one removable Home Assistant Stage-1 shutdown job, registered through `HomeAssistant.async_add_shutdown_job()` per loaded entry runtime, as the sole authoritative full-process shutdown owner, running to completion before background-task cancellation, `CoreState.stopping`, and `EVENT_HOMEASSISTANT_STOP`;
 - actions registered once from integration-level `async_setup`;
 - `integration_type: helper`, `iot_class: calculated`, and `single_config_entry: true`;
 - completely local operation with no cloud, telemetry, API key, or external service.
@@ -106,7 +109,7 @@ Research for this revision was checked against official Home Assistant and HACS 
 - `ConfigEntry.add_update_listener` is the supported synchronization hook for subentry add, update, and removal. The listener is registered before watering grants are enabled and removed with `entry.async_on_unload(...)`. It owns entry-wide reconciliation, but is not itself an awaited pre-delete safety barrier.
 - Core updates a `ConfigSubentry` object in place during reconfigure before notifying listeners. Runtime comparison therefore uses immutable normalized shadows/fingerprints captured from values, never a retained reference to the mutable Core object.
 - Reconfiguration uses `ConfigSubentryFlow.async_update_and_abort(entry, subentry, ...)`. `async_update_reload_and_abort` **MUST NOT** be used because Home Assistant 2025.9.0 raises when that helper is combined with an entry update listener. Any reload required after add/reconfigure is scheduled exactly once by the reconciliation coordinator after safety handoff. ([Core 2025.9.0 API](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/config_entries.py), [listener/reload guidance](https://developers.home-assistant.io/blog/2026/05/07/config-entry-listener-together-with-reloading-methods/))
-- The remaining normative APIs were source-checked on 2025.9.0: typed `entry.runtime_data`; config subentries and update/removal; `async_track_state_change_event`; `async_track_state_report_event`; nested `DeviceSelectorConfig.filter`; `IssueSeverity.WARNING/ERROR/CRITICAL`; valve OPEN/CLOSE features and position; and entity-registry update tracking. No required API raises the floor above 2025.9.0.
+- The remaining normative APIs were source-checked on 2025.9.0: typed `entry.runtime_data`; config subentries and update/removal; `async_track_state_change_event`; `async_track_state_report_event`; nested `DeviceSelectorConfig.filter`; `IssueSeverity.WARNING/ERROR/CRITICAL`; valve OPEN/CLOSE features and position; and entity-registry update tracking. For spec.5 the shutdown lifecycle was additionally source-checked on both the 2025.9.0 minimum and the explicitly supported current release: `HomeAssistant.async_add_shutdown_job()` with its returned removal callback, and the `HomeAssistant.async_stop()` stage order in which Stage 1 runs and awaits registered shutdown jobs under Core's Stage-1 timeout, Stage 2 then cancels background tasks, sets `CoreState.stopping`, and fires `EVENT_HOMEASSISTANT_STOP`, and Stage 3 fires `EVENT_HOMEASSISTANT_FINAL_WRITE`; and `Store.async_save()` returning after only queuing its payload once `CoreState.stopping` is set. No required API raises the floor above 2025.9.0.
 
 Native 2025.9.0 subentry deletion has this supported/public lifecycle:
 
@@ -162,7 +165,10 @@ SoilSync is not a gateway to discovered devices. It consumes existing HA entitie
 ### 5.5 Async, lifecycle, Repairs, and diagnostics
 
 - All runtime work is event-loop-native. The entry owns background tasks and unloads cleanly. ([Async programming](https://developers.home-assistant.io/docs/asyncio_index/), [config-entry unloading](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-entry-unloading/))
-- Full-process shutdown is detected with a once-only `EVENT_HOMEASSISTANT_STOP` listener. It is distinct from entry reload/unload. ([Listening for events](https://developers.home-assistant.io/docs/integration_listen_events/))
+- Full-process shutdown is owned by exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded `EntryRuntime`. Core runs and awaits every registered shutdown job in Stage 1 of `HomeAssistant.async_stop()`, strictly before it cancels background tasks, before it sets `CoreState.stopping`, and before it fires `EVENT_HOMEASSISTANT_STOP`. The Stage-1 job closes integration ON admission, signals and joins session/OFF ownership, and completes every required Store write and fresh-Store verification while Core is still running normally. Registration returns a removal callback owned by entry unload. ([Core 2025.9.0 `async_add_shutdown_job` and `async_stop` stages](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/core.py))
+- `EVENT_HOMEASSISTANT_STOP` is **not** a SoilSync safety trigger. It fires only after background-task cancellation and `CoreState.stopping`, so it cannot own OFF, persistence, read-back verification, or clean-run marking. It remains a Home Assistant lifecycle fact and may be referenced only for non-safety diagnostics. ([Listening for events](https://developers.home-assistant.io/docs/integration_listen_events/))
+- A `Store.async_save()` initiated while `hass.state is CoreState.stopping` returns after only queuing its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE`; the bytes are not yet on disk. Such a write can never satisfy the §23.4 immediate fresh-Store verification, so all SoilSync safety persistence must complete inside Stage 1. ([Core 2025.9.0 `Store.async_save`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/storage.py))
+- Entry reload and entry unload remain distinct from process shutdown and never mark a run clean.
 - Repairs use only supported enum constants: `IssueSeverity.WARNING`, `IssueSeverity.ERROR`, and the reserved `IssueSeverity.CRITICAL` only for a true panic such as a valve not proven OFF. ([Repairs severity](https://developers.home-assistant.io/docs/core/platform/repairs/))
 - Config-entry diagnostics redact sensitive values with HA helpers. There are no credentials in v0.1.
 
@@ -483,7 +489,7 @@ Controller state, `enabled`, and current session ownership are logical-zone prop
 - Sensor-only FAULT manual request: allowed and bounded; return to FAULT unless the sensor has recovered.
 - Reconfiguration: terminate old session `CONFIG_CHANGED` when changed/preparation is required, persist, update with `async_update_and_abort`, reconcile the new fingerprint, schedule at most one required reload, and never continue the old soak.
 - Generic entry reload: terminate any active WATERING or SOAKING session `CONFIG_RELOAD`; do not mark process shutdown clean.
-- Full graceful HA shutdown: stop WATERING; persist eligible SOAKING for possible trusted continuation; mark the process run clean only after safety handling.
+- Full graceful HA shutdown: the single Stage-1 shutdown owner (§24.1) closes admission, immediately signals and stops every active WATERING session, begins or joins the one idempotent OFF for every integration-owned physically possible flow and awaits terminal OFF inside the one bounded shutdown-OFF deadline, preserves only eligible current-configuration proven-OFF SOAKING for possible trusted continuation, persists and fresh-Store verifies every required safety, accounting, blocker, fault, lifecycle, and tombstone outcome, and only then writes and verifies the clean marker. Any required OFF, persistence, read-back, reconciliation handoff, or Stage-1 completion failure leaves the run unclean with conservative evidence retained wherever possible.
 - Previously initialized missing, corrupt, unreadable, future-version, or generation-mismatched Store: no watering; reconcile OFF, exhaust the current-day budget, reconstruct safe integrity state, and require acknowledgement of `RESTORED_FROM_UNSAFE_STATE`. A true first install is identified independently by config-entry data.
 - Native deletion before ON dispatch: current mapping mismatch rejects the call even if an earlier AUTO/MANUAL intent decision passed.
 - Native deletion while ON dispatch is in flight: treat possible flow as integration-owned, recheck after return, commit `CONFIG_CHANGED` unless another reason won, and use the one shared OFF/accounting path.
@@ -583,7 +589,7 @@ Every created session updates `last_session_end_utc` when conservative accountin
 | T58 | IDLE | actuator proven OFF after external-flow occupancy | no integration-owned session | clear only this zone's `external_flow` blocker | IDLE | — |
 | T59 | DISABLED | actuator proven OFF after external-flow occupancy | — | clear only this zone's `external_flow` blocker | DISABLED | — |
 
-The normative table contains **59 transitions**. T1-T59 retain the same IDs, controller-state topology, guards, actions, destinations, and reasons as spec.3. Only the T21/T39 trigger wording is broadened in spec.4 to explicitly include native deletion reconciliation as well as changed-subentry reconfiguration. A watchdog callback that finds a non-AUTO-WATERING state, a mismatched superseded token, or a recomputed deadline in the future is a no-op controller event and therefore not a state transition; the current future deadline is armed if necessary. Waiting for the global slot, startup population of the SlotManager blocker set, configuration reconciliation, and `ACTIVE/DELETE_PENDING/RETIRED` lifecycle changes are likewise controller/resource operations, not additional zone-state transitions. The zone stays IDLE or SOAKING with `waiting_for_slot=true`; every guard and the §11.2 final configuration gate are re-run when a grant is offered.
+The normative table contains **59 transitions**. T1-T59 retain the same IDs, controller-state topology, guards, actions, destinations, and reasons as spec.3. Only the T21/T39 trigger wording is broadened in spec.4 to explicitly include native deletion reconciliation as well as changed-subentry reconfiguration. A watchdog callback that finds a non-AUTO-WATERING state, a mismatched superseded token, or a recomputed deadline in the future is a no-op controller event and therefore not a state transition; the current future deadline is armed if necessary. Waiting for the global slot, startup population of the SlotManager blocker set, configuration reconciliation, and `ACTIVE/DELETE_PENDING/RETIRED` lifecycle changes are likewise controller/resource operations, not additional zone-state transitions. The zone stays IDLE or SOAKING with `waiting_for_slot=true`; every guard and the §11.2 final configuration gate are re-run when a grant is offered. The T19/T37 trigger "full HA shutdown" is a logical lifecycle concept whose delivery mechanism is defined by §24.1 Stage-1 ownership; moving that mechanism in spec.5 changes no transition ID, guard, action, destination, or reason.
 
 ---
 
@@ -625,7 +631,7 @@ stateDiagram-v2
     DISABLED --> DISABLED : T55 external ON / T59 proven external OFF
 ```
 
-T19 and T37 end the HA process after persisting their shown state. T20/T38 unload the entry. T21/T39 are the existing `CONFIG_CHANGED` controller transitions whose broadened formal trigger covers both changed-subentry reconfiguration and native post-removal deletion reconciliation; their guards, actions, destinations, and reasons are unchanged, and the reconciler, not the T-row, owns any one required reload. Startup arrows represent T48-T53 because no old runtime task is resumed. T54/T55/T58/T59 expose the external-occupancy bookkeeping without changing the five-state model. T56/T57 are the AUTO freshness refresh/expiry pair. Arrows that list T16/T17/T19/T20/T21 in both IDLE and FAULT use the deterministic `POST(...)` destination rule. Every T1-T59 table ID is represented; rows with a conditional destination are deliberately shown on each possible destination arrow. The orthogonal runtime lifecycle is deliberately omitted from this five-state projection.
+T19 and T37 end the HA process after persisting their shown state; their "full HA shutdown" trigger is the logical lifecycle concept delivered by the §24.1 Stage-1 shutdown owner, not by any particular Home Assistant event. T20/T38 unload the entry. T21/T39 are the existing `CONFIG_CHANGED` controller transitions whose broadened formal trigger covers both changed-subentry reconfiguration and native post-removal deletion reconciliation; their guards, actions, destinations, and reasons are unchanged, and the reconciler, not the T-row, owns any one required reload. Startup arrows represent T48-T53 because no old runtime task is resumed. T54/T55/T58/T59 expose the external-occupancy bookkeeping without changing the five-state model. T56/T57 are the AUTO freshness refresh/expiry pair. Arrows that list T16/T17/T19/T20/T21 in both IDLE and FAULT use the deterministic `POST(...)` destination rule. Every T1-T59 table ID is represented; rows with a conditional destination are deliberately shown on each possible destination arrow. The orthogonal runtime lifecycle is deliberately omitted from this five-state projection.
 
 ---
 
@@ -935,6 +941,15 @@ Each zone has:
 
 Each entry additionally has one configuration-reconciliation serialization domain, monotonic observed/applied generations (or equivalent immutable snapshot tokens), a dirty/pending flag, one worker, one reload-pending flag, and an unload/shutdown ownership flag. Zone locks never override or clear this entry-wide barrier.
 
+Each loaded entry additionally has exactly one entry-level Stage-1 full-process shutdown owner, registered through `HomeAssistant.async_add_shutdown_job()` and removable on entry unload:
+
+- it is the sole authoritative full-process shutdown owner, and exactly one active `EntryRuntime` registers exactly one such job;
+- it does not replace zone session ownership or the per-record idempotent OFF future;
+- it signals the existing session owners with `HOME_ASSISTANT_SHUTDOWN` and begins or joins each record's existing one OFF future rather than creating a second OFF path;
+- background session/OFF tasks may remain ordinary background tasks, because Core does not cancel background tasks until Stage 2, strictly after every Stage-1 job has returned or the Stage-1 timeout has elapsed;
+- the Stage-1 job **MUST** directly await/join those authoritative session and OFF operations and their required persistence within the one bounded shutdown-OFF deadline;
+- merely scheduling shutdown work and returning is prohibited: an unjoined task is not accountable Stage-1 work, and any Store write it later attempts falls into `CoreState.stopping` where it cannot be verified.
+
 The session task is the only normal ON caller and the normal OFF owner. Event callbacks do not cancel it as routine control. Instead they:
 
 1. acquire the zone lock;
@@ -979,6 +994,11 @@ Timer expiry and Stop cannot produce two reasons: one event commits first under 
 | Stale reconciliation worker | re-read-after-await detects a newer generation/snapshot; stale work cannot publish applied state, clear the barrier, detach a tombstone, or authorize ON |
 | Reconciliation vs unload/reload/shutdown | lifecycle owner closes admission and joins or independently completes the same safety handoff; it never assumes an unawaited listener finished |
 | Reconfigure durable actuator A -> B | quiesce A and persist its retained record/hazards first; resolve B independently; merge the continuing zone history conservatively; A blockers remain exact-key global blockers and B cannot clear them |
+| Reconciliation vs Stage-1 full shutdown | the Stage-1 owner closes admission first, then joins or independently completes the same safety handoff; it never assumes an unawaited listener finished, and initial active-flow signalling is never delayed by waiting for reconciliation |
+| In-flight ON vs Stage-1 full shutdown | the dispatched call remains integration-owned possible flow; the Stage-1 owner converges it after return and drives it through the one shared OFF path with conservative accounting |
+| OFF already in progress vs Stage-1 full shutdown | the Stage-1 owner joins the existing one OFF future; no second OFF is issued and the first terminal reason remains authoritative |
+| Delete/reconfigure/unload vs Stage-1 full shutdown | first-terminal-reason arbitration is unchanged, there is one OFF future per record, no eligible SOAKING context is overwritten, and the Stage-1 owner remains the sole process-shutdown owner and the only clean-marker writer |
+| Stage-1 shutdown vs `EVENT_HOMEASSISTANT_STOP` | no competition exists: the event owns no SoilSync safety work and fires only after Stage 1 returned or timed out |
 
 ### 22.4 Reconciliation concurrency contract
 
@@ -1197,13 +1217,23 @@ After the Store initialization/integrity decision in §23.5, integration-level s
 4. persist and read-back verify it while leaving `last_clean_shutdown_run_id` unchanged;
 5. only after that save may config-entry setup arm watering-capable runtime.
 
-At graceful full HA shutdown, after zone safety handling succeeds or is honestly persisted:
+The clean marker is written only by the §24.1 Stage-1 full-process shutdown owner, and only as its final safety transaction. `last_clean_shutdown_run_id` may be set equal to `active_run_id` only after all of the following have succeeded inside Stage 1:
+
+1. new evaluations, final ON dispatch, manual starts, slot grants, and reconciliation publication are closed;
+2. every integration-owned physically possible active flow is proven terminal OFF;
+3. every preserved eligible SOAKING context is current-configuration eligible and its actuator remains proven OFF;
+4. every required safety, accounting, blocker, fault, lifecycle, and tombstone outcome is saved and fresh-Store verified under §23.4;
+5. every required lifecycle/reconciliation handoff has completed or been taken over.
 
 ```text
 last_clean_shutdown_run_id = active_run_id
 ```
 
-and the Store is atomically saved and verified. A crash or power loss leaves the IDs unequal. A crash immediately before the new ID is verified is safe because this process was never allowed to water; a crash after it is verified is unambiguously unclean. Entry reload, subentry change, entry removal, and setup failure never mark the process run clean.
+is then atomically saved and fresh-Store read-back verified as the last write of the process.
+
+Externally owned flow is persisted and respected, not counter-commanded merely because Home Assistant is stopping. A correctly persisted `external_flow` owner/blocker is successful SoilSync safety handling and does not by itself make the process unclean.
+
+Persisting `integration_off_unconfirmed` is honest recovery evidence, but it is **not** sufficient to mark the current run clean; only exact OFF evidence that closes it during Stage 1 can. A crash or power loss leaves the IDs unequal. A crash immediately before the new ID is verified is safe because this process was never allowed to water; a crash after it is verified is unambiguously unclean. Any failed or timed-out required OFF, Store write, read-back, reconciliation/lifecycle handoff, or Stage-1 execution leaves the previous `last_clean_shutdown_run_id` unchanged, retains conservative evidence wherever it can still be written, and lets startup reconciliation treat the prior process as unclean. Entry reload, reconfigure, subentry change, entry removal, entry unload, setup failure, `EVENT_HOMEASSISTANT_STOP`, and the `EVENT_HOMEASSISTANT_FINAL_WRITE` fallback never mark the process run clean.
 
 A trusted persisted SOAKING session is first validated against the immediately previous clean `active_run_id`. Only after every trust check succeeds is `session.owner_run_id` replaced by the new current `active_run_id`; the otherwise unchanged session is atomically saved and read-back verified before controllers, normal listeners/evaluations, or slot grants activate. A passive actuator listener may already be capturing reconciliation state but cannot evaluate or command water. This adoption is ownership transfer, not a new session or pulse.
 
@@ -1222,6 +1252,8 @@ A trusted persisted SOAKING session is first validated against the immediately p
 All runtime Store load/modify/save/read-back operations are serialized by one entry-wide persistence lock and write a complete merged snapshot; per-zone locks do not independently race revisions. For initialization, schema migration, and every safety-state write listed above, the persistence adapter increments `store_revision`, awaits `async_save`, then loads through a fresh same-key `Store(..., atomic_writes=True)` and compares schema, generation, revision, and the full safety payload expected for that revision. This supported-Store round trip is required because Core 2025.9.0 logs and consumes serialization/write errors instead of propagating them from `async_save`. A missing, older, mismatched, or unloadable read-back is a failed safety write: do not command ON or activate watering-capable runtime, preserve or enter the applicable integrity/reconciliation fault, keep live safety objects and blockers, reconcile OFF where identity permits, and surface setup failure/Repair. No direct filesystem existence test is used.
 
 The intent/command distinction is deliberate. A crash between verified intent and actual ON may overcount from intent; a crash during/after the service call cannot be missed. Atomic writes reduce torn-file risk; read-back verification makes a swallowed write failure fail conservatively.
+
+This contract has no shutdown exception. Every full-process safety write, including all §24.1 Stage-1 outcomes and the clean marker, happens inside Core's Stage 1 while `hass.state` has not yet become `CoreState.stopping`, precisely so that the mandatory save -> fresh same-key read -> schema/generation/revision/full-safety-payload verification can complete normally. A `Store.async_save()` issued once `CoreState.stopping` is set returns after only queuing its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE`; that queued data is not immediate durable proof, an immediate fresh read observes the previous revision, and such a write is therefore a failed safety write for every purpose in this specification. In-memory-only Store trust, treating a deferred final write as immediate durability, skipping the read-back, direct filesystem writes, and private `.storage` probing all remain prohibited.
 
 ### 23.5 Initialization identity and integrity-loss matrix
 
@@ -1266,35 +1298,78 @@ Recorder is not used to decide whether a Store used to exist or to relax this po
 
 ### 24.1 Full graceful Home Assistant shutdown
 
-The integration-level once-only stop handler sets a process-stopping flag before entry unload callbacks can interpret the lifecycle.
+Full-process shutdown is owned by **exactly one** removable Home Assistant Stage-1 shutdown job. Each loaded `EntryRuntime` registers one `HassJob` through `HomeAssistant.async_add_shutdown_job()` and keeps the returned removal callback under `entry.async_on_unload(...)`. Registration **MUST** complete before any watering-capable runtime is armed, so no process can reach a commandable ON without an installed authoritative shutdown owner.
+
+Core runs the registered shutdown jobs in Stage 1 of `HomeAssistant.async_stop()` and awaits them together under Core's Stage-1 timeout. Stage 1 executes strictly before Core cancels background tasks, before Core sets `CoreState.stopping`, and before Core fires `EVENT_HOMEASSISTANT_STOP`. The Stage-1 job is therefore the only SoilSync lifecycle hook that can both drive cooperative OFF and complete the mandatory §23.4 immediate fresh-Store verification.
+
+The Stage-1 algorithm is normative:
 
 ```text
-block new evaluations, slot grants, manual starts, and reconciliation publication
-join/assume ownership of any unawaited reconciliation work
-for every configured or tombstoned runtime safety object:
+# executed synchronously, before the first suspension point
+close new evaluations, final ON dispatch, manual starts, slot grants,
+      and reconciliation publication
+set process_stopping / quiescing authority
+cancel queued slot requests and revoke every queued or future watering grant
+snapshot the configured and retained/tombstoned runtime safety objects
+
+# immediate active-flow signalling; never delayed by waiting for reconciliation
+for every snapshotted runtime safety object:
     if WATERING:
-        request cooperative HOME_ASSISTANT_SHUTDOWN
-        await one OFF operation within shutdown budget
-        persist final accounting/fault honestly
-    elif SOAKING and lifecycle is ACTIVE and current config still matches:
-        ensure actuator remains proven OFF
-        persist active SOAKING context without completing it
+        signal its session owner HOME_ASSISTANT_SHUTDOWN now
+    if it is integration-owned physically possible flow:
+        begin or join its one idempotent OFF operation now
+
+# convergence and bounded join
+converge any ON service call already in flight: after it returns, treat it as
+    integration-owned possible flow and drive it into the same one OFF path
+directly await/join the signalled session owners, the one OFF operation per
+    record, and their required persistence, all inside the one bounded
+    shutdown-OFF deadline (SHUTDOWN_OFF_BUDGET_S)
+join or take over any unawaited reconciliation/lifecycle handoff, without
+    having delayed the active-flow signalling above
+
+# per-object outcome
+for every snapshotted runtime safety object:
+    if it was WATERING:
+        require proven terminal OFF; persist final accounting/fault honestly
+    elif SOAKING and lifecycle is ACTIVE and current config still matches
+         and the actuator is proven OFF:
+        preserve the active SOAKING context unchanged; do not complete it
     elif SOAKING:
-        terminate CONFIG_CHANGED or HOME_ASSISTANT_SHUTDOWN as already arbitrated; no future pulse
-        persist tombstone/closure evidence
+        terminate CONFIG_CHANGED or HOME_ASSISTANT_SHUTDOWN as already
+            arbitrated; no future pulse; persist closure/tombstone evidence
     else:
-        persist current safe state
-after all zones have been handled:
+        persist honest current state, including external_flow ownership,
+            resting state, faults, and tombstones
+
+# verified persistence, still before CoreState.stopping
+fresh-Store verify every required outcome above per section 23.4
+
+# final safety transaction
+if and only if every required OFF, persistence, read-back, and lifecycle
+   handoff succeeded:
     persist last_clean_shutdown_run_id = active_run_id
+    fresh-Store verify that clean marker
+return
 ```
 
-If cooperative termination does not complete in the available shutdown window, use forced task cancellation and best-effort OFF through the idempotent path. Marking the run clean means the shutdown handler itself completed and persisted its honest configured/tombstone results; it does not claim that an unconfirmed actuator is safe. Such a record remains an actuator fault with open accounting and will be reconstructed from schema 2. Shutdown never assumes Core awaited an update listener.
+The Stage-1 job remains accountable for everything it starts. It **MUST NOT** delegate its obligations to an unjoined background task and return: Core cancels background tasks in Stage 2, and any Store write such a task then attempts falls into `CoreState.stopping`, where it is deferred to final write and cannot be verified.
 
-SOAKING is not finalized during a full graceful shutdown, so a trusted restart may continue waiting. No new water begins during shutdown.
+`SHUTDOWN_OFF_BUDGET_S` is the maximum total time the authoritative Stage-1 SoilSync shutdown owner waits for cooperative active-flow closure, including convergence of an already in-flight ON and the shared OFF operation, before recording conservative unclean shutdown handling. It is one overall active-flow deadline. It is not a delay before OFF, not an allowance per controller, and not a universal Docker or process-manager setting; OFF signalling begins immediately. The external deployment process-stop window, for example a container stop grace period, remains distinct from Home Assistant's internal Stage-1 timeout, and SoilSync must fit inside both.
+
+If that deadline expires or any required step fails, forced task cancellation plus a best-effort call into the same idempotent OFF path remains the fallback. The run then stays unclean: `last_clean_shutdown_run_id` is not advanced, conservative evidence such as open accounting, exact keyed blockers, `integration_off_unconfirmed`, and actuator faults is retained wherever it can still be written, and startup reconciliation remains the authoritative recovery mechanism. Marking the run clean is never a claim that an unconfirmed actuator is safe; it is reachable only when every integration-owned physically possible flow was actually proven OFF and every required write was verified.
+
+External flow that SoilSync does not own is persisted and respected. SoilSync does not counter-command an externally owned actuator merely because Home Assistant is stopping, and a correctly persisted `external_flow` owner/blocker is successful shutdown handling.
+
+SOAKING is not finalized during a full graceful shutdown, so a trusted restart may continue waiting. No new water begins during shutdown. Shutdown never assumes Core awaited an update listener.
+
+`EVENT_HOMEASSISTANT_STOP` has no SoilSync shutdown ownership. It does not dispatch `HOME_ASSISTANT_SHUTDOWN`, initiate or join OFF, persist safety state, fresh-read the Store, mark the run clean, or compete with the Stage-1 owner.
 
 ### 24.2 Generic config-entry unload/reload
 
-Entry unload is not process shutdown and never changes run IDs. When the process-stopping flag is set, unload cleanup follows §24.1 and must not overwrite an eligible persisted SOAKING context. Otherwise SoilSync chooses the simple v0.1 policy:
+Entry unload is not process shutdown and never changes run IDs. Ordinary unload removes that entry's registered Stage-1 shutdown job through its stored removal callback, so an unloaded entry holds no process-shutdown responsibility. Entry reload never marks the process run clean.
+
+Once Stage-1 process shutdown has begun, a later entry unload is cleanup/join only. It must not create a competing terminal reason, must not issue a second OFF, must not overwrite an eligible persisted SOAKING context, and must never write or own the clean marker; it joins each record's existing OFF future and the Stage-1 owner's outcome. Otherwise SoilSync chooses the simple v0.1 policy:
 
 - terminate WATERING cooperatively as `CONFIG_RELOAD` and await OFF;
 - terminate SOAKING as `CONFIG_RELOAD` rather than preserve it;
@@ -1554,7 +1629,7 @@ Each invariant is formal and testable.
 - **I11 — Crash upper bound:** restart accounting from persisted WATERING is never less than potential continuous flow from the durable hazard anchor through reconciliation/OFF evidence under the v0.1 uncertainty model.
 - **I12 — Estimated budgets:** estimated runtime is marked, split by HA-local date, and charged exactly like measured runtime.
 - **I13 — No pulse resume:** restart/reload never resumes or restarts an interrupted WATERING pulse.
-- **I14 — Run integrity:** previous-run cleanliness is true only for matching persisted run IDs; it cannot leak from an earlier clean process into a later crashed process.
+- **I14 — Run integrity:** previous-run cleanliness is true only for matching persisted run IDs written as the final verified safety transaction of complete, successful, fresh-Store-verified §24.1 Stage-1 full-shutdown safety handling. A failed or timed-out required OFF, Store write, read-back, reconciliation/lifecycle handoff, or Stage-1 shutdown-job execution can never advance the clean marker, and clean truth can never be inherited from an earlier process into a later crashed or unclean one.
 - **I15 — Hazard write-ahead:** durable session intent exists before every ON request.
 - **I16 — One OFF:** every integration-owned WATERING exit attempts exactly one idempotent OFF sequence; cooperative termination is the normal control path.
 - **I17 — OFF proof:** unavailable, unknown, transitional, and nonzero-position actuator states are never accepted as OFF.
@@ -2016,7 +2091,8 @@ HA adapter/surface
 ConfigurationReconciliationCoordinator / EntryRuntime
   update listener, immutable applied shadows, observed/applied generations,
   dirty barrier, latest-snapshot-wins add/reconfigure/delete ownership,
-  Store/config union startup, same-record reactivation and A -> B handoff
+  Store/config union startup, same-record reactivation and A -> B handoff,
+  exactly one removable Stage-1 full-process shutdown owner
         |
 SafetyStore (schema 2)
   generation transaction, atomic revisioned persistence, run IDs,
@@ -2044,7 +2120,7 @@ The boundary rule remains:
 
 The pure state machine consumes `MoistureObservation` and actuator-result events. It decides that OFF is required but never calls HA. The controller executes OFF and feeds confirmation/failure back into the pure transition path. `state_reported`, `State`, `ServiceCall`, entity registry, and HA Context never leak into the pure core.
 
-`ZoneController` responsibilities include both moisture listener types, conversion of event timestamps, AUTO freshness watchdog management, cooperative termination, the §11.2 final gate/in-flight command boundary, one OFF future, actuator acknowledgement/interference, session task ownership, SlotManager interaction, and persistence requests. The reconciliation coordinator owns immutable Core-to-runtime configuration comparison, one-record-per-actuator runtime safety lifetime, and A -> B separation; it never keeps mutable `ConfigSubentry` references. `EntryRuntime` owns the independent Store identity/migration transaction and prevents activation until startup union, same-record reactivation/A -> B identity resolution, zone-history merge verification, run-ID persistence, trusted-SOAKING adoption, and configured/tombstoned actuator blocker reconciliation are complete. `SlotManager` owns the keyed blocker set and configuration barrier; per-zone state machines do not fake global resource/configuration state.
+`ZoneController` responsibilities include both moisture listener types, conversion of event timestamps, AUTO freshness watchdog management, cooperative termination, the §11.2 final gate/in-flight command boundary, one OFF future, actuator acknowledgement/interference, session task ownership, SlotManager interaction, and persistence requests. The reconciliation coordinator owns immutable Core-to-runtime configuration comparison, one-record-per-actuator runtime safety lifetime, and A -> B separation; it never keeps mutable `ConfigSubentry` references. `EntryRuntime` owns the independent Store identity/migration transaction and prevents activation until startup union, same-record reactivation/A -> B identity resolution, zone-history merge verification, run-ID persistence, trusted-SOAKING adoption, and configured/tombstoned actuator blocker reconciliation are complete. `EntryRuntime` also registers, owns, and removes exactly one Stage-1 full-process shutdown job, before any watering-capable runtime is armed: that owner closes admission before its first await, signals the session owners and joins each controller's one OFF future while Core has not yet cancelled background tasks, completes all §23.4 verified persistence before `CoreState.stopping`, and writes the clean marker last. `SlotManager` owns the keyed blocker set and configuration barrier; per-zone state machines do not fake global resource/configuration state.
 
 ---
 
@@ -2061,6 +2137,8 @@ custom_components/soilsync/
   state_machine.py          # no homeassistant imports
   zone_controller.py
   reconciliation.py         # entry update listener, shadows, generations, tombstones
+  runtime.py                # EntryRuntime: Store identity/run protocol, startup union,
+                            # and the one removable Stage-1 full-process shutdown owner
   slot_manager.py
   storage.py                # schema-2 migration, canonical safety records, zone histories, tombstones, atomic revision/read-back, run IDs
   services.py
@@ -2092,7 +2170,7 @@ tests/
   test_repairs.py
 ```
 
-`__init__.py` registers actions from `async_setup`, creates entry runtime in `async_setup_entry`, registers the config-entry update listener before grants, and performs lifecycle routing. Before any watering-capable controller activation, the entry runtime completes Store identity/schema migration, verified new-run persistence, Store/config union reconciliation, durable same-record reactivation/A -> B resolution, zone-history verification, trusted-SOAKING adoption, and all configured/tombstoned actuator/blocker reconciliation. `services.py` defines schemas/resolution/handlers but does not register per entry.
+`__init__.py` registers actions from `async_setup`, creates entry runtime in `async_setup_entry`, registers the config-entry update listener and exactly one removable `HomeAssistant.async_add_shutdown_job()` Stage-1 shutdown owner before grants, removes both on unload, and performs lifecycle routing. Before any watering-capable controller activation, the entry runtime completes Store identity/schema migration, verified new-run persistence, Store/config union reconciliation, durable same-record reactivation/A -> B resolution, zone-history verification, trusted-SOAKING adoption, and all configured/tombstoned actuator/blocker reconciliation. `services.py` defines schemas/resolution/handlers but does not register per entry.
 
 ---
 
@@ -2191,7 +2269,7 @@ Lifecycle/action/config tests:
 - **LC1:** actions exist with zero loaded entries, register once across reloads, and raise translated unavailable errors.
 - **LC2:** device-ID resolution rejects non-zone, ambiguous, deleted, unloaded, and wrong-integration targets.
 - **LC3:** subentry reconfigure cooperatively prepares `CONFIG_CHANGED`, calls `async_update_and_abort`, is applied by the registered update-listener reconciler, and schedules at most one required reload; generic reload uses `CONFIG_RELOAD` and never changes run IDs.
-- **LC4:** full shutdown stops WATERING, preserves eligible SOAKING, and marks clean only after safety persistence.
+- **LC4:** full shutdown is exercised through an actual Home Assistant shutdown-stage harness (the real `hass.async_stop()` Stage-1 shutdown-job path), never by directly invoking an internal SoilSync stop handler. It proves that the registered Stage-1 job executes before `CoreState.stopping`, executes before Home Assistant cancels background tasks, drives exactly one OFF per record, stops both AUTO and MANUAL WATERING, preserves only eligible proven-OFF SOAKING, completes its Store save with a successful fresh same-key read-back, writes the clean marker only after total success, and, under an injected required OFF/persistence/read-back/timeout failure, leaves `active_run_id` and `last_clean_shutdown_run_id` unequal.
 - **LC5:** Run A -> clean Run B during SOAKING validates owner A, then persists owner B while retaining the session.
 - **LC6:** Run B -> clean Run C during that same SOAKING validates owner B, persists owner C, and remains trusted SOAKING.
 - **LC7:** Run B crashes before clean marking; Run C rejects continuation even if the session owner was B.
@@ -2264,7 +2342,7 @@ Reconciliation race/failure tests:
 - **RC3:** delete vs Disable leaves operational disable/no-start lifecycle effective and one OFF.
 - **RC4:** delete vs external OFF/ON preserves trustworthy closure or interference/external ownership without duplicate OFF/blocker loss.
 - **RC5:** delete vs generic reload joins/takes over reconciliation, persists tombstones, and never resumes.
-- **RC6:** delete vs full HA shutdown persists unresolved state honestly; startup union reconstructs it and WATERING never resumes.
+- **RC6:** delete vs Stage-1 full HA shutdown persists unresolved state honestly with one OFF future, one terminal reason, and no clean marker when a required outcome fails; startup union reconstructs it and WATERING never resumes.
 - **RC7:** rapid multi-zone deletion materializes every mismatch/blocker and schedules no delete-only reload.
 - **RC8:** add/update/delete burst processes removal/change hazards before latest additions/reactivations and schedules at most one required reload.
 - **RC9:** update-listener exception leaves the barrier closed, retains live safety objects/evidence, and creates `configuration_reconciliation_failed` where possible.
@@ -2274,7 +2352,7 @@ Reconciliation race/failure tests:
 
 Minimum-platform tests:
 
-- **HA1:** a release-source contract test/checklist verifies every API/lifecycle claim in §5.1 against the exact declared minimum tag, including `ConfigEntry.add_update_listener`, post-mutation/unawaited removal notification, `ConfigSubentryFlow.async_update_and_abort`, the prohibition on listener plus `async_update_reload_and_abort`, public `entry.subentries`, and `Store.atomic_writes`.
+- **HA1:** a release-source contract test/checklist verifies every API/lifecycle claim in §5.1 and §5.5 against both the exact declared minimum tag and the explicitly supported current release, including `ConfigEntry.add_update_listener`, post-mutation/unawaited removal notification, `ConfigSubentryFlow.async_update_and_abort`, the prohibition on listener plus `async_update_reload_and_abort`, public `entry.subentries`, `Store.atomic_writes`, `HomeAssistant.async_add_shutdown_job` and its returned removal callback, Stage-1 shutdown-job ordering and timeout, background-task cancellation ordering, `CoreState.stopping`, `EVENT_HOMEASSISTANT_STOP`, `EVENT_HOMEASSISTANT_FINAL_WRITE`, and `Store.async_save` immediate-versus-deferred write behaviour.
 - **HA2:** CI runs the HA harness against 2025.9.0 and the explicitly supported current HA version when dependency/Python constraints permit one matrix. If they cannot share a clean matrix, 2025.9.0 remains a mandatory dedicated release job and the current version runs separately; the release checklist records exact Core-tag source verification and no untested version compatibility is claimed.
 
 ### 39.3 Invariant mapping
@@ -2323,6 +2401,7 @@ All **37 invariants** map to at least one named test group. The pure five-state 
 | trusted SOAKING owner rebase fails | setup remains non-watering; session is not activated | watering is suppressed until persistence recovers |
 | repeated restart | new run IDs, idempotent reconciliation, never ON | persistent hardware fault remains physical risk |
 | task race/cancellation | cooperative owner, lock, one OFF future, fallback cancellation | forced process death can bypass software |
+| safety shutdown initiated from `EVENT_HOMEASSISTANT_STOP` | prohibited: that event fires only after background-task cancellation and `CoreState.stopping`, where `Store.async_save()` defers to final write and immediate fresh-Store verification cannot succeed. Exactly one Stage-1 `async_add_shutdown_job` owns OFF, verified persistence, and clean marking, before those stages | an external process manager may still kill the process before Stage 1 completes; unequal run IDs and startup reconciliation remain authoritative |
 | invalid configuration/entity removal | CONFIGURATION_INVALID and no watering | user must reconfigure |
 | native subentry deletion while runtime survives | current public mapping/fingerprint final gate rejects ON immediately; listener-owned DELETE_PENDING closure and durable tombstone | already-dispatched actuator calls still require compensating OFF |
 | Core does not await update listener | mapping gate plus global snapshot barrier does not depend on listener completion; worker coalesces and startup union recovers | safety closure may continue after UI success |
@@ -2410,14 +2489,14 @@ Functional and safety release gates:
 6. Every AUTO pulse arms and refreshes a generation/deadline-token sensor watchdog; any VALID report before expiry extends from its own timestamp, obsolete queued callbacks no-op, genuine current-deadline expiry stops with one OFF and `SENSOR_STALE`, the exact boundary race is deterministic, and MANUAL is unaffected.
 7. Whole-pulse session/daily fit cannot be bypassed.
 8. Manual duration formula, clamping diagnostics, sensor-fault allowance, and blocking-fault refusals all pass.
-9. Stop/Disable/external/lifecycle termination uses cooperative signalling and one OFF operation.
+9. All normal lifecycle termination — Stop, Disable, external interference, reload, unload, reconfigure, and delete — uses cooperative signalling and exactly one idempotent OFF operation per record; full-process shutdown additionally uses exactly one registered Stage-1 shutdown owner that Core awaits and that itself directly joins those session/OFF operations.
 10. OFF timeout retries, CRITICAL Repair, continued accounting, and keyed blocker release pass.
 11. External ON in configured IDLE/DISABLED is respected without OFF but blocks every integration ON; multiple blockers, unavailable-after-ON, startup occupancy, and coexistence tests pass.
 12. No WATERING pulse resumes after clean restart, crash, generic reload, or reconfigure.
 13. Crash found-ON, found-OFF, and unknown/unavailable paths never underestimate and charge daily budgets.
-14. Run-ID crash detection cannot inherit stale clean truth.
+14. Run-ID crash detection cannot inherit stale clean truth, and no failure of a required OFF, safety persistence, fresh-Store read-back, reconciliation/lifecycle handoff, or Stage-1 shutdown-job completion can advance clean-run truth.
 15. A genuine schema-2 first install, interrupted initialization, initialized missing/corrupt Store, schema-1 migration, malformed migration, generation mismatch, write failure, and future version all follow §§23.2.1/23.5.
-16. Every runtime safety Store uses `atomic_writes=True`; identity/shadow/tombstone and all other safety writes are revision/full-payload read-back verified and failure cannot authorize ON.
+16. Every runtime safety Store uses `atomic_writes=True`; identity/shadow/tombstone writes, every Stage-1 full-shutdown outcome, and the clean marker are revision/full-payload fresh-Store read-back verified with no shutdown exception, and any failure cannot authorize ON or a clean run.
 17. Every initialized integrity-loss case blocks AUTO and MANUAL, reconciles actuators, exhausts today's budget, and retains that exhaustion after same-day acknowledgement.
 18. Trusted SOAKING restart satisfies every §25.3 guard, rebases owner to the current run before activation, preserves all other session fields, and still waits for a qualifying report.
 19. Two consecutive clean restarts during one SOAKING session remain trusted; an unclean intermediate run, fingerprint change, or rebase-write failure prevents continuation.
@@ -2439,7 +2518,7 @@ Functional and safety release gates:
 35. Listener/worker/Store/actuator-lookup/identity/supersession/reload failures close admission, retain live/durable evidence, surface Repairs where possible, and never silently accept newest config as safe.
 36. Native registry cleanup cannot destroy unresolved runtime safety state; deleted-zone fault acknowledgement works through an exact-record entry-level Repair and never requires a removed device ID.
 37. RETIRED tombstones persist across reload/restart and are never automatically purged in v0.1.
-38. Delete/reload/unload/shutdown races produce one OFF, one terminal reason, no pulse/session resurrection, durable unresolved state, and safe startup reconstruction.
+38. Delete/reload/unload/full-shutdown races produce one OFF, one terminal reason, no pulse/session resurrection, durable unresolved evidence, exactly one authoritative Stage-1 process-shutdown owner, and safe startup reconstruction.
 39. Actuator replacement A -> B cooperatively terminates A with `CONFIG_CHANGED`, retains every A-owned hazard/key/accounting/fault, independently reuses or creates B only after exact identity checks, preserves the logical zone's current-day runtime and latest interval by the deterministic §19.5 merge, permits A to block B globally, and never transfers or clears A hazards through B. The zone's `zone_runtime` operational state (enabled, controller state, current sensor, session ownership) survives per §24.4: retained B operational history never leaks in, unresolved B sessions are reconciled as B safety evidence, and the post-handoff state derives DISABLED, else FAULT, else IDLE.
 
 ---
@@ -2451,7 +2530,7 @@ These items require implementation or hardware evidence but do not leave behavio
 1. **HA 2025.9+ native subentry lifecycle and UI/UX:** practically validate create-controller-then-Add-zone, add/reconfigure, and the actual native UI/websocket Delete path; per-subentry device attribution/action selection; active AUTO deletion; active MANUAL deletion where practical; SOAKING deletion; a real actuator ON dispatch racing deletion; real entity/device registry cleanup while the runtime safety object survives; tombstone persistence/diagnostic/Repair visibility; restart after deletion; exact same-record delete/re-add; and A -> B replacement with retained A hazard plus zone-history continuity. This item may refine presentation/timing only, not weaken the fixed final-gate/tombstone architecture.
 2. **Valve hardware matrix:** test at least one physical valve and templates for `opening`, `closing`, `open`, `closed`, availability, and position semantics; the conservative contract remains fixed.
 3. **Entity rename tracking:** validate `async_track_entity_registry_updated_event` auto-fixup. If unreliable, ship Repair-and-reconfigure rather than guessing.
-4. **Shutdown OFF budget:** measure cooperative OFF completion within HA's real stop window and tune the bounded fallback interval; never weaken startup reconciliation.
+4. **Shutdown OFF budget:** after the §24.1 Stage-1 shutdown correction is implemented and separately authorized, measure immediate cooperative OFF completion within the actual deployment process-stop window. `SHUTDOWN_OFF_BUDGET_S` is the maximum total Stage-1 active-flow closure wait; it is not a pre-OFF delay and not a universal Docker or process-manager configuration, and it remains `8.0` pending a corrected B2 measurement. Tune only that bounded value, and never weaken §23.4 Store verification or startup reconciliation.
 5. **Serialized queue scale:** validate FIFO latency/visibility with approximately ten simultaneously dry zones.
 6. **Initial sensor cadence/default:** validate the two-hour `sensor_max_age` default against deployment sensors and adjust the default only, not freshness semantics.
 7. **HACS/brand presentation:** validate local brand presentation on supported HA 2025.9+ and complete the required centralized `home-assistant/brands` submission before seeking HACS default inclusion, without changing runtime behaviour.
@@ -2467,10 +2546,10 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 3. Every AUTO pulse is bounded, must fit whole, ends in confirmed OFF, and is followed by the full configured soak before any report can decide.
 4. AUTO INVALID/UNAVAILABLE stops immediately, and silent telemetry stops AUTO at the newest-valid-report freshness deadline. Changed and identical VALID reports extend it; MANUAL deliberately ignores sensor health.
 5. Sensor-only FAULT permits explicit bounded MANUAL watering while keeping the fault visible; actuator/config/integrity faults do not.
-6. Every normal termination is cooperative and funnels through one idempotent OFF sequence. Cancellation is fallback only.
+6. Every normal termination is cooperative and funnels through one idempotent OFF sequence. Full-process shutdown is owned by exactly one awaited pre-stopping Stage-1 shutdown job that signals and joins those same session/OFF operations. Cancellation is fallback only.
 7. External manual ON is respected outside an active session but occupies the global water resource until that actuator is proven OFF. External ON during active SOAKING is interference and is defensively turned OFF.
 8. WATERING never resumes after restart/reload. Crash uncertainty is overcounted through trustworthy reconciliation/OFF evidence and charged to daily budgets.
-9. Matching process run IDs are the only clean-run proof. Entry reload/reconfigure is not process shutdown.
+9. Matching process run IDs are the only clean-run proof, and they prove a clean run only when written last, after complete and verified Stage-1 shutdown handling. Entry reload/reconfigure, entry unload, `EVENT_HOMEASSISTANT_STOP`, and the final-write fallback are not clean markers.
 10. Trusted SOAKING may continue only across full clean HA restart with matching config and proven OFF; after validation it is atomically adopted by the current run without changing session/timing identity and still requires a report at/after the original soak deadline.
 11. Independent config-entry generation/initialized identity distinguishes true first install from previously initialized Store loss. Missing/corrupt/future/mismatched runtime history blocks both modes, forces safe reconciliation, and exhausts the current day even after same-day acknowledgement.
 12. One zone waters at a time; keyed OFF-unconfirmed and external-flow resource blockers prevent all new ON commands and release independently only on proven OFF.
@@ -2486,7 +2565,7 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 
 ## Architectural Decisions Summary
 
-| Decision | Chosen spec.4 approach |
+| Decision | Chosen spec.5 approach |
 |---|---|
 | States | five states; sensor fault overlay during MANUAL |
 | Runtime/config lifecycle | orthogonal ACTIVE / DELETE_PENDING / RETIRED; not controller states |
@@ -2502,6 +2581,7 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 | WATERING recovery | never resumed |
 | SOAKING recovery | validate previous clean owner/fingerprint/OFF/timing, then atomically rebase owner to current run before activation |
 | Generic reload | terminate WATERING and SOAKING as CONFIG_RELOAD |
+| Full-process shutdown | exactly one removable `async_add_shutdown_job` Stage-1 owner per loaded entry, awaited by Core before background-task cancellation, `CoreState.stopping`, and `EVENT_HOMEASSISTANT_STOP`; immediate OFF signalling, one bounded active-flow join, verified persistence, clean marker written last |
 | Config synchronization | one entry update listener/reconciler owns add, reconfigure, delete; immutable applied shadows, generations, dirty barrier, latest snapshot wins |
 | Reconfigure | cooperative CONFIG_CHANGED preparation when loaded; `async_update_and_abort`; same-actuator shadow reuse or explicit A -> B handoff; at most one reconciler-owned reload |
 | Native delete | Core removes first; mapping mismatch immediately rejects ON; retained runtime tombstone closes safely without manual reload |
@@ -2526,6 +2606,6 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 
 **READY WITH PROTOTYPE VALIDATIONS**
 
-The architecture now resolves native config-subentry deletion with public update-listener-driven reconciliation, immutable applied shadows, an authoritative final ON fence, durable schema-2 actuator identity/tombstones, Store/config startup-union recovery, same-record delete/re-add, independent A -> B zone-history continuity, and explicit operational-state ownership: actuator safety authority stays on the canonical safety record while logical-zone operational state persists in the `zone_runtime` section of the zone history, so reactivated records cannot leak historical operational state. Independent Store/run identity, the AUTO freshness watchdog, exact-record physical-flow serialization, and trusted-SOAKING adoption remain intact. The five controller states remain unchanged. T1-T59 retain their IDs, topology, guards, actions, destinations, and reasons; only T21/T39 trigger wording is broadened to explicitly cover reconfiguration and native deletion reconciliation. All 59 transitions are represented by the §15 projection, all 37 invariants map to explicit tests, and the remaining §46 work is real platform/hardware/timing/presentation validation rather than an unresolved architectural blocker.
+The architecture now resolves native config-subentry deletion with public update-listener-driven reconciliation, immutable applied shadows, an authoritative final ON fence, durable schema-2 actuator identity/tombstones, Store/config startup-union recovery, same-record delete/re-add, independent A -> B zone-history continuity, and explicit operational-state ownership: actuator safety authority stays on the canonical safety record while logical-zone operational state persists in the `zone_runtime` section of the zone history, so reactivated records cannot leak historical operational state. Independent Store/run identity, the AUTO freshness watchdog, exact-record physical-flow serialization, and trusted-SOAKING adoption remain intact. The five controller states remain unchanged. T1-T59 retain their IDs, topology, guards, actions, destinations, and reasons; only T21/T39 trigger wording is broadened to explicitly cover reconfiguration and native deletion reconciliation. All 59 transitions are represented by the §15 projection, all 37 invariants map to explicit tests, and the remaining §46 work is real platform/hardware/timing/presentation validation rather than an unresolved architectural blocker. Spec.5 additionally moves full-process shutdown ownership to exactly one removable Stage-1 `async_add_shutdown_job`, strengthens clean-run evidence so the verified clean marker is the final safety transaction, and removes all SoilSync safety ownership from `EVENT_HOMEASSISTANT_STOP`, without changing the five controller states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, or the strict §23.4 verification contract.
 
 No implementation begins as part of this specification revision.

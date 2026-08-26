@@ -1,21 +1,21 @@
 # SoilSync Implementation Progress
 
-This document tracks implementation work against the approved `SPECIFICATION.md` version `0.1.0-spec.4`, whose architectural-review verdict is **READY WITH PROTOTYPE VALIDATIONS**.
+This document tracks implementation work against the approved `SPECIFICATION.md` version `0.1.0-spec.5`, whose architectural-review verdict is **READY WITH PROTOTYPE VALIDATIONS**. Records dated before the 2026-08-26 spec.5 amendment remain valid historical evidence produced against `0.1.0-spec.4`.
 
 > **Source-of-truth boundary:** `SPECIFICATION.md` is authoritative for architecture, safety behaviour, state-machine behaviour, persistence behaviour, Home Assistant integration behaviour, lifecycle behaviour, terminology, acceptance criteria, and prototype validations. `PROGRESS.md` is authoritative only for implementation status, slice status, work completed, work remaining, tests actually run, implementation blockers, implementation notes, and deviations requiring review. `PROGRESS.md` must never override, weaken, reinterpret, or silently amend `SPECIFICATION.md`. If implementation appears to require contradicting the specification, record `[?] Requires specification review` under the affected slice and stop that work until the specification is explicitly reviewed.
 
 ## Current Position
 
-- Current authorized work: `None`; Slice 13 Phase B1 is `[x] PASS`. One explicitly authorized B2 active-flow trial ran on 2026-08-26 and reached Docker's forced 10 s boundary without shutdown-path terminal OFF proof; fail-closed startup recovery later proved OFF and closed accounting. B2 is `[?] Requires specification review`; no repeat physical trial is authorized.
+- Current authorized work: `None`; Slice 13 Phase B1 is `[x] PASS`. One explicitly authorized B2 active-flow trial ran on 2026-08-26 and reached Docker's forced 10 s boundary without shutdown-path terminal OFF proof; fail-closed startup recovery later proved OFF and closed accounting. The B2-1 specification review closed on 2026-08-26 with approved `0.1.0-spec.5`, which moves full-process shutdown ownership from `EVENT_HOMEASSISTANT_STOP` to exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()`. B2 is now `[?] Requires implementation remediation and fresh physical revalidation`; no runtime/test implementation and no repeat physical trial is authorized.
 - Canonical identity: `SoilSync`; Home Assistant domain `soilsync`; integration path `custom_components/soilsync/`; public repository `https://github.com/embersas/soilsync`.
-- Specification version: `0.1.0-spec.4`
+- Specification version: `0.1.0-spec.5`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.4 conformance: `Spec.4 Remediation Stages 1-8 and the nomenclature-only SoilSync canonical rename are complete. After the 2026-08-25 Slice 13 Phase A live-defect remediation, exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 860 tests with the one deliberate pure-boundary skip; pure passes 437/437. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch. Pre-licensing-rewrite rename SHA 46783d2900fd42a13666eb13d8fe78c623456164, whose canonical equivalent is e7f496c94fff4a2d1851bd0fcd9cf778d719f8ac, passed all six GitHub-hosted jobs at embersas/soilsync.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `A separate spec.4 review must resolve the Home Assistant pre-stop/background-task/Store-final-write lifecycle contradiction exposed by B2. No production/test/default change or repeat physical trial is authorized. Phase A is complete and B1 passed. No release/submission stage is authorized.`
+- Next implementation work: `Implement the approved spec.5 Stage-1 shutdown correction under a separate authorization, then re-run the full mandatory gates, deploy the exact SHA, and obtain a fresh exact physical checkpoint before any repeat B2 trial. No production/test/default change or repeat physical trial is authorized now. Phase A is complete and B1 passed. No release/submission stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the pre-licensing-rewrite Slice 13 Phase A live-defect remediation SHA a54ee2777612d914f216781db5b0f3b7d586ef4c in run 32792205517 at embersas/soilsync; its canonical equivalent is a61da563ea96d3a7cd7b042dc0da80320022de11. Those historical results remain attributed to the original SHA. The final licensing/branding SHA receives its own six-job run. No GitHub Release, HACS default-store submission, or Brands submission has occurred.`
-- Slice 13: `[~] Partial. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [?] Requires specification review after a real active-flow stop escalated to exit 137 without pre-exit OFF proof; Phase B remains [~] Partial.`
-- Overall status: `Slices 0-12 and automated distribution validation remain complete. Slice 13 is partial because B2 exposed a specification-level lifecycle/Store contradiction. Startup reconciliation remained fail-closed and recovered terminal OFF; that post-restart result is not misclassified as shutdown timing.`
+- Slice 13: `[~] Partial. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [?] Requires implementation remediation and fresh physical revalidation: the B2-1 review is resolved by approved spec.5, but no runtime remediation or repeat physical trial has occurred. Phase B remains [~] Partial.`
+- Overall status: `Slices 0-12 and automated distribution validation remain complete. Slice 13 is partial because B2 exposed a specification-level lifecycle/Store contradiction, now resolved normatively by approved spec.5 but not yet implemented. Startup reconciliation remained fail-closed and recovered terminal OFF; that post-restart result is not misclassified as shutdown timing.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
@@ -1497,7 +1497,7 @@ None. Official local hassfest passes (`Integrations: 1`, `Invalid integrations: 
 
 ### Status
 
-`[~] Partial — Phase A non-water live validation is [x] Complete (A1, A2, A3, A4, A5 and A6 all PASS); Phase B has B1 [x] PASS and B2 [?] Requires specification review`
+`[~] Partial — Phase A non-water live validation is [x] Complete (A1, A2, A3, A4, A5 and A6 all PASS); Phase B has B1 [x] PASS and B2 [?] Requires implementation remediation and fresh physical revalidation after the B2-1 review closed with approved spec.5`
 
 ### Phase split
 
@@ -1707,7 +1707,10 @@ The exact current §46 validation list is:
 - **Phase B B1:** physical valve state/availability/position/external-
   interference matrix on known-safe hardware after a new authorization and
   explicit operator water checkpoint.
-- **Phase B B2:** actual active-flow HA/container shutdown and measured
+- **Phase B B2:** implement the approved spec.5 §24.1 Stage-1
+  `async_add_shutdown_job` shutdown owner under a separate authorization,
+  pass the full mandatory gates, deploy that exact SHA, and only then repeat
+  the actual active-flow HA/container shutdown and measured
   shutdown-to-proven-OFF timing after a new authorization and explicit
   operator water checkpoint.
 
@@ -3523,3 +3526,106 @@ they are not members of this licensing-rewrite map.
 - Documentation-only checks are recorded at closeout. Version remains 0.1.0;
   no tag, GitHub Release, HACS default submission, or Brands submission
   occurred. Current authorization returned to `None`.
+
+## Session Log — 2026-08-26 (B2-1 specification amendment, spec.4 -> spec.5)
+
+### Authorization and scope
+
+- The user explicitly approved the B2-1 specification review with `APPROVE
+  SPEC.5` and authorized a documentation/specification-only amendment making
+  `HomeAssistant.async_add_shutdown_job()` the sole authoritative full-process
+  SoilSync shutdown owner, replacing `EVENT_HOMEASSISTANT_STOP` as the
+  authoritative full-process safety trigger.
+- Runtime remediation, production Python changes, test changes, deployment,
+  physical water, Home Assistant or Docker interaction, a repeat B2 trial, a
+  tag, and a release were all explicitly out of scope and none occurred.
+- Baseline verified before editing: local `HEAD`, `origin/main`, and
+  `github/main` all `1c406ca56397e2b30e8584e1e23aff43c599ef69`, matching the
+  prompt's expected SHA, with a clean worktree.
+
+### Why the amendment was required
+
+- The first physical B2 trial on 2026-08-26 exposed the shutdown lifecycle
+  mismatch: `Core` cancels background tasks and sets `CoreState.stopping`
+  before firing `EVENT_HOMEASSISTANT_STOP`, and `Store.async_save()` then only
+  queues its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE`, so SoilSync's
+  mandatory fresh same-key read-back could only observe the previous revision.
+  The live log was exactly `safety write failed; blocking operation: read-back
+  revision mismatch`, and no shutdown-path terminal OFF was proven before
+  Docker's forced 10 s boundary.
+- The review concluded that this is a normative lifecycle defect in spec.4
+  rather than an implementation defect, so a specification amendment was
+  required before any remediation.
+- The lifecycle claims were re-source-checked for this amendment on the exact
+  2025.9.0 minimum and the supported-current 2026.8.3 environment:
+  `async_add_shutdown_job` with its removal callback, the Stage-1 shutdown-job
+  gather under Core's Stage-1 timeout, Stage-2 background-task cancellation
+  plus `CoreState.stopping` plus `EVENT_HOMEASSISTANT_STOP`, Stage-3
+  `EVENT_HOMEASSISTANT_FINAL_WRITE`, and `Store.async_save()` deferral while
+  stopping. This was read-only source inspection, not test execution.
+
+### What changed normatively
+
+- `SPECIFICATION.md` is now `0.1.0-spec.5`, dated 2026-08-26, with a new
+  revision note above the preserved spec.4 revision history.
+- Full-process shutdown ownership moved from `EVENT_HOMEASSISTANT_STOP` to
+  exactly one removable Stage-1 `HomeAssistant.async_add_shutdown_job()` HassJob
+  per loaded `EntryRuntime`, awaited by Core before background-task
+  cancellation, `CoreState.stopping`, and `EVENT_HOMEASSISTANT_STOP`.
+- `EVENT_HOMEASSISTANT_STOP` is no longer a SoilSync safety owner: it does not
+  dispatch `HOME_ASSISTANT_SHUTDOWN`, initiate or join OFF, persist safety
+  state, fresh-read the Store, or mark a run clean.
+- Store schema remains `2`. The strict §23.4 save -> fresh same-key read ->
+  schema/generation/revision/full-safety-payload verification contract is
+  unchanged and explicitly gains no shutdown exception.
+- Clean-run evidence is strengthened: the clean marker is the final verified
+  safety transaction, requires proven terminal OFF for integration-owned
+  physically possible flow, treats a correctly persisted `external_flow` owner
+  as successful handling, and cannot be produced by
+  `integration_off_unconfirmed` alone.
+- Five controller states, T1-T59, I1-I37, and the 134 normative behavioural test
+  IDs are unchanged. T19/T37 keep their meaning; their "full HA shutdown"
+  trigger is now explicitly the logical lifecycle concept delivered by §24.1
+  Stage-1 ownership. I14 was strengthened in wording only; no invariant was
+  added.
+- `SHUTDOWN_OFF_BUDGET_S` remains `8.0` as the approved pending-revalidation
+  value and is now normatively defined as one overall Stage-1 active-flow
+  closure deadline, not a pre-OFF delay, not a per-controller allowance, and not
+  a universal Docker setting.
+- Sections amended: header metadata and revision history, §1, §5.1, §5.5, §13,
+  §14 note, §15 note, §22.1, §22.3, §23.3, §23.4, §24.1, §24.2, §27 I14, §37,
+  §38, §39.2 LC4/RC6/HA1, §40, §45 items 9/14/16/38, §46 item 4, §47 items 6/9,
+  the Architectural Decisions Summary, and the Implementation Readiness Verdict.
+
+### Implementation and validation actually run
+
+- No runtime remediation occurred. `custom_components/soilsync/` and `tests/`
+  were not modified. No CI test behaviour changed. No deployment, Home
+  Assistant interaction, Docker interaction, or physical water occurred, and B2
+  was not repeated.
+- Documentation-only checks were run because only documentation changed:
+  `git diff --check`; mechanical structure verification of the amended
+  specification (spec version `0.1.0-spec.5`, exactly five controller states,
+  59 unique T1-T59 rows, 37 I1-I37 invariants, 134 normative behavioural IDs
+  across SR 13 / PI 27 / MF 5 / AC 4 / ER 12 / LC 13 / ND 17 / TB 12 / AR 17 /
+  RC 12 / HA 2, Store schema 2, balanced code fences, unchanged T19/T37 rows);
+  a repository search for any surviving active claim that
+  `EVENT_HOMEASSISTANT_STOP` is SoilSync's authoritative full-shutdown owner;
+  a repository search for stale active `0.1.0-spec.4` current-version claims;
+  a privacy scan of changed lines; and `git status`.
+- The established automated pure and Home Assistant suites were deliberately
+  not rerun, because no production or test code changed. No test-execution
+  claim is made by this session.
+
+### Status and remaining work
+
+- B2 remains `[?]`: it requires spec.5 implementation remediation and fresh
+  physical revalidation, and is not marked PASS. The failed physical B2 trial
+  remains preserved as historical evidence and is not reclassified.
+- Phase A remains `[x] Complete`; B1 remains `[x] PASS`; Phase B remains
+  `[~] Partial`; Slice 13 remains `[~] Partial`.
+- Product version remains `0.1.0`. No tag, GitHub Release, HACS default-store
+  submission, or `home-assistant/brands` submission occurred. `.env` remains
+  ignored and untracked.
+- Next work is spec.5 implementation remediation under a separate
+  authorization. Current authorization returned to `None`.

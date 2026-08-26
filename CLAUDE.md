@@ -5,7 +5,7 @@ This file provides repository guidance to Claude Code and other coding agents.
 ## Project state
 
 SoilSync v0.1 is implemented under `custom_components/soilsync/`.
-`SPECIFICATION.md` version `0.1.0-spec.4` is the authoritative behavioural and
+`SPECIFICATION.md` version `0.1.0-spec.5` is the authoritative behavioural and
 safety contract. Preserve the Stage 7 traceability evidence: 134 normative
 behavioural IDs, invariants I1-I37, and transitions T1-T59.
 
