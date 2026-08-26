@@ -1,4 +1,4 @@
-# SoilSync prototype-validation evidence
+# MoistureLoop prototype-validation evidence
 
 This is the public evidence ledger for the real-world prototype validations
 required by `SPECIFICATION.md` §46. Automated tests, mocks, and source
@@ -18,6 +18,8 @@ physical evidence.
 > byte-identical runtime and specification content; the rewrite changed only
 > licensing and evidence-reference metadata. Historical GitHub Actions and
 > live-deployment claims remain claims about the original SHAs.
+
+> **Product-identity note (2026-08-27):** Phase A, B1, and B2 were physically executed under the then-current product name **SoilSync** (domain `soilsync`, `custom_components/soilsync/`, repository `embersas/soilsync`). Before the first release the canonical identity changed to **MoistureLoop** (domain `moisture_loop`, `custom_components/moisture_loop/`, `embersas/moisture-loop`) as a nomenclature-only change. The SoilSync-named evidence below is retained unchanged and remains behaviourally applicable: the state machine, T1-T59, I1-I37, Store schema 2, spec.5 Stage-1 shutdown ownership, `SHUTDOWN_OFF_BUDGET_S`, and every runtime safety semantic were unchanged by the rename, and the rename regression (full mandatory suites, traceability, hassfest, HACS, and a live non-water MoistureLoop deployment) was validated separately. No physical result is rerun or reclassified because of naming.
 
 The live host, credentials, complete Registry UUIDs, household entity names,
 and MQTT details are intentionally omitted. Exact private identifiers are kept

@@ -11,8 +11,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from custom_components.soilsync import const
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop import const
+from custom_components.moisture_loop.models import (
     ActuatorAssessment,
     ActuatorFinding,
     ActuatorIdentity,
@@ -550,7 +550,7 @@ class TestPureBoundary:
                 "boundary proof runs in the pure environment; here the HA "
                 "harness itself imports homeassistant"
             )
-        assert "custom_components.soilsync.models" in sys.modules
+        assert "custom_components.moisture_loop.models" in sys.modules
         assert not any(m == "homeassistant" or m.startswith("homeassistant.") for m in sys.modules)
 
     def test_defaults_within_bounds(self) -> None:

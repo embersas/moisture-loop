@@ -1,4 +1,4 @@
-"""Schema-2 exact-record Repairs for SoilSync (§§26.3, 34)."""
+"""Schema-2 exact-record Repairs for MoistureLoop (§§26.3, 34)."""
 
 from __future__ import annotations
 

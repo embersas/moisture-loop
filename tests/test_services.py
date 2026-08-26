@@ -24,7 +24,7 @@ from test_entities import (
     setup_with_zone,
 )
 
-from custom_components.soilsync.const import DOMAIN
+from custom_components.moisture_loop.const import DOMAIN
 
 ALL_SERVICES = ("start_manual_watering", "stop_watering", "evaluate_zone", "clear_fault")
 
@@ -95,7 +95,7 @@ class TestActionLifecycle:
     @pytest.mark.parametrize("lifecycle", ["delete_pending", "retired"])
     @pytest.mark.parametrize("service", ALL_SERVICES)
     async def test_non_active_runtime_refuses_actions(self, env, lifecycle, service) -> None:
-        from custom_components.soilsync.models import RuntimeLifecycle
+        from custom_components.moisture_loop.models import RuntimeLifecycle
 
         controller = env.runtime.controllers[env.subentry_id]
         controller.runtime_lifecycle = RuntimeLifecycle(lifecycle)
@@ -245,7 +245,7 @@ class TestManualAction:
         assert raises_key(excinfo) == "daily_budget_exhausted"
 
     async def test_manual_refused_while_resource_occupied(self, env) -> None:
-        from custom_components.soilsync.models import BlockerReason
+        from custom_components.moisture_loop.models import BlockerReason
 
         record_id = env.runtime.bindings[env.subentry_id].safety_record_id
         await env.runtime.slots.async_add_blocker(record_id, BlockerReason.EXTERNAL_FLOW)
@@ -315,8 +315,8 @@ class TestServiceEdges:
     async def test_unknown_guard_refusal_falls_back(self, env) -> None:
         from types import SimpleNamespace
 
-        from custom_components.soilsync.models import GuardResult
-        from custom_components.soilsync.services import _raise_for_refusal
+        from custom_components.moisture_loop.models import GuardResult
+        from custom_components.moisture_loop.services import _raise_for_refusal
 
         decision = SimpleNamespace(
             guard_result=GuardResult(passed=False, failed_guards=("mystery-guard",))
@@ -332,7 +332,7 @@ class TestServiceEdges:
         _raise_for_refusal(slot_wait, "x")
 
     async def test_double_registration_is_a_noop(self, env) -> None:
-        from custom_components.soilsync.services import async_register_services
+        from custom_components.moisture_loop.services import async_register_services
 
         async_register_services(env.hass)  # second call: no duplicate errors
         for service in ALL_SERVICES:
@@ -341,7 +341,7 @@ class TestServiceEdges:
 
 class TestFinalCoverageEdges:
     async def test_needs_water_is_on_guard_direct(self, env) -> None:
-        from custom_components.soilsync.binary_sensor import (
+        from custom_components.moisture_loop.binary_sensor import (
             ZoneNeedsWaterBinarySensor,
         )
 

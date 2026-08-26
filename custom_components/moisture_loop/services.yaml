@@ -6,7 +6,7 @@ start_manual_watering:
         device:
           multiple: false
           filter:
-            - integration: soilsync
+            - integration: moisture_loop
     duration:
       required: true
       selector:
@@ -24,7 +24,7 @@ stop_watering:
         device:
           multiple: false
           filter:
-            - integration: soilsync
+            - integration: moisture_loop
 
 evaluate_zone:
   fields:
@@ -34,7 +34,7 @@ evaluate_zone:
         device:
           multiple: false
           filter:
-            - integration: soilsync
+            - integration: moisture_loop
 
 clear_fault:
   fields:
@@ -44,4 +44,4 @@ clear_fault:
         device:
           multiple: false
           filter:
-            - integration: soilsync
+            - integration: moisture_loop

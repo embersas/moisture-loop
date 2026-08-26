@@ -1,4 +1,4 @@
-"""Pure deterministic state machine for SoilSync.
+"""Pure deterministic state machine for MoistureLoop.
 
 Implements every formal transition T1-T59 (SPECIFICATION.md §14), the guard
 legend, exact hysteresis (§17), pulse/soak/recheck and AUTO freshness

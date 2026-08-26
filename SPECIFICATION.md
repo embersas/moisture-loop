@@ -1,18 +1,20 @@
-# SoilSync — v0.1 Technical Specification
+# MoistureLoop — v0.1 Technical Specification
 
-**Closed-loop soil moisture irrigation for Home Assistant**
+**Soil moisture-driven irrigation for Home Assistant**
 
 | | |
 |---|---|
 | Status | Draft for review - implementation source of truth |
 | Spec version | `0.1.0-spec.5` |
 | Date | 2026-08-26 |
-| Integration name | SoilSync |
-| Domain | `soilsync` |
+| Integration name | MoistureLoop |
+| Domain | `moisture_loop` |
 | Target platform | Home Assistant >= 2025.9.0 |
 | Distribution | HACS custom integration |
 
-> **Revision note:** spec.5 is a normative architectural lifecycle revision. Slice 13 physical validation finding B2-1 exposed a mismatch between the spec.4 `EVENT_HOMEASSISTANT_STOP` shutdown hook and supported Home Assistant Store behaviour: Core cancels background tasks and sets `CoreState.stopping` *before* firing that event, and `Store.async_save()` then only queues its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE` instead of writing immediately, so the mandatory fresh same-key read-back can observe nothing newer than the previous revision. Full-process shutdown safety ownership therefore moves to exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded entry runtime, which Core executes and awaits in Stage 1 of `async_stop()` before background-task cancellation, before `CoreState.stopping`, and before `EVENT_HOMEASSISTANT_STOP`. The strict §23.4 Store save/fresh-read/verify contract is unchanged and gains no shutdown exception. Clean-run evidence is strengthened: the clean marker is the final verified safety transaction and may be written only after complete, successful, verified Stage-1 handling. `EVENT_HOMEASSISTANT_STOP` loses all SoilSync safety ownership. The five controller states, T1-T59, I1-I37, the 134 normative behavioural test IDs, Store schema 2, and the Home Assistant 2025.9.0 minimum are unchanged. All settled spec.4 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
+> **Revision note (nomenclature only, 2026-08-27):** before the first 0.1.0 release the SoilSync product identity was abandoned because a materially overlapping agricultural/software business already uses that name. The canonical identity returned to **MoistureLoop**, domain `moisture_loop`, integration directory `custom_components/moisture_loop/`, public repository `embersas/moisture-loop`. Current identifiers in this document (actions `moisture_loop.*`, events `moisture_loop_*`, Store key prefix `moisture_loop.<entry_id>`, Repairs/translation domain, brand path) follow that identity. Controller behaviour, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, the spec.5 Stage-1 shutdown lifecycle rules, `SHUTDOWN_OFF_BUDGET_S`, and the B1/B2 physical evidence recorded under the then-current SoilSync name are unchanged; the spec version stays `0.1.0-spec.5`, following the precedent that nomenclature-only edits do not increment it.
+>
+> **Revision note:** spec.5 is a normative architectural lifecycle revision. Slice 13 physical validation finding B2-1 exposed a mismatch between the spec.4 `EVENT_HOMEASSISTANT_STOP` shutdown hook and supported Home Assistant Store behaviour: Core cancels background tasks and sets `CoreState.stopping` *before* firing that event, and `Store.async_save()` then only queues its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE` instead of writing immediately, so the mandatory fresh same-key read-back can observe nothing newer than the previous revision. Full-process shutdown safety ownership therefore moves to exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded entry runtime, which Core executes and awaits in Stage 1 of `async_stop()` before background-task cancellation, before `CoreState.stopping`, and before `EVENT_HOMEASSISTANT_STOP`. The strict §23.4 Store save/fresh-read/verify contract is unchanged and gains no shutdown exception. Clean-run evidence is strengthened: the clean marker is the final verified safety transaction and may be written only after complete, successful, verified Stage-1 handling. `EVENT_HOMEASSISTANT_STOP` loses all MoistureLoop safety ownership. The five controller states, T1-T59, I1-I37, the 134 normative behavioural test IDs, Store schema 2, and the Home Assistant 2025.9.0 minimum are unchanged. All settled spec.4 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
 >
 > **Revision note:** spec.4 is a normative architectural revision that resolves the config-subentry deletion lifecycle mismatch found during implementation. Home Assistant removes a native subentry before scheduling an unawaited config-entry update listener, so configuration-object lifetime is now separated from runtime safety-object lifetime. The approved design is update-listener-driven tombstoned runtime reconciliation with authoritative final pre-ON configuration gates, persisted actuator identity, Store/config startup-union reconciliation, and listener-owned add/reconfigure/delete synchronization. This final corrective edit makes one canonical mutable safety record authoritative for each durable actuator lineage, defines independent zone-budget continuity when reconfiguration replaces actuator A with B, and broadens only the T21/T39 trigger wording to cover both reconfiguration and deletion reconciliation. The Home Assistant 2025.9.0 minimum is unchanged. All settled spec.3 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
 >
@@ -24,7 +26,7 @@
 
 ## 1. Executive Summary
 
-SoilSync is a hardware-agnostic Home Assistant custom integration for closed-loop irrigation. Each zone pairs one soil-moisture sensor with one `switch` or `valve` actuator. A new automatic session starts only when a valid, fresh moisture report is strictly below the configured start threshold. It then applies bounded watering pulses. Every pulse is followed by a soak, and the next continuation or completion decision uses only a valid, fresh sensor report made at or after that soak ends.
+MoistureLoop is a hardware-agnostic Home Assistant custom integration for closed-loop irrigation. Each zone pairs one soil-moisture sensor with one `switch` or `valve` actuator. A new automatic session starts only when a valid, fresh moisture report is strictly below the configured start threshold. It then applies bounded watering pulses. Every pulse is followed by a soak, and the next continuation or completion decision uses only a valid, fresh sensor report made at or after that soak ends.
 
 The controller has five states: `DISABLED`, `IDLE`, `WATERING`, `SOAKING`, and `FAULT`. An orthogonal runtime/configuration lifecycle (`ACTIVE`, `DELETE_PENDING`, `RETIRED`) allows a safety object to outlive its deleted subentry without adding a sixth controller state. Watering commands are globally serialized in v0.1, and any configured or tombstoned actuator observed or conservatively believed to be flowing occupies that shared resource even when an external actor opened it. Whole automatic pulses must fit within session and daily runtime budgets. AUTO water stops if its newest valid moisture report becomes stale mid-pulse. Interrupted watering is never resumed after restart or reload. Unknown watering duration is conservatively overestimated. Automatic behaviour fails toward water OFF; explicit, bounded manual watering remains possible when only the moisture sensor is faulty.
 
@@ -49,7 +51,7 @@ Implementation readiness verdict: **READY WITH PROTOTYPE VALIDATIONS** (§46 and
 
 ## 2. Problem Definition
 
-Most irrigation controllers are open loop: they run a timer, calendar, weather, or evapotranspiration calculation and optionally use moisture as a veto. SoilSync instead treats measured soil moisture as the authoritative automatic feedback signal.
+Most irrigation controllers are open loop: they run a timer, calendar, weather, or evapotranspiration calculation and optionally use moisture as a veto. MoistureLoop instead treats measured soil moisture as the authoritative automatic feedback signal.
 
 Two physical facts drive the design:
 
@@ -130,12 +132,12 @@ Home Assistant distinguishes two event paths:
 - `state_changed`: a write changed the state string and/or attributes;
 - `state_reported`: a write left both state and attributes unchanged, while advancing `State.last_reported`.
 
-`async_track_state_change_event` does **not** receive unchanged reports. SoilSync therefore installs both:
+`async_track_state_change_event` does **not** receive unchanged reports. MoistureLoop therefore installs both:
 
 1. `async_track_state_change_event(hass, configured_moisture_entity_ids, ...)`; and
 2. `async_track_state_report_event(hass, configured_moisture_entity_ids, ...)`.
 
-The second helper is the higher-level API designed for this purpose and routes reports by explicit entity ID. It is preferred over direct event-bus registration and satisfies the filtered-listener contract. The 2024 announcement required direct listeners to pass `run_immediately=True`; the supported Core API handles report dispatch internally, so SoilSync does **not** pass it. Any unavoidable direct fallback would still require a callback-decorated entity `event_filter`; a global listener followed by Python filtering is forbidden. The event is intentionally excluded from wildcard delivery because of its volume. ([`last_reported` and `state_reported`](https://developers.home-assistant.io/blog/2024/03/20/state_reported_timestamp/), [Core 2025.9.0 event helpers](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/event.py), [Core 2025.9.0 EventBus](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/core.py))
+The second helper is the higher-level API designed for this purpose and routes reports by explicit entity ID. It is preferred over direct event-bus registration and satisfies the filtered-listener contract. The 2024 announcement required direct listeners to pass `run_immediately=True`; the supported Core API handles report dispatch internally, so MoistureLoop does **not** pass it. Any unavoidable direct fallback would still require a callback-decorated entity `event_filter`; a global listener followed by Python filtering is forbidden. The event is intentionally excluded from wildcard delivery because of its volume. ([`last_reported` and `state_reported`](https://developers.home-assistant.io/blog/2024/03/20/state_reported_timestamp/), [Core 2025.9.0 event helpers](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/event.py), [Core 2025.9.0 EventBus](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/core.py))
 
 Both listener callbacks normalize their input into the same `MoistureObservation` (§6, §37). For a changed state, `new_state.last_reported` is used. For an unchanged report, the event's `last_reported` and `new_state` are used. The pure state machine never receives a Home Assistant event object.
 
@@ -145,11 +147,11 @@ Actuator monitoring continues to use `async_track_state_change_event`, because c
 
 Integration actions are registered once from `async_setup(hass, config)`, not per entry from `async_setup_entry`. This keeps actions available to automation editors even when the config entry is unloaded or failed. A handler validates its required device target, resolves the zone device to the entry/subentry/controller, verifies `ConfigEntryState.LOADED`, and raises a translated `ServiceValidationError` if the target or runtime is unavailable. ([Service actions are registered in `async_setup`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/action-setup/), [service action targeting](https://developers.home-assistant.io/docs/dev_101_services/))
 
-Each action operates on a zone device as a whole, so the public schema requires exactly one `device_id`; it does not substitute an entity ID or config-entry ID. The field uses the nested device-selector filter equivalent to `DeviceSelectorConfig(filter={"integration": DOMAIN}, multiple=False)`, which is present on the minimum release. Backend resolution verifies the device has identifier `(DOMAIN, subentry_id)`, belongs to the SoilSync config entry/subentry, and is unambiguous. The backend never trusts frontend filtering. A deprecated/removed generic **target-selector** device filter is not used. ([Device target-filter removal](https://developers.home-assistant.io/blog/2025/10/14/device-filter-removed-from-target-selector/), [Core 2025.9.0 selector implementation](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/selector.py))
+Each action operates on a zone device as a whole, so the public schema requires exactly one `device_id`; it does not substitute an entity ID or config-entry ID. The field uses the nested device-selector filter equivalent to `DeviceSelectorConfig(filter={"integration": DOMAIN}, multiple=False)`, which is present on the minimum release. Backend resolution verifies the device has identifier `(DOMAIN, subentry_id)`, belongs to the MoistureLoop config entry/subentry, and is unambiguous. The backend never trusts frontend filtering. A deprecated/removed generic **target-selector** device filter is not used. ([Device target-filter removal](https://developers.home-assistant.io/blog/2025/10/14/device-filter-removed-from-target-selector/), [Core 2025.9.0 selector implementation](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/selector.py))
 
 ### 5.4 Manifest classification
 
-SoilSync is not a gateway to discovered devices. It consumes existing HA entities and adds calculated control/helper behaviour. The manifest therefore uses:
+MoistureLoop is not a gateway to discovered devices. It consumes existing HA entities and adds calculated control/helper behaviour. The manifest therefore uses:
 
 ```jsonc
 {
@@ -166,8 +168,8 @@ SoilSync is not a gateway to discovered devices. It consumes existing HA entitie
 
 - All runtime work is event-loop-native. The entry owns background tasks and unloads cleanly. ([Async programming](https://developers.home-assistant.io/docs/asyncio_index/), [config-entry unloading](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/config-entry-unloading/))
 - Full-process shutdown is owned by exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded `EntryRuntime`. Core runs and awaits every registered shutdown job in Stage 1 of `HomeAssistant.async_stop()`, strictly before it cancels background tasks, before it sets `CoreState.stopping`, and before it fires `EVENT_HOMEASSISTANT_STOP`. The Stage-1 job closes integration ON admission, signals and joins session/OFF ownership, and completes every required Store write and fresh-Store verification while Core is still running normally. Registration returns a removal callback owned by entry unload. ([Core 2025.9.0 `async_add_shutdown_job` and `async_stop` stages](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/core.py))
-- `EVENT_HOMEASSISTANT_STOP` is **not** a SoilSync safety trigger. It fires only after background-task cancellation and `CoreState.stopping`, so it cannot own OFF, persistence, read-back verification, or clean-run marking. It remains a Home Assistant lifecycle fact and may be referenced only for non-safety diagnostics. ([Listening for events](https://developers.home-assistant.io/docs/integration_listen_events/))
-- A `Store.async_save()` initiated while `hass.state is CoreState.stopping` returns after only queuing its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE`; the bytes are not yet on disk. Such a write can never satisfy the §23.4 immediate fresh-Store verification, so all SoilSync safety persistence must complete inside Stage 1. ([Core 2025.9.0 `Store.async_save`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/storage.py))
+- `EVENT_HOMEASSISTANT_STOP` is **not** a MoistureLoop safety trigger. It fires only after background-task cancellation and `CoreState.stopping`, so it cannot own OFF, persistence, read-back verification, or clean-run marking. It remains a Home Assistant lifecycle fact and may be referenced only for non-safety diagnostics. ([Listening for events](https://developers.home-assistant.io/docs/integration_listen_events/))
+- A `Store.async_save()` initiated while `hass.state is CoreState.stopping` returns after only queuing its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE`; the bytes are not yet on disk. Such a write can never satisfy the §23.4 immediate fresh-Store verification, so all MoistureLoop safety persistence must complete inside Stage 1. ([Core 2025.9.0 `Store.async_save`](https://github.com/home-assistant/core/blob/2025.9.0/homeassistant/helpers/storage.py))
 - Entry reload and entry unload remain distinct from process shutdown and never mark a run clean.
 - Repairs use only supported enum constants: `IssueSeverity.WARNING`, `IssueSeverity.ERROR`, and the reserved `IssueSeverity.CRITICAL` only for a true panic such as a valve not proven OFF. ([Repairs severity](https://developers.home-assistant.io/docs/core/platform/repairs/))
 - Config-entry diagnostics redact sensitive values with HA helpers. There are no credentials in v0.1.
@@ -227,7 +229,7 @@ MoistureObservation:
 
 ## 7. Canonical Name and Domain
 
-**Final canonical identity: SoilSync, domain `soilsync`.** A pre-release technical collision check on 2026-08-24 found no local integration using the domain, no exact `soilsync` integration in the current Home Assistant Core component tree, and no pre-existing unrelated `embersas/soilsync` repository. Adjacent irrigation projects remain distinct. ([Core integration catalog](https://github.com/home-assistant/core/tree/dev/homeassistant/components), [HACS default repository catalog](https://github.com/hacs/default))
+**Final canonical identity: MoistureLoop, domain `moisture_loop`.** The project was developed under the working name Moisture Loop (`moisture_loop`), was renamed SoilSync on 2026-08-24 after a technical collision check, and on 2026-08-27, before any tagged release, returned to MoistureLoop because an unrelated agricultural/software business materially overlaps the SoilSync name. The 2026-08-27 re-check found no `moisture_loop` integration in the current Home Assistant Core component tree and no unrelated `embersas/moisture-loop` repository. Adjacent irrigation projects remain distinct. ([Core integration catalog](https://github.com/home-assistant/core/tree/dev/homeassistant/components), [HACS default repository catalog](https://github.com/hacs/default))
 
 The canonical name and domain are fixed before the first release because the domain is part of storage keys, action names, entity and device identifiers, event types, and brand paths. This is a nomenclature decision only; it does not alter controller behaviour, persistence schema semantics, or safety architecture.
 
@@ -236,14 +238,14 @@ The canonical name and domain are fixed before the first release because the dom
 ## 8. User Experience
 
 1. Install through HACS or manual copy and restart Home Assistant.
-2. Add one SoilSync integration entry.
+2. Add one MoistureLoop integration entry.
 3. Add one or more zone subentries by selecting a name, sensor, actuator, thresholds, pulse/soak timing, and safety limits.
 4. Each zone appears as a device with status, runtime, last-session, needs-water, watering, problem, enable, stop, evaluate, and clear-fault entities.
 5. Normal automatic operation runs quietly and reports session outcomes.
-6. Manual watering is requested with an explicit duration through `soilsync.start_manual_watering`.
+6. Manual watering is requested with an explicit duration through `moisture_loop.start_manual_watering`.
 7. Sensor-only faults still permit bounded manual watering. Actuator, configuration, and integrity faults do not.
 8. Reconfiguration may cooperatively prepare an active old session, records `CONFIG_CHANGED`, updates with `async_update_and_abort`, and is applied by the entry reconciler; at most one reload is scheduled when entity reconstruction requires it. If the actuator changes, the old actuator record is retained, the new actuator is resolved independently, and the logical zone's conservative budget/interval history continues.
-9. Native zone deletion returns through Home Assistant's normal UI path. SoilSync immediately rejects new ON from the changed mapping, then completes safe closure in the background. A deleted-zone Repair may remain visible at entry level until its retained tombstone is safe and acknowledged.
+9. Native zone deletion returns through Home Assistant's normal UI path. MoistureLoop immediately rejects new ON from the changed mapping, then completes safe closure in the background. A deleted-zone Repair may remain visible at entry level until its retained tombstone is safe and acknowledged.
 
 ---
 
@@ -295,7 +297,7 @@ Out-of-range data is rejected, never clamped. Clamping could turn a broken negat
 
 ### 10.3 Report subscription and freshness
 
-SoilSync listens to both changed states and unchanged reports as defined in §5.2. A repeated identical report is a real observation: it advances `last_reported`, refreshes the observation and an active AUTO freshness deadline, can auto-clear a stale fault, and can qualify as the post-soak report if its timestamp satisfies §18.4.
+MoistureLoop listens to both changed states and unchanged reports as defined in §5.2. A repeated identical report is a real observation: it advances `last_reported`, refreshes the observation and an active AUTO freshness deadline, can auto-clear a stale fault, and can qualify as the post-soak report if its timestamp satisfies §18.4.
 
 The configured moisture entity IDs are passed directly to `async_track_state_report_event`. A global `state_reported` listener is forbidden. The fallback scan reads current state as a safety net but is not a substitute for report-event subscription and cannot manufacture a new report timestamp.
 
@@ -998,7 +1000,7 @@ Timer expiry and Stop cannot produce two reasons: one event commits first under 
 | In-flight ON vs Stage-1 full shutdown | the dispatched call remains integration-owned possible flow; the Stage-1 owner converges it after return and drives it through the one shared OFF path with conservative accounting |
 | OFF already in progress vs Stage-1 full shutdown | the Stage-1 owner joins the existing one OFF future; no second OFF is issued and the first terminal reason remains authoritative |
 | Delete/reconfigure/unload vs Stage-1 full shutdown | first-terminal-reason arbitration is unchanged, there is one OFF future per record, no eligible SOAKING context is overwritten, and the Stage-1 owner remains the sole process-shutdown owner and the only clean-marker writer |
-| Stage-1 shutdown vs `EVENT_HOMEASSISTANT_STOP` | no competition exists: the event owns no SoilSync safety work and fires only after Stage 1 returned or timed out |
+| Stage-1 shutdown vs `EVENT_HOMEASSISTANT_STOP` | no competition exists: the event owns no MoistureLoop safety work and fires only after Stage 1 returned or timed out |
 
 ### 22.4 Reconciliation concurrency contract
 
@@ -1231,7 +1233,7 @@ last_clean_shutdown_run_id = active_run_id
 
 is then atomically saved and fresh-Store read-back verified as the last write of the process.
 
-Externally owned flow is persisted and respected, not counter-commanded merely because Home Assistant is stopping. A correctly persisted `external_flow` owner/blocker is successful SoilSync safety handling and does not by itself make the process unclean.
+Externally owned flow is persisted and respected, not counter-commanded merely because Home Assistant is stopping. A correctly persisted `external_flow` owner/blocker is successful MoistureLoop safety handling and does not by itself make the process unclean.
 
 Persisting `integration_off_unconfirmed` is honest recovery evidence, but it is **not** sufficient to mark the current run clean; only exact OFF evidence that closes it during Stage 1 can. A crash or power loss leaves the IDs unequal. A crash immediately before the new ID is verified is safe because this process was never allowed to water; a crash after it is verified is unambiguously unclean. Any failed or timed-out required OFF, Store write, read-back, reconciliation/lifecycle handoff, or Stage-1 execution leaves the previous `last_clean_shutdown_run_id` unchanged, retains conservative evidence wherever it can still be written, and lets startup reconciliation treat the prior process as unclean. Entry reload, reconfigure, subentry change, entry removal, entry unload, setup failure, `EVENT_HOMEASSISTANT_STOP`, and the `EVENT_HOMEASSISTANT_FINAL_WRITE` fallback never mark the process run clean.
 
@@ -1300,7 +1302,7 @@ Recorder is not used to decide whether a Store used to exist or to relax this po
 
 Full-process shutdown is owned by **exactly one** removable Home Assistant Stage-1 shutdown job. Each loaded `EntryRuntime` registers one `HassJob` through `HomeAssistant.async_add_shutdown_job()` and keeps the returned removal callback under `entry.async_on_unload(...)`. Registration **MUST** complete before any watering-capable runtime is armed, so no process can reach a commandable ON without an installed authoritative shutdown owner.
 
-Core runs the registered shutdown jobs in Stage 1 of `HomeAssistant.async_stop()` and awaits them together under Core's Stage-1 timeout. Stage 1 executes strictly before Core cancels background tasks, before Core sets `CoreState.stopping`, and before Core fires `EVENT_HOMEASSISTANT_STOP`. The Stage-1 job is therefore the only SoilSync lifecycle hook that can both drive cooperative OFF and complete the mandatory §23.4 immediate fresh-Store verification.
+Core runs the registered shutdown jobs in Stage 1 of `HomeAssistant.async_stop()` and awaits them together under Core's Stage-1 timeout. Stage 1 executes strictly before Core cancels background tasks, before Core sets `CoreState.stopping`, and before Core fires `EVENT_HOMEASSISTANT_STOP`. The Stage-1 job is therefore the only MoistureLoop lifecycle hook that can both drive cooperative OFF and complete the mandatory §23.4 immediate fresh-Store verification.
 
 The Stage-1 algorithm is normative:
 
@@ -1355,21 +1357,21 @@ return
 
 The Stage-1 job remains accountable for everything it starts. It **MUST NOT** delegate its obligations to an unjoined background task and return: Core cancels background tasks in Stage 2, and any Store write such a task then attempts falls into `CoreState.stopping`, where it is deferred to final write and cannot be verified.
 
-`SHUTDOWN_OFF_BUDGET_S` is the maximum total time the authoritative Stage-1 SoilSync shutdown owner waits for cooperative active-flow closure, including convergence of an already in-flight ON and the shared OFF operation, before recording conservative unclean shutdown handling. It is one overall active-flow deadline. It is not a delay before OFF, not an allowance per controller, and not a universal Docker or process-manager setting; OFF signalling begins immediately. The external deployment process-stop window, for example a container stop grace period, remains distinct from Home Assistant's internal Stage-1 timeout, and SoilSync must fit inside both.
+`SHUTDOWN_OFF_BUDGET_S` is the maximum total time the authoritative Stage-1 MoistureLoop shutdown owner waits for cooperative active-flow closure, including convergence of an already in-flight ON and the shared OFF operation, before recording conservative unclean shutdown handling. It is one overall active-flow deadline. It is not a delay before OFF, not an allowance per controller, and not a universal Docker or process-manager setting; OFF signalling begins immediately. The external deployment process-stop window, for example a container stop grace period, remains distinct from Home Assistant's internal Stage-1 timeout, and MoistureLoop must fit inside both.
 
 If that deadline expires or any required step fails, forced task cancellation plus a best-effort call into the same idempotent OFF path remains the fallback. The run then stays unclean: `last_clean_shutdown_run_id` is not advanced, conservative evidence such as open accounting, exact keyed blockers, `integration_off_unconfirmed`, and actuator faults is retained wherever it can still be written, and startup reconciliation remains the authoritative recovery mechanism. Marking the run clean is never a claim that an unconfirmed actuator is safe; it is reachable only when every integration-owned physically possible flow was actually proven OFF and every required write was verified.
 
-External flow that SoilSync does not own is persisted and respected. SoilSync does not counter-command an externally owned actuator merely because Home Assistant is stopping, and a correctly persisted `external_flow` owner/blocker is successful shutdown handling.
+External flow that MoistureLoop does not own is persisted and respected. MoistureLoop does not counter-command an externally owned actuator merely because Home Assistant is stopping, and a correctly persisted `external_flow` owner/blocker is successful shutdown handling.
 
 SOAKING is not finalized during a full graceful shutdown, so a trusted restart may continue waiting. No new water begins during shutdown. Shutdown never assumes Core awaited an update listener.
 
-`EVENT_HOMEASSISTANT_STOP` has no SoilSync shutdown ownership. It does not dispatch `HOME_ASSISTANT_SHUTDOWN`, initiate or join OFF, persist safety state, fresh-read the Store, mark the run clean, or compete with the Stage-1 owner.
+`EVENT_HOMEASSISTANT_STOP` has no MoistureLoop shutdown ownership. It does not dispatch `HOME_ASSISTANT_SHUTDOWN`, initiate or join OFF, persist safety state, fresh-read the Store, mark the run clean, or compete with the Stage-1 owner.
 
 ### 24.2 Generic config-entry unload/reload
 
 Entry unload is not process shutdown and never changes run IDs. Ordinary unload removes that entry's registered Stage-1 shutdown job through its stored removal callback, so an unloaded entry holds no process-shutdown responsibility. Entry reload never marks the process run clean.
 
-Once Stage-1 process shutdown has begun, a later entry unload is cleanup/join only. It must not create a competing terminal reason, must not issue a second OFF, must not overwrite an eligible persisted SOAKING context, and must never write or own the clean marker; it joins each record's existing OFF future and the Stage-1 owner's outcome. Otherwise SoilSync chooses the simple v0.1 policy:
+Once Stage-1 process shutdown has begun, a later entry unload is cleanup/join only. It must not create a competing terminal reason, must not issue a second OFF, must not overwrite an eligible persisted SOAKING context, and must never write or own the clean marker; it joins each record's existing OFF future and the Stage-1 owner's outcome. Otherwise MoistureLoop chooses the simple v0.1 policy:
 
 - terminate WATERING cooperatively as `CONFIG_RELOAD` and await OFF;
 - terminate SOAKING as `CONFIG_RELOAD` rather than preserve it;
@@ -1634,7 +1636,7 @@ Each invariant is formal and testable.
 - **I16 — One OFF:** every integration-owned WATERING exit attempts exactly one idempotent OFF sequence; cooperative termination is the normal control path.
 - **I17 — OFF proof:** unavailable, unknown, transitional, and nonzero-position actuator states are never accepted as OFF.
 - **I18 — Slot safety:** no new slot grant occurs while any integration-owned OFF is unconfirmed or startup/configuration reconciliation is incomplete, dirty, superseded, or failed.
-- **I19 — Physical-flow serialization:** SoilSync never commands a configured zone ON while any other configured or tombstoned actuator is observed or conservatively believed to be flowing, regardless of who initiated that flow; blockers remain keyed to their one owning `safety_record_id`, survive same-record reactivation or A -> B replacement without re-keying, and cannot clear one another.
+- **I19 — Physical-flow serialization:** MoistureLoop never commands a configured zone ON while any other configured or tombstoned actuator is observed or conservatively believed to be flowing, regardless of who initiated that flow; blockers remain keyed to their one owning `safety_record_id`, survive same-record reactivation or A -> B replacement without re-keying, and cannot clear one another.
 - **I20 — Disabled:** DISABLED never starts integration watering, and Disable terminates an active session. The enabled/disabled operational state is owned by the logical zone's `zone_runtime`, survives delete/re-add and A -> B replacement unchanged for a continuing zone, and is never overridden by a retained record's historical `enabled` value.
 - **I21 — Serialization:** at most one zone is integration-commanded ON at a time.
 - **I22 — Single session/reason:** at most one session task exists per zone and each created session records exactly one final reason.
@@ -1718,10 +1720,10 @@ Registered once in `async_setup` and never removed on entry unload:
 
 | Action | Required fields | Behaviour |
 |---|---|---|
-| `soilsync.start_manual_watering` | exactly one zone `device_id`; `duration` | validate runtime/faults; clamp per §20; queue slot; no unbounded ON |
-| `soilsync.stop_watering` | exactly one zone `device_id` | signal cooperative Stop; no-op in inactive states |
-| `soilsync.evaluate_zone` | exactly one zone `device_id` | run normal AUTO evaluation; bypasses nothing |
-| `soilsync.clear_fault` | exactly one zone `device_id` | clear only per fault matrix and OFF proof |
+| `moisture_loop.start_manual_watering` | exactly one zone `device_id`; `duration` | validate runtime/faults; clamp per §20; queue slot; no unbounded ON |
+| `moisture_loop.stop_watering` | exactly one zone `device_id` | signal cooperative Stop; no-op in inactive states |
+| `moisture_loop.evaluate_zone` | exactly one zone `device_id` | run normal AUTO evaluation; bypasses nothing |
+| `moisture_loop.clear_fault` | exactly one zone `device_id` | clear only per fault matrix and OFF proof |
 
 The action field uses the nested `DeviceSelector` integration filter specified in §5.3 and `multiple: false`; the removed generic target device-filter syntax is not used. Backend resolution is authoritative.
 
@@ -1733,10 +1735,10 @@ Translated `ServiceValidationError` cases include missing/ambiguous/wrong-integr
 
 Event types remain:
 
-- `soilsync_session_started`;
-- `soilsync_session_finished`;
-- `soilsync_fault_set`;
-- `soilsync_fault_cleared`.
+- `moisture_loop_session_started`;
+- `moisture_loop_session_finished`;
+- `moisture_loop_fault_set`;
+- `moisture_loop_fault_cleared`.
 
 Common identity fields are stable safety-record ID, safety-lineage ID, `zone_history_id`, last/current zone subentry ID, zone name, runtime lifecycle, device ID when it still exists, session ID where applicable, and mode. Same-actuator re-add events retain the same safety-record/lineage IDs and may expose the new current plus append-only previous subentry IDs. A -> B events identify the actual A or B safety record owning the event; they never relabel an A fault/blocker as B. Session finish adds reason/outcome, runtime, `runtime_estimated`, estimation reason, cycles, moisture before/after, requested/effective manual duration, and clamp reasons. Deleted-zone closure events must not invent or require a removed device ID.
 
@@ -1831,7 +1833,7 @@ The newest valid report is at 12:00 and `sensor_max_age` is five minutes. AUTO s
 
 ### 35.8 External flow blocks another zone
 
-Zone A is IDLE when an external actor opens its configured valve. SoilSync does not close A, but `(A_safety_record_id, external_flow)` blocks dry Zone B. If A becomes unavailable, the block remains. Only exact-identity proven OFF for A removes that key; any blocker for Zone C or an OFF-unconfirmed incident remains.
+Zone A is IDLE when an external actor opens its configured valve. MoistureLoop does not close A, but `(A_safety_record_id, external_flow)` blocks dry Zone B. If A becomes unavailable, the block remains. Only exact-identity proven OFF for A removes that key; any blocker for Zone C or an OFF-unconfirmed incident remains.
 
 ### 35.9 Native deletion while SOAKING
 
@@ -2129,7 +2131,7 @@ The pure state machine consumes `MoistureObservation` and actuator-result events
 This is an architecture plan, not authorization to scaffold in this task.
 
 ```text
-custom_components/soilsync/
+custom_components/moisture_loop/
   __init__.py              # async_setup actions; entry setup/unload lifecycle
   manifest.json            # helper, calculated, single_config_entry
   const.py
@@ -2269,7 +2271,7 @@ Lifecycle/action/config tests:
 - **LC1:** actions exist with zero loaded entries, register once across reloads, and raise translated unavailable errors.
 - **LC2:** device-ID resolution rejects non-zone, ambiguous, deleted, unloaded, and wrong-integration targets.
 - **LC3:** subentry reconfigure cooperatively prepares `CONFIG_CHANGED`, calls `async_update_and_abort`, is applied by the registered update-listener reconciler, and schedules at most one required reload; generic reload uses `CONFIG_RELOAD` and never changes run IDs.
-- **LC4:** full shutdown is exercised through an actual Home Assistant shutdown-stage harness (the real `hass.async_stop()` Stage-1 shutdown-job path), never by directly invoking an internal SoilSync stop handler. It proves that the registered Stage-1 job executes before `CoreState.stopping`, executes before Home Assistant cancels background tasks, drives exactly one OFF per record, stops both AUTO and MANUAL WATERING, preserves only eligible proven-OFF SOAKING, completes its Store save with a successful fresh same-key read-back, writes the clean marker only after total success, and, under an injected required OFF/persistence/read-back/timeout failure, leaves `active_run_id` and `last_clean_shutdown_run_id` unequal.
+- **LC4:** full shutdown is exercised through an actual Home Assistant shutdown-stage harness (the real `hass.async_stop()` Stage-1 shutdown-job path), never by directly invoking an internal MoistureLoop stop handler. It proves that the registered Stage-1 job executes before `CoreState.stopping`, executes before Home Assistant cancels background tasks, drives exactly one OFF per record, stops both AUTO and MANUAL WATERING, preserves only eligible proven-OFF SOAKING, completes its Store save with a successful fresh same-key read-back, writes the clean marker only after total success, and, under an injected required OFF/persistence/read-back/timeout failure, leaves `active_run_id` and `last_clean_shutdown_run_id` unequal.
 - **LC5:** Run A -> clean Run B during SOAKING validates owner A, then persists owner B while retaining the session.
 - **LC6:** Run B -> clean Run C during that same SOAKING validates owner B, persists owner C, and remains trusted SOAKING.
 - **LC7:** Run B crashes before clean marking; Run C rejects continuation even if the session owner was B.
@@ -2397,7 +2399,7 @@ All **37 invariants** map to at least one named test group. The pure five-state 
 | Store write interrupted or error swallowed by HA helper | atomic replacement plus revision/payload read-back; no ON or controller activation on mismatch | underlying storage must be repaired |
 | crash with actuator later found OFF | estimate through reconciliation, not scheduled end | overcount can suppress watering; deliberate |
 | external ON during soak | immediate defensive OFF and session invalidation | other HA actors cannot be prevented |
-| external ON outside a session | respect actor, keyed global resource blocker until proven OFF | SoilSync cannot bound external flow itself |
+| external ON outside a session | respect actor, keyed global resource blocker until proven OFF | MoistureLoop cannot bound external flow itself |
 | trusted SOAKING owner rebase fails | setup remains non-watering; session is not activated | watering is suppressed until persistence recovers |
 | repeated restart | new run IDs, idempotent reconciliation, never ON | persistent hardware fault remains physical risk |
 | task race/cancellation | cooperative owner, lock, one OFF future, fallback cancellation | forced process death can bypass software |
@@ -2421,14 +2423,14 @@ The integration adds no credentials, external API, executable content, or outbou
 
 Current packaging requirements:
 
-- one `custom_components/soilsync/` integration directory in the repository;
+- one `custom_components/moisture_loop/` integration directory in the repository;
 - custom manifest keys `domain`, `name`, `version`, `documentation`, `issue_tracker`, and `codeowners`, plus the HA keys chosen in §5.4;
 - compliant brand assets; keep a local `brand/icon.png` where supported for custom-repository presentation;
 - root `hacs.json`, minimally naming the integration and declaring `homeassistant: "2025.9.0"` as the supported HA floor;
 - README, license, GitHub description/topics, and issue tracker;
 - HACS Action with `category: integration`, hassfest, and tests in CI.
 
-GitHub releases are preferred but optional for custom-repository use. Before applying for HACS default inclusion, publish a full release, pass non-ignored HACS/hassfest checks, and submit `soilsync` assets to the centralized `home-assistant/brands` repository; the default-inclusion workflow explicitly checks that entry. Local brand assets do not replace that default-store requirement.
+GitHub releases are preferred but optional for custom-repository use. Before applying for HACS default inclusion, publish a full release, pass non-ignored HACS/hassfest checks, and submit `moisture_loop` assets to the centralized `home-assistant/brands` repository; the default-inclusion workflow explicitly checks that entry. Local brand assets do not replace that default-store requirement.
 
 HACS packaging is orthogonal to state-machine safety.
 
@@ -2442,7 +2444,7 @@ HACS packaging is orthogonal to state-machine safety.
 - Runtime Store schema 1 is the implemented spec.3 source format. Spec.4 schema 2 adds durable actuator/sensor identity, immutable applied shadows, runtime lifecycle/tombstones, one canonical mutable record per durable actuator lineage, append-only subentry audit metadata, exact blocker/evidence ownership, independent zone-history contribution continuity, and a `zone_runtime` logical-zone operational authority inside `zone_histories` (safety records keep only actuator-scoped safety state) while preserving all schema-1 runtime/fault/accounting/session history under its §23.2 owning authority.
 - Setup performs the exact verified schema-1 -> schema-2 migration in §23.2.1 before grants. Migration is atomic, increments revision, and uses fresh-Store full-payload read-back; malformed/unverifiable migration fails closed.
 - Unknown future Store version, generation mismatch, and unreconstructable identity follow the integrity/reconciliation policy, never a zero-budget or identity-guessed default. The independent config-entry generation/initialized model remains unchanged.
-- Domain/name are finalized as SoilSync / `soilsync` before the first release.
+- Domain/name are finalized as MoistureLoop / `moisture_loop` before the first release.
 
 ---
 
@@ -2606,6 +2608,6 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 
 **READY WITH PROTOTYPE VALIDATIONS**
 
-The architecture now resolves native config-subentry deletion with public update-listener-driven reconciliation, immutable applied shadows, an authoritative final ON fence, durable schema-2 actuator identity/tombstones, Store/config startup-union recovery, same-record delete/re-add, independent A -> B zone-history continuity, and explicit operational-state ownership: actuator safety authority stays on the canonical safety record while logical-zone operational state persists in the `zone_runtime` section of the zone history, so reactivated records cannot leak historical operational state. Independent Store/run identity, the AUTO freshness watchdog, exact-record physical-flow serialization, and trusted-SOAKING adoption remain intact. The five controller states remain unchanged. T1-T59 retain their IDs, topology, guards, actions, destinations, and reasons; only T21/T39 trigger wording is broadened to explicitly cover reconfiguration and native deletion reconciliation. All 59 transitions are represented by the §15 projection, all 37 invariants map to explicit tests, and the remaining §46 work is real platform/hardware/timing/presentation validation rather than an unresolved architectural blocker. Spec.5 additionally moves full-process shutdown ownership to exactly one removable Stage-1 `async_add_shutdown_job`, strengthens clean-run evidence so the verified clean marker is the final safety transaction, and removes all SoilSync safety ownership from `EVENT_HOMEASSISTANT_STOP`, without changing the five controller states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, or the strict §23.4 verification contract.
+The architecture now resolves native config-subentry deletion with public update-listener-driven reconciliation, immutable applied shadows, an authoritative final ON fence, durable schema-2 actuator identity/tombstones, Store/config startup-union recovery, same-record delete/re-add, independent A -> B zone-history continuity, and explicit operational-state ownership: actuator safety authority stays on the canonical safety record while logical-zone operational state persists in the `zone_runtime` section of the zone history, so reactivated records cannot leak historical operational state. Independent Store/run identity, the AUTO freshness watchdog, exact-record physical-flow serialization, and trusted-SOAKING adoption remain intact. The five controller states remain unchanged. T1-T59 retain their IDs, topology, guards, actions, destinations, and reasons; only T21/T39 trigger wording is broadened to explicitly cover reconfiguration and native deletion reconciliation. All 59 transitions are represented by the §15 projection, all 37 invariants map to explicit tests, and the remaining §46 work is real platform/hardware/timing/presentation validation rather than an unresolved architectural blocker. Spec.5 additionally moves full-process shutdown ownership to exactly one removable Stage-1 `async_add_shutdown_job`, strengthens clean-run evidence so the verified clean marker is the final safety transaction, and removes all MoistureLoop safety ownership from `EVENT_HOMEASSISTANT_STOP`, without changing the five controller states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, or the strict §23.4 verification contract.
 
 No implementation begins as part of this specification revision.

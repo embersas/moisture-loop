@@ -17,7 +17,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     ActuatorIdentity,
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
@@ -37,16 +37,16 @@ from custom_components.soilsync.models import (
     ZoneHistory,
     ZoneRuntime,
 )
-from custom_components.soilsync.reconciliation import (
+from custom_components.moisture_loop.reconciliation import (
     FinalOnAuthorizationResult,
     FinalOnAuthorizationToken,
 )
-from custom_components.soilsync.slot_manager import SlotManager
-from custom_components.soilsync.storage import (
+from custom_components.moisture_loop.slot_manager import SlotManager
+from custom_components.moisture_loop.storage import (
     SafetyStore,
     StoreWriteVerificationError,
 )
-from custom_components.soilsync.zone_controller import (
+from custom_components.moisture_loop.zone_controller import (
     ActuatorAdapter,
     ZoneController,
 )
@@ -557,7 +557,7 @@ class TestWatchdog:
         assert wenv.ctrl.active_fault is FaultCode.SENSOR_STALE
 
     async def test_sr13_deliberately_executed_stale_callback_no_ops(self, wenv) -> None:
-        from custom_components.soilsync.models import WatchdogFired
+        from custom_components.moisture_loop.models import WatchdogFired
 
         await set_moisture(wenv, "27")
         old_token = wenv.ctrl.armed_watchdog
@@ -823,7 +823,7 @@ class TestExternalInterference:
         assert ("zone-1", BlockerReason.INTEGRATION_OFF_UNCONFIRMED) in env.slots.blockers()
 
     async def test_er11_external_on_during_off_joins_same_operation(self, env) -> None:
-        from custom_components.soilsync.models import ExternalActuatorOn
+        from custom_components.moisture_loop.models import ExternalActuatorOn
 
         await set_moisture(env, "27")
         await advance(env, 300)  # SOAKING
@@ -933,7 +933,7 @@ class TestValveActuator:
 
 class TestLifecycleInputs:
     async def test_config_reload_terminates_watering(self, env) -> None:
-        from custom_components.soilsync.models import ConfigEntryReload
+        from custom_components.moisture_loop.models import ConfigEntryReload
 
         await set_moisture(env, "27")
         await env.ctrl.async_dispatch(ConfigEntryReload())
@@ -1005,7 +1005,7 @@ class TestControllerEdges:
         from dataclasses import replace
         from datetime import date, datetime
 
-        from custom_components.soilsync.models import ZoneDailyRuntime
+        from custom_components.moisture_loop.models import ZoneDailyRuntime
 
         e = await build_env(hass, freezer)
         await e.ctrl.async_detach()
@@ -1232,7 +1232,7 @@ class TestControllerEdges:
         await ctrl2.async_detach()
 
     async def test_unhandled_action_falls_through(self, env) -> None:
-        from custom_components.soilsync.models import Decision, RequeueSlotTail
+        from custom_components.moisture_loop.models import Decision, RequeueSlotTail
 
         # RequeueSlotTail is vocabulary the pure core no longer emits; the
         # apply chain tolerates it as a no-op.

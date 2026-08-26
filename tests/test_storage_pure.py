@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     AccountingContribution,
     ActuatorIdentity,
     AppliedConfigurationShadow,
@@ -352,7 +352,7 @@ class TestSchemaStrictness:
             store_data_from_dict(payload)
 
     def test_non_object_payloads_rejected(self) -> None:
-        from custom_components.soilsync.models import (
+        from custom_components.moisture_loop.models import (
             session_from_dict,
             zone_record_from_dict,
         )
@@ -364,7 +364,7 @@ class TestSchemaStrictness:
                 parser(None)
 
     def test_session_bogus_retained_fault_rejected(self) -> None:
-        from custom_components.soilsync.models import session_from_dict, session_to_dict
+        from custom_components.moisture_loop.models import session_from_dict, session_to_dict
 
         payload = session_to_dict(full_session())
         payload["retained_sensor_fault"] = "gremlins"
@@ -372,7 +372,7 @@ class TestSchemaStrictness:
             session_from_dict(payload)
 
     def test_session_non_numeric_duration_rejected(self) -> None:
-        from custom_components.soilsync.models import session_from_dict, session_to_dict
+        from custom_components.moisture_loop.models import session_from_dict, session_to_dict
 
         payload = session_to_dict(full_session())
         payload["manual_requested_duration_s"] = "long"
@@ -712,7 +712,7 @@ class TestConfigFingerprint:
     """§23.2: deterministic, covers every §9 setting plus IDs and timezone."""
 
     def make_config(self, **overrides: object):
-        from custom_components.soilsync.models import ZoneConfig
+        from custom_components.moisture_loop.models import ZoneConfig
 
         base: dict[str, object] = {
             "name": "Front bed",
@@ -734,7 +734,7 @@ class TestConfigFingerprint:
         return ZoneConfig(**base)  # type: ignore[arg-type]
 
     def test_deterministic(self) -> None:
-        from custom_components.soilsync.models import config_fingerprint
+        from custom_components.moisture_loop.models import config_fingerprint
 
         a = config_fingerprint(self.make_config(), "Australia/Brisbane")
         b = config_fingerprint(self.make_config(), "Australia/Brisbane")
@@ -742,7 +742,7 @@ class TestConfigFingerprint:
         assert len(a) == 64  # SHA-256 hex
 
     def test_every_field_changes_fingerprint(self) -> None:
-        from custom_components.soilsync.models import config_fingerprint
+        from custom_components.moisture_loop.models import config_fingerprint
 
         base = config_fingerprint(self.make_config(), "Australia/Brisbane")
         variants = [

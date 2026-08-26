@@ -7,6 +7,7 @@ integration runtime behaviour (none exists yet).
 from __future__ import annotations
 
 import ast
+import re
 import sys
 from pathlib import Path
 
@@ -41,7 +42,7 @@ def test_pure_modules_have_no_homeassistant_import() -> None:
     live audit of every pure-layer file.
     """
     pure_files = [
-        REPO_ROOT / "custom_components" / "soilsync" / name
+        REPO_ROOT / "custom_components" / "moisture_loop" / name
         for name in ("models.py", "const.py", "state_machine.py", "slot_manager.py")
     ]
     for file in pure_files:
@@ -71,7 +72,7 @@ def test_production_source_uses_no_prohibited_config_entry_internals() -> None:
         "async_prepare_delete",
         "websocket_intercept",
     }
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)} | {
@@ -90,7 +91,7 @@ def test_local_only_and_no_recorder_dependency() -> None:
         "urllib",
         "homeassistant.components.recorder",
     }
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         imports: set[str] = set()
@@ -108,7 +109,7 @@ def test_local_only_and_no_recorder_dependency() -> None:
 
 def test_schema1_compatibility_is_migration_only() -> None:
     """ZoneRecord/schema 1 cannot be current watering or reconciliation authority."""
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     allowed = {"models.py", "storage.py"}
     for file in integration.glob("*.py"):
         text = file.read_text(encoding="utf-8")
@@ -140,7 +141,7 @@ def test_schema1_compatibility_is_migration_only() -> None:
 
 def test_blocker_ownership_is_safety_record_only() -> None:
     """I19: physical hazard calls never key blockers by zone/subentry ID."""
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     calls = 0
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
@@ -158,7 +159,7 @@ def test_blocker_ownership_is_safety_record_only() -> None:
 
 
 def test_no_production_stop_event_shutdown_owner() -> None:
-    """spec.5 §24.1: EVENT_HOMEASSISTANT_STOP owns no SoilSync safety work.
+    """spec.5 §24.1: EVENT_HOMEASSISTANT_STOP owns no MoistureLoop safety work.
 
     It fires only after Core cancelled background tasks and set
     CoreState.stopping, where Store.async_save merely queues its payload for
@@ -171,7 +172,7 @@ def test_no_production_stop_event_shutdown_owner() -> None:
         "install_stop_listener",
         "async_listen_once",
     }
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         used: set[str] = set()
@@ -189,7 +190,7 @@ def test_no_production_stop_event_shutdown_owner() -> None:
 
 def test_exactly_one_stage1_shutdown_owner_registration() -> None:
     """spec.5 §22.1/§24.1: one removable Stage-1 job, owned by entry unload."""
-    runtime = (REPO_ROOT / "custom_components" / "soilsync" / "runtime.py").read_text(
+    runtime = (REPO_ROOT / "custom_components" / "moisture_loop" / "runtime.py").read_text(
         encoding="utf-8"
     )
     tree = ast.parse(runtime)
@@ -204,7 +205,7 @@ def test_exactly_one_stage1_shutdown_owner_registration() -> None:
     assert "self.entry.async_on_unload(self.remove_shutdown_job)" in runtime
     assert "async def async_stage1_shutdown(" in runtime
     # No other production module may own or initiate process shutdown.
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     for file in integration.glob("*.py"):
         if file.name == "runtime.py":
             continue
@@ -215,7 +216,7 @@ def test_exactly_one_stage1_shutdown_owner_registration() -> None:
 
 def test_one_shared_off_implementation() -> None:
     """I16: flow exits converge on the controller's one OFF future."""
-    integration = REPO_ROOT / "custom_components" / "soilsync"
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
     callers: list[tuple[str, int]] = []
     for file in integration.glob("*.py"):
         tree = ast.parse(file.read_text(encoding="utf-8"))
@@ -235,3 +236,62 @@ def test_one_shared_off_implementation() -> None:
     assert "def begin_off_operation(" in controller
     assert "async def _ensure_off_operation(" in controller
     assert "self._off_operation" in controller
+
+
+def test_canonical_identity_has_no_stale_product_name() -> None:
+    """Canonical rename audit (§7): active surfaces carry only MoistureLoop.
+
+    The integration directory, manifest domain, ``DOMAIN`` constant, package
+    imports, metadata, CI, scripts, and tests must never regress to the
+    abandoned pre-release product identity or to the spaced working name. The
+    two historical ledgers are exempt because they truthfully record the eras
+    in which those names were current.
+    """
+    import json
+
+    integration = REPO_ROOT / "custom_components" / "moisture_loop"
+    manifest = json.loads((integration / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["domain"] == "moisture_loop" == integration.name
+    assert manifest["name"] == "MoistureLoop"
+    assert "embersas/moisture-loop" in manifest["documentation"]
+    assert "embersas/moisture-loop" in manifest["issue_tracker"]
+    assert json.loads((REPO_ROOT / "hacs.json").read_text(encoding="utf-8"))["name"] == (
+        "MoistureLoop"
+    )
+    assert [p.name for p in (REPO_ROOT / "custom_components").iterdir()] == ["moisture_loop"]
+
+    historical = {"PROGRESS.md", "PROTOTYPE_VALIDATION.md"}
+    # Assembled so this audit does not itself contain the abandoned token.
+    abandoned = "soil" + "sync"
+    spaced_working_name = "moisture" + " loop"
+    unbroken = "moisture" + "loop"
+    stale = re.compile(rf"{abandoned}|{spaced_working_name}|{unbroken}", re.IGNORECASE)
+    scanned = 0
+    roots = [
+        entry
+        for entry in REPO_ROOT.iterdir()
+        if not entry.name.startswith((".", "evidence", "htmlcov", "coverage"))
+    ]
+    for root in roots:
+        candidates = root.rglob("*") if root.is_dir() else [root]
+        for path in candidates:
+            rel = path.relative_to(REPO_ROOT)
+            if not path.is_file() or "__pycache__" in rel.parts:
+                continue
+            if path.suffix in {".png", ".pyc", ".xml"} or path.name in historical:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                for match in stale.finditer(line):
+                    token = match.group(0)
+                    # "MoistureLoop" is the canonical display form; only the
+                    # lowercase unbroken form and the spaced working name are stale.
+                    if token == "MoistureLoop":
+                        continue
+                    # SPECIFICATION.md may name the abandoned identity only as
+                    # history, on a line that also states the canonical identity.
+                    if path.name == "SPECIFICATION.md" and "MoistureLoop" in line:
+                        continue
+                    raise AssertionError(f"stale identity {token!r} in {rel}:{line_number}")
+            scanned += 1
+    assert scanned > 40

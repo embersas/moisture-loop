@@ -26,13 +26,13 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.soilsync import EntryRuntime, zone_config_from_subentry
-from custom_components.soilsync.const import (
+from custom_components.moisture_loop import EntryRuntime, zone_config_from_subentry
+from custom_components.moisture_loop.const import (
     CONF_RUNTIME_STORE_GENERATION_ID,
     CONF_RUNTIME_STORE_INITIALIZED,
     DOMAIN,
 )
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     ActuatorIdentity,
     AppliedConfigurationShadow,
     AppliedEntityIdentity,
@@ -63,11 +63,11 @@ from custom_components.soilsync.models import (
     config_fingerprint,
     store_data_to_dict,
 )
-from custom_components.soilsync.reconciliation import (
+from custom_components.moisture_loop.reconciliation import (
     ReconciliationError,
     normalized_zone_fingerprint,
 )
-from custom_components.soilsync.storage import (
+from custom_components.moisture_loop.storage import (
     SafetyStore,
     SetupClassification,
     StoreWriteVerificationError,
@@ -125,7 +125,7 @@ class ScriptedSwitch:
 def make_entry(hass, initialized: bool = True) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="SoilSync",
+        title="MoistureLoop",
         data={
             CONF_RUNTIME_STORE_GENERATION_ID: GEN,
             CONF_RUNTIME_STORE_INITIALIZED: initialized,
@@ -379,9 +379,11 @@ async def start_runtime(hass, entry) -> EntryRuntime:
 
 
 def registered_shutdown_jobs(hass) -> list:
-    """Return Core's public Stage-1 shutdown-job registrations for SoilSync."""
+    """Return Core's public Stage-1 shutdown-job registrations for MoistureLoop."""
     return [
-        job for job in hass._shutdown_jobs if "soilsync stage-1 shutdown" in (job.job.name or "")
+        job
+        for job in hass._shutdown_jobs
+        if "moisture_loop stage-1 shutdown" in (job.job.name or "")
     ]
 
 
@@ -1067,7 +1069,7 @@ class TestShutdownAndReload:
                 probe_cancelled.set()
                 raise
 
-        env.hass.async_create_background_task(_probe(), name="soilsync-test-probe")
+        env.hass.async_create_background_task(_probe(), name="moisture_loop-test-probe")
         await asyncio.sleep(0)
 
         entry_observation: dict = {}
@@ -1089,7 +1091,7 @@ class TestShutdownAndReload:
                 runtime.store.data.run.last_clean_shutdown_run_id == runtime.run_id
             )
 
-        # Registered after SoilSync's own job: both run inside the same Stage 1.
+        # Registered after MoistureLoop's own job: both run inside the same Stage 1.
         env.hass.async_add_shutdown_job(HassJob(_at_stage1_entry, "probe entry"))
         env.hass.async_add_shutdown_job(HassJob(_after_stage1, "probe exit"))
 
@@ -1111,7 +1113,7 @@ class TestShutdownAndReload:
         assert exit_observation["core_state"] is CoreState.running
         assert exit_observation["probe_cancelled"] is False
         assert exit_observation["clean_marker"] is True
-        # SoilSync's own job observed a not-yet-stopping Core.
+        # MoistureLoop's own job observed a not-yet-stopping Core.
         report = runtime.shutdown_report
         assert report is not None
         assert report.core_state_at_entry == CoreState.running.name
@@ -1479,7 +1481,7 @@ class TestStartupResourceSafety:
     async def test_setup_entry_and_unload_via_module_api(self, env) -> None:
         from unittest.mock import AsyncMock, patch
 
-        from custom_components.soilsync import async_setup_entry, async_unload_entry
+        from custom_components.moisture_loop import async_setup_entry, async_unload_entry
 
         entry = make_entry(env.hass, initialized=False)
         # Platform forwarding needs HA's own setup machinery; the flow tests
@@ -1505,7 +1507,7 @@ class TestRuntimeEdges:
     """Remaining deterministic lifecycle edges."""
 
     async def test_async_setup_returns_true(self, env) -> None:
-        from custom_components.soilsync import async_setup
+        from custom_components.moisture_loop import async_setup
 
         assert await async_setup(env.hass, {}) is True
 
@@ -1686,7 +1688,7 @@ class TestRuntimeEdges:
         await runtime.async_unload()
 
     async def test_external_flow_is_respected_and_still_clean(self, env) -> None:
-        """§23.3/§24.1: SoilSync does not own external water, so it is not
+        """§23.3/§24.1: MoistureLoop does not own external water, so it is not
         counter-commanded, its keyed blocker is verified-persisted, and the
         process may still be clean."""
         entry = make_entry(env.hass, initialized=False)

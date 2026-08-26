@@ -34,8 +34,8 @@ from test_entities import (
     setup_with_zone,
 )
 
-from custom_components.soilsync.const import DOMAIN
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.const import DOMAIN
+from custom_components.moisture_loop.models import (
     BlockerReason,
     CompletionReason,
     ControllerState,
@@ -44,7 +44,7 @@ from custom_components.soilsync.models import (
     RuntimeLifecycle,
     SessionMode,
 )
-from custom_components.soilsync.repairs import ISSUE_IDENTITY_CONFLICT, record_issue_id
+from custom_components.moisture_loop.repairs import ISSUE_IDENTITY_CONFLICT, record_issue_id
 
 RENAMED = "valve.valve_1_renamed"
 

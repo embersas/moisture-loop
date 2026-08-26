@@ -1,8 +1,8 @@
-# SoilSync
+# MoistureLoop
 
-Closed-loop soil moisture irrigation for Home Assistant.
+Soil moisture-driven irrigation for Home Assistant.
 
-SoilSync pairs one soil-moisture sensor with one `switch` or `valve`
+MoistureLoop pairs one soil-moisture sensor with one `switch` or `valve`
 actuator per zone for closed-loop drip irrigation and watering. It waters in
 bounded pulses, waits for water to redistribute through the soil, then requires
 a fresh report made at or after the soak ends before deciding whether to pulse
@@ -36,9 +36,9 @@ The comparisons are exact:
 
 When an upstream integration writes an unchanged reading to Home Assistant,
 Home Assistant can expose it through the entity-filtered `state_reported` path
-and SoilSync treats it as a genuine report. Some integrations suppress
+and MoistureLoop treats it as a genuine report. Some integrations suppress
 unchanged source updates before they become Home Assistant state writes;
-SoilSync cannot treat those invisible source messages as fresh reports. A
+MoistureLoop cannot treat those invisible source messages as fresh reports. A
 fallback scan never invents a new report timestamp.
 
 ### Freshness and watchdogs
@@ -50,16 +50,16 @@ when the newest valid report reaches its configured maximum age. A newer valid
 report, changed or unchanged, replaces that deadline.
 
 SOAKING uses a separate rule: a report before the soak ends may update the UI
-but cannot decide the session. After the soak, SoilSync waits for a
+but cannot decide the session. After the soak, MoistureLoop waits for a
 qualifying report for at most one sensor-freshness window, then faults stale.
 
 ### Sensor freshness compatibility
 
-SoilSync measures freshness from the report timestamp Home Assistant exposes.
+MoistureLoop measures freshness from the report timestamp Home Assistant exposes.
 The default Sensor Report Maximum Age is a conservative, configurable two
 hours. During healthy operation, the selected moisture entity must produce Home
 Assistant state writes often enough to remain within that limit, including
-during long periods when the measured moisture does not change. SoilSync can
+during long periods when the measured moisture does not change. MoistureLoop can
 use changed reports and unchanged reports that Home Assistant actually exposes,
 but it cannot infer a physical heartbeat that the upstream integration hides.
 Polling or scanning the entity does not substitute for a report.
@@ -68,7 +68,7 @@ For MQTT-backed sensors, Home Assistant's MQTT sensor normally has
 `force_update: false`. If unchanged MQTT payloads are suppressed and do not
 advance the moisture entity's report timestamp, configure the MQTT entity or
 source so healthy unchanged reports produce Home Assistant state writes. Where
-appropriate, `force_update: true` is one way to do this; it is not a SoilSync
+appropriate, `force_update: true` is one way to do this; it is not a MoistureLoop
 requirement or a universal recommendation. Consider the source update rate and
 system impact before forcing every update. See the official
 [Home Assistant MQTT Sensor documentation](https://www.home-assistant.io/integrations/sensor.mqtt/).
@@ -78,7 +78,7 @@ system impact before forcing every update. See the official
 - Watering commands are globally serialized: at most one integration-commanded
   zone flows at a time.
 - An actuator observed or conservatively believed to be flowing blocks every
-  new integration ON, including flow started outside SoilSync.
+  new integration ON, including flow started outside MoistureLoop.
 - External flow outside a session is respected and is not counter-commanded;
   it blocks the shared resource until that exact actuator is proven OFF.
 - Every AUTO pulse must fit in full. No partial trailing pulse is used to spend
@@ -101,30 +101,30 @@ system impact before forcing every update. See the official
 
 Software cannot close mechanically failed hardware. Use a valve with a hardware
 maximum runtime, a master valve, or another independent physical failsafe. If
-OFF cannot be proven, SoilSync raises a critical Repair, retains the global
+OFF cannot be proven, MoistureLoop raises a critical Repair, retains the global
 blocker, and continues conservative accounting until exact OFF evidence exists.
 
 ## Installation
 
 The public source and documentation repository is
-[`embersas/soilsync`](https://github.com/embersas/soilsync), and
+[`embersas/moisture-loop`](https://github.com/embersas/moisture-loop), and
 problems can be reported through its
-[issue tracker](https://github.com/embersas/soilsync/issues).
+[issue tracker](https://github.com/embersas/moisture-loop/issues).
 
-No GitHub Release has been published, and SoilSync is not included in the
+No GitHub Release has been published, and MoistureLoop is not included in the
 HACS default store. It can be installed as a HACS custom repository:
 
 1. Open HACS → Integrations → ⋮ → Custom repositories.
-2. Add `https://github.com/embersas/soilsync` as category Integration.
-3. Install SoilSync and restart Home Assistant.
+2. Add `https://github.com/embersas/moisture-loop` as category Integration.
+3. Install MoistureLoop and restart Home Assistant.
 
 For manual development installation, copy
-`custom_components/soilsync/` into the Home Assistant
+`custom_components/moisture_loop/` into the Home Assistant
 `config/custom_components/` directory and restart Home Assistant.
 
 ## Configure zones
 
-1. Settings → Devices & services → Add integration → SoilSync.
+1. Settings → Devices & services → Add integration → MoistureLoop.
 2. Create the single controller entry.
 3. On that entry, choose Add zone and select the name, sensor, actuator,
    thresholds, pulse/soak timing, and safety limits.
@@ -170,7 +170,7 @@ continue onto B; B cannot clear or inherit A's actuator hazard.
 
 A zone can be deleted through Home Assistant's normal UI or API. Core removes
 the configuration subentry through its native path. From that visible removal,
-SoilSync rejects every new ON for the zone and safely terminates an active
+MoistureLoop rejects every new ON for the zone and safely terminates an active
 AUTO, MANUAL, or SOAKING session in the background. No manual reload is needed.
 
 The zone device and entities disappear, but runtime safety evidence may remain
@@ -194,23 +194,23 @@ button because a safe manual request requires an explicit duration.
 
 ## Actions
 
-All four actions require exactly one current SoilSync zone `device_id`.
+All four actions require exactly one current MoistureLoop zone `device_id`.
 Targets are checked again in the backend. Deleted, unloaded, non-active,
 reconciling, failed, or otherwise unsafe runtimes are refused.
 
 | Action | Required data | Behavior |
 |---|---|---|
-| `soilsync.start_manual_watering` | `device_id`, `duration` in seconds | Starts one explicit bounded run; may clamp or refuse it. |
-| `soilsync.stop_watering` | `device_id` | Cooperatively stops an active session; no-op when inactive. |
-| `soilsync.evaluate_zone` | `device_id` | Runs normal AUTO evaluation and bypasses no guard. |
-| `soilsync.clear_fault` | `device_id` | Clears only when that fault's safety condition permits it. |
+| `moisture_loop.start_manual_watering` | `device_id`, `duration` in seconds | Starts one explicit bounded run; may clamp or refuse it. |
+| `moisture_loop.stop_watering` | `device_id` | Cooperatively stops an active session; no-op when inactive. |
+| `moisture_loop.evaluate_zone` | `device_id` | Runs normal AUTO evaluation and bypasses no guard. |
+| `moisture_loop.clear_fault` | `device_id` | Clears only when that fault's safety condition permits it. |
 
 Example matching `services.yaml`:
 
 ```yaml
-action: soilsync.start_manual_watering
+action: moisture_loop.start_manual_watering
 data:
-  device_id: abc123...  # SoilSync zone device
+  device_id: abc123...  # MoistureLoop zone device
   duration: 600         # requested seconds
 ```
 
@@ -230,7 +230,7 @@ is critical. Exact OFF evidence releases only that actuator's blocker and
 closes its accounting; acknowledgement remains separate and cannot clear a
 different retained record.
 
-Download diagnostics from the SoilSync config entry. They include Store
+Download diagnostics from the MoistureLoop config entry. They include Store
 schema/run integrity, configuration-application state, active and retained
 safety records, durable identities, blockers, sessions/accounting, current
 observations, and recent transitions with identifiers redacted or shortened as
@@ -250,15 +250,15 @@ reporting cadence. A stale fault can mean either that the sensor genuinely
 stopped reporting or that source reports continued while unchanged updates were
 suppressed before reaching the Home Assistant entity. If the source remains
 healthy but `last_reported` does not advance, correct the upstream entity
-configuration instead of treating a larger SoilSync timeout as the first fix.
+configuration instead of treating a larger MoistureLoop timeout as the first fix.
 For MQTT sensors, `force_update: true` is one possible integration-specific
 remedy, not a general requirement. A different Sensor Report Maximum Age remains
 available within the configured range when the sensor's legitimate observable
 cadence requires it.
 
-The integration also emits `soilsync_session_started`,
-`soilsync_session_finished`, `soilsync_fault_set`, and
-`soilsync_fault_cleared` events.
+The integration also emits `moisture_loop_session_started`,
+`moisture_loop_session_finished`, `moisture_loop_fault_set`, and
+`moisture_loop_fault_cleared` events.
 
 ## Known limitations and validation status
 
@@ -308,14 +308,14 @@ publication are not implied by the local icon or this repository metadata.
 
 ## License
 
-SoilSync software is licensed under the GNU General Public License version 3
+MoistureLoop software is licensed under the GNU General Public License version 3
 only (`GPL-3.0-only`); see [LICENSE](LICENSE). Distributed modifications and
 derivative works are subject to the applicable GPL requirements.
 
 ### Name and branding
 
-The GPL licence applies to the software code. The SoilSync name, logo, and
+The GPL licence applies to the software code. The MoistureLoop name, logo, and
 official project branding are addressed separately in
 [TRADEMARKS.md](TRADEMARKS.md). Forks and derivative distributions must not
-falsely imply that they are official SoilSync releases or are endorsed by the
+falsely imply that they are official MoistureLoop releases or are endorsed by the
 official project.

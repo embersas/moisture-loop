@@ -974,7 +974,7 @@ class ZoneController:
         self._off_error = None
         self._off_task = self._hass.async_create_background_task(
             self._complete_off_operation(operation),
-            name=f"soilsync.off.{self.zone_id}",
+            name=f"moisture_loop.off.{self.zone_id}",
         )
         return operation
 
@@ -1624,7 +1624,7 @@ class ZoneController:
         if self._slot_task is not None and not self._slot_task.done():
             return
         self._slot_task = self._hass.async_create_background_task(
-            self._await_slot(), name=f"soilsync.slot.{self.zone_id}"
+            self._await_slot(), name=f"moisture_loop.slot.{self.zone_id}"
         )
 
     async def _await_slot(self) -> None:
@@ -1651,7 +1651,7 @@ class ZoneController:
             # Background task: it lives for the whole session and must not
             # block Home Assistant's tracked-task draining.
             self._session_task = self._hass.async_create_background_task(
-                self._run_session(), name=f"soilsync.session.{self.zone_id}"
+                self._run_session(), name=f"moisture_loop.session.{self.zone_id}"
             )
 
     async def _run_session(self) -> None:

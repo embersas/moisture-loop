@@ -401,7 +401,7 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
         ),
     ),
     # LC4 is now exercised through the real hass.async_stop() Stage-1
-    # shutdown-job path, never by invoking an internal SoilSync handler.
+    # shutdown-job path, never by invoking an internal MoistureLoop handler.
     "LC4": both(
         Evidence(
             "tests/test_lifecycle.py::TestShutdownAndReload::test_lc4_full_shutdown_through_real_core_stage_ordering",

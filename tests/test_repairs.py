@@ -27,11 +27,11 @@ from test_entities import (
     setup_with_zone,
 )
 
-from custom_components.soilsync.const import DOMAIN
-from custom_components.soilsync.diagnostics import (
+from custom_components.moisture_loop.const import DOMAIN
+from custom_components.moisture_loop.diagnostics import (
     async_get_config_entry_diagnostics,
 )
-from custom_components.soilsync.repairs import (
+from custom_components.moisture_loop.repairs import (
     ISSUE_OFF_UNCONFIRMED,
     async_create_fix_flow,
     record_issue_id,
@@ -172,7 +172,7 @@ class TestRepairs:
         assert issue(env.hass, issue_id) is not None
 
     async def test_retired_tombstone_fix_without_controller_or_device(self, env) -> None:
-        from custom_components.soilsync.models import FaultCode
+        from custom_components.moisture_loop.models import FaultCode
 
         controller = env.runtime.controllers[env.subentry_id]
         record_id = controller.safety_record_id
@@ -232,8 +232,8 @@ class TestRepairs:
     async def test_integrity_issue_created_on_loss(self, hass, freezer) -> None:
         from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-        from custom_components.soilsync import EntryRuntime
-        from custom_components.soilsync.const import (
+        from custom_components.moisture_loop import EntryRuntime
+        from custom_components.moisture_loop.const import (
             CONF_RUNTIME_STORE_GENERATION_ID,
             CONF_RUNTIME_STORE_INITIALIZED,
         )
@@ -319,7 +319,7 @@ class TestEvents:
         assert kinds(env).count("session_finished") == 1
 
     async def test_deleted_record_fault_event_needs_no_device(self, env) -> None:
-        from custom_components.soilsync.models import FaultCode
+        from custom_components.moisture_loop.models import FaultCode
 
         controller = env.runtime.controllers[env.subentry_id]
         record_id = controller.safety_record_id
@@ -407,7 +407,7 @@ class TestDiagnostics:
 
 class TestLogging:
     async def test_safety_relevant_levels(self, env, caplog) -> None:
-        caplog.set_level(logging.DEBUG, logger="custom_components.soilsync")
+        caplog.set_level(logging.DEBUG, logger="custom_components.moisture_loop")
         await set_moisture(env, "20")
         assert any(
             record.levelno == logging.INFO and "session started" in record.message
@@ -422,7 +422,7 @@ class TestLogging:
         )
 
     async def test_off_timeout_logs_error(self, env, caplog) -> None:
-        caplog.set_level(logging.DEBUG, logger="custom_components.soilsync")
+        caplog.set_level(logging.DEBUG, logger="custom_components.moisture_loop")
         await set_moisture(env, "20")
 
         async def silent_close(call) -> None:
@@ -440,7 +440,7 @@ class TestLogging:
         )
 
     async def test_normal_pulse_details_are_debug(self, env, caplog) -> None:
-        caplog.set_level(logging.DEBUG, logger="custom_components.soilsync")
+        caplog.set_level(logging.DEBUG, logger="custom_components.moisture_loop")
         await set_moisture(env, "33")  # a guard-refused evaluation
         refusal_records = [
             record
@@ -452,7 +452,7 @@ class TestLogging:
 
 class TestRepairEdges:
     async def test_async_reload_failure_creates_reconciliation_issue(self, env) -> None:
-        from custom_components.soilsync.repairs import (
+        from custom_components.moisture_loop.repairs import (
             ISSUE_RECONCILIATION_FAILED,
         )
 
@@ -475,9 +475,9 @@ class TestRepairEdges:
         assert not env.runtime.slots.snapshot().admission_open
 
     async def test_reconciliation_failure_issue_clears_only_after_recovery(self, env) -> None:
-        from custom_components.soilsync.models import BlockerReason
-        from custom_components.soilsync.reconciliation import ReconciliationError
-        from custom_components.soilsync.repairs import (
+        from custom_components.moisture_loop.models import BlockerReason
+        from custom_components.moisture_loop.reconciliation import ReconciliationError
+        from custom_components.moisture_loop.repairs import (
             ISSUE_RECONCILIATION_FAILED,
         )
 
@@ -539,8 +539,8 @@ class TestRepairEdges:
     async def test_integrity_ack_clears_issue(self, hass, freezer) -> None:
         from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-        from custom_components.soilsync import EntryRuntime
-        from custom_components.soilsync.const import (
+        from custom_components.moisture_loop import EntryRuntime
+        from custom_components.moisture_loop.const import (
             CONF_RUNTIME_STORE_GENERATION_ID,
             CONF_RUNTIME_STORE_INITIALIZED,
         )
@@ -599,7 +599,7 @@ class TestInstrumentationEdges:
         assert controller.active_fault.value == "configuration_invalid"
 
     async def test_success_completion_logs_info(self, env, caplog) -> None:
-        caplog.set_level(logging.INFO, logger="custom_components.soilsync")
+        caplog.set_level(logging.INFO, logger="custom_components.moisture_loop")
         controller = env.runtime.controllers[env.subentry_id]
         await controller.async_manual_start(60.0)
         await settle(env.hass)
@@ -611,8 +611,8 @@ class TestInstrumentationEdges:
         )
 
     async def test_constrained_completion_logs_warning(self, env, caplog) -> None:
-        caplog.set_level(logging.DEBUG, logger="custom_components.soilsync")
-        from custom_components.soilsync.models import (
+        caplog.set_level(logging.DEBUG, logger="custom_components.moisture_loop")
+        from custom_components.moisture_loop.models import (
             AutoEvaluate,
             CompletionReason,
             ControllerState,

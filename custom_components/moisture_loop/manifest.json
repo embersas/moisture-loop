@@ -1,12 +1,12 @@
 {
-  "domain": "soilsync",
-  "name": "SoilSync",
+  "domain": "moisture_loop",
+  "name": "MoistureLoop",
   "codeowners": ["@embersas"],
   "config_flow": true,
-  "documentation": "https://github.com/embersas/soilsync",
+  "documentation": "https://github.com/embersas/moisture-loop",
   "integration_type": "helper",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/embersas/soilsync/issues",
+  "issue_tracker": "https://github.com/embersas/moisture-loop/issues",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.1.0"

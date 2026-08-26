@@ -26,13 +26,13 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
-from custom_components.soilsync import EntryRuntime
-from custom_components.soilsync.const import (
+from custom_components.moisture_loop import EntryRuntime
+from custom_components.moisture_loop.const import (
     CONF_RUNTIME_STORE_GENERATION_ID,
     CONF_RUNTIME_STORE_INITIALIZED,
     DOMAIN,
 )
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     BlockerReason,
     CompletionReason,
     ControllerState,
@@ -45,7 +45,7 @@ from custom_components.soilsync.models import (
     StopRequested,
     WatchdogFired,
 )
-from custom_components.soilsync.zone_controller import OnCommandOutcome
+from custom_components.moisture_loop.zone_controller import OnCommandOutcome
 
 GEN = "44444444-5555-6666-7777-888888888888"
 SENSOR = "sensor.stage4_moisture"
@@ -153,7 +153,7 @@ async def command_env(request, hass, hass_storage, freezer):
     hass.states.async_set(SENSOR, "35")
     entry = MockConfigEntry(
         domain=DOMAIN,
-        title="SoilSync Stage 4",
+        title="MoistureLoop Stage 4",
         data={
             CONF_RUNTIME_STORE_GENERATION_ID: GEN,
             CONF_RUNTIME_STORE_INITIALIZED: False,

@@ -1,4 +1,4 @@
-"""SoilSync binary sensors (SPECIFICATION.md §28.2)."""
+"""MoistureLoop binary sensors (SPECIFICATION.md §28.2)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .entity import SoilSyncZoneEntity
+from .entity import MoistureLoopZoneEntity
 from .models import BlockerReason, ControllerState, MoistureClassification
 from .runtime import EntryRuntime
 from .zone_controller import ZoneController
@@ -33,7 +33,7 @@ async def async_setup_entry(
         )
 
 
-class ZoneWateringBinarySensor(SoilSyncZoneEntity, BinarySensorEntity):
+class ZoneWateringBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
     """ON while this configured actuator may be flowing (§28.2)."""
 
     _attr_device_class = BinarySensorDeviceClass.RUNNING
@@ -55,7 +55,7 @@ class ZoneWateringBinarySensor(SoilSyncZoneEntity, BinarySensorEntity):
         )
 
 
-class ZoneProblemBinarySensor(SoilSyncZoneEntity, BinarySensorEntity):
+class ZoneProblemBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
     """ON whenever active or retained fault metadata exists (§28.2)."""
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
@@ -80,7 +80,7 @@ class ZoneProblemBinarySensor(SoilSyncZoneEntity, BinarySensorEntity):
         )
 
 
-class ZoneNeedsWaterBinarySensor(SoilSyncZoneEntity, BinarySensorEntity):
+class ZoneNeedsWaterBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
     """Informational dryness view; never a guard bypass (§28.2, I27).
 
     ON only when the latest observation is VALID+fresh and strictly below

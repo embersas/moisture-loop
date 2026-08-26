@@ -465,12 +465,12 @@ class ConfigurationReconciliationCoordinator:
         if self._task_creator is None:
             self._reload_task = asyncio.create_task(
                 coroutine,
-                name="soilsync configuration reload",
+                name="moisture_loop configuration reload",
             )
         else:
             self._reload_task = self._task_creator(
                 coroutine,
-                "soilsync configuration reload",
+                "moisture_loop configuration reload",
             )
 
     async def _async_apply_reload(self, generation: int, fingerprint: str) -> None:

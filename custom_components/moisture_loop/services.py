@@ -1,10 +1,10 @@
-"""Integration-level actions for SoilSync (SPECIFICATION.md §5.3, §31).
+"""Integration-level actions for MoistureLoop (SPECIFICATION.md §5.3, §31).
 
 Actions are registered exactly once from integration-level ``async_setup``
 (never per entry), so they remain discoverable while entries are unloaded
 (I25). Every handler requires exactly one zone ``device_id`` and resolves it
-in the backend: the device must carry the ``(soilsync, subentry_id)``
-identifier, belong to the SoilSync entry/subentry, and have a loaded
+in the backend: the device must carry the ``(moisture_loop, subentry_id)``
+identifier, belong to the MoistureLoop entry/subentry, and have a loaded
 runtime; frontend filtering is never trusted (§5.3). Failures raise
 translated ``ServiceValidationError``s.
 """

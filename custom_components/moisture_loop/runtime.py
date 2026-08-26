@@ -150,7 +150,7 @@ PLATFORMS = ["binary_sensor", "button", "sensor", "switch"]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up the single SoilSync controller entry."""
+    """Set up the single MoistureLoop controller entry."""
     runtime = EntryRuntime(hass, entry)
     # §24.1: async_initialize registers the one Stage-1 shutdown owner before
     # any watering-capable runtime is armed.
@@ -1949,7 +1949,7 @@ class EntryRuntime:
             self.coordinator.observe_current()
             self.hass.async_create_task(
                 self._async_reconcile_and_sync_repairs(),
-                f"soilsync rename reconciliation {zone_id}",
+                f"moisture_loop rename reconciliation {zone_id}",
             )
 
         return _renamed
@@ -2411,7 +2411,7 @@ class EntryRuntime:
         self._shutdown_job_remove = self.hass.async_add_shutdown_job(
             HassJob(
                 self.async_stage1_shutdown,
-                f"soilsync stage-1 shutdown {self.entry.entry_id}",
+                f"moisture_loop stage-1 shutdown {self.entry.entry_id}",
             )
         )
         self.entry.async_on_unload(self.remove_shutdown_job)
@@ -2472,7 +2472,7 @@ class EntryRuntime:
             raise
         except Exception as err:  # Core must still finish stopping
             failures.append(f"stage1_failed:{type(err).__name__}")
-            _LOGGER.error("SoilSync Stage-1 shutdown handling failed: %s", err)
+            _LOGGER.error("MoistureLoop Stage-1 shutdown handling failed: %s", err)
         finally:
             report = Stage1ShutdownReport(
                 core_state_at_entry=core_state,
@@ -2486,12 +2486,12 @@ class EntryRuntime:
                 operation.set_result(None)
             if report.clean:
                 _LOGGER.info(
-                    "SoilSync Stage-1 shutdown completed cleanly for entry %s",
+                    "MoistureLoop Stage-1 shutdown completed cleanly for entry %s",
                     self.entry.entry_id,
                 )
             else:
                 _LOGGER.warning(
-                    "SoilSync Stage-1 shutdown is unclean for entry %s: %s",
+                    "MoistureLoop Stage-1 shutdown is unclean for entry %s: %s",
                     self.entry.entry_id,
                     ", ".join(report.failures),
                 )
@@ -2574,7 +2574,7 @@ class EntryRuntime:
         # 5. Clean-run aggregation (§23.3, I14). Honest evidence is not
         #    success: integration-owned possible flow that was not proven OFF
         #    keeps the run unclean, while a correctly persisted external_flow
-        #    owner is successful SoilSync handling.
+        #    owner is successful MoistureLoop handling.
         if not self.store.loaded:
             failures.append("safety_store_not_loaded")
             return

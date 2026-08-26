@@ -1,4 +1,4 @@
-"""Config flow for SoilSync (SPECIFICATION.md §§7-9, 24.3, 29-30).
+"""Config flow for MoistureLoop (SPECIFICATION.md §§7-9, 24.3, 29-30).
 
 One top-level controller entry (single_config_entry) created with the
 immutable runtime-Store generation UUID and ``runtime_store_initialized:
@@ -65,7 +65,7 @@ _VALVE_FEATURE_OPEN = 1
 _VALVE_FEATURE_CLOSE = 2
 
 
-class SoilSyncConfigFlow(ConfigFlow, domain=DOMAIN):
+class MoistureLoopConfigFlow(ConfigFlow, domain=DOMAIN):
     """Top-level controller entry flow (§29)."""
 
     VERSION = 1
@@ -77,7 +77,7 @@ class SoilSyncConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="single_instance_allowed")
         if user_input is not None:
             return self.async_create_entry(
-                title="SoilSync",
+                title="MoistureLoop",
                 data={
                     # Immutable identity; never regenerated on Store absence
                     # (§23.1, I29).

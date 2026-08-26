@@ -1,4 +1,4 @@
-"""SoilSync — closed-loop soil-moisture irrigation for Home Assistant.
+"""MoistureLoop — closed-loop soil-moisture irrigation for Home Assistant.
 
 The package init stays free of homeassistant imports so the pure domain
 layer (models, state machine, slot manager) remains importable and provable

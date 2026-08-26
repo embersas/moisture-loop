@@ -16,7 +16,7 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     ActuatorAssessment,
     MoistureClassification,
     MoistureObservation,
@@ -27,9 +27,9 @@ from custom_components.soilsync.models import (
     TransitionInput,
     ZoneConfig,
 )
-from custom_components.soilsync.models import ControllerState as CS
-from custom_components.soilsync.state_machine import decide
-from custom_components.soilsync.zone_controller import (
+from custom_components.moisture_loop.models import ControllerState as CS
+from custom_components.moisture_loop.state_machine import decide
+from custom_components.moisture_loop.zone_controller import (
     MoistureAdapter,
     classify_moisture,
 )

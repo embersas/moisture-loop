@@ -1,4 +1,4 @@
-"""Constants for SoilSync.
+"""Constants for MoistureLoop.
 
 Pure module: must not import homeassistant (SPECIFICATION.md §37) and holds
 only Home Assistant-independent vocabulary. Configuration bounds implement
@@ -7,7 +7,7 @@ SPECIFICATION.md §9 exactly.
 
 from __future__ import annotations
 
-DOMAIN = "soilsync"
+DOMAIN = "moisture_loop"
 
 # --- Runtime store (SPECIFICATION.md §23.2) -------------------------------
 # The payload schema is authoritative. SafetyStore uses a schema-1 Store

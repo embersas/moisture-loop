@@ -5,8 +5,8 @@
 remain tested separately from the explicitly pinned supported-current release.
 No environment may be upgraded in place from one HA line to the other.
 
-Public repository: [`embersas/soilsync`](https://github.com/embersas/soilsync).
-Use the repository [issue tracker](https://github.com/embersas/soilsync/issues)
+Public repository: [`embersas/moisture-loop`](https://github.com/embersas/moisture-loop).
+Use the repository [issue tracker](https://github.com/embersas/moisture-loop/issues)
 for reproducible defects; this project is not included in the HACS default store.
 
 ## Pinned environments
@@ -55,7 +55,7 @@ call its skips pure evidence.
 
 ```powershell
 .venv-pure\Scripts\python.exe -m pip show homeassistant  # must report not found
-.venv-pure\Scripts\python.exe -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_state_machine.py tests/test_foundation.py tests/test_slot_manager.py tests/test_traceability.py -q --tb=short --junitxml=pure.xml --cov=custom_components.soilsync --cov-branch --cov-report=term-missing
+.venv-pure\Scripts\python.exe -m pytest tests/test_models.py tests/test_storage_pure.py tests/test_state_machine.py tests/test_foundation.py tests/test_slot_manager.py tests/test_traceability.py -q --tb=short --junitxml=pure.xml --cov=custom_components.moisture_loop --cov-branch --cov-report=term-missing
 .venv-pure\Scripts\python.exe -m coverage report --include="*\state_machine.py" --fail-under=100
 ```
 
@@ -63,7 +63,7 @@ call its skips pure evidence.
 
 ```powershell
 .venv-ha-min\Scripts\python.exe scripts/check_ha_contract.py --expect 2025.9.0
-.venv-ha-min\Scripts\python.exe -m pytest tests -q --tb=short --junitxml=ha-2025.9.xml --cov=custom_components.soilsync --cov-branch --cov-report=term-missing --cov-fail-under=90
+.venv-ha-min\Scripts\python.exe -m pytest tests -q --tb=short --junitxml=ha-2025.9.xml --cov=custom_components.moisture_loop --cov-branch --cov-report=term-missing --cov-fail-under=90
 .venv-ha-min\Scripts\python.exe -m coverage report --include="*\state_machine.py" --fail-under=100
 .venv-ha-min\Scripts\python.exe -m coverage report --fail-under=90
 ```
@@ -86,7 +86,7 @@ environment. Do not layer these packages over the HA 2025.9 environment.
 
 ```powershell
 .venv-ha-current\Scripts\python.exe scripts/check_ha_contract.py --expect 2026.8.3
-.venv-ha-current\Scripts\python.exe -m pytest tests -q --tb=short --junitxml=ha-current.xml --cov=custom_components.soilsync --cov-branch --cov-report=term-missing
+.venv-ha-current\Scripts\python.exe -m pytest tests -q --tb=short --junitxml=ha-current.xml --cov=custom_components.moisture_loop --cov-branch --cov-report=term-missing
 ```
 
 Review every supported-current skip and coverage change. The mandatory minimum

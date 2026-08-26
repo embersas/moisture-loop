@@ -12,8 +12,8 @@ import asyncio
 
 import pytest
 
-from custom_components.soilsync.models import BlockerReason
-from custom_components.soilsync.slot_manager import SlotManager
+from custom_components.moisture_loop.models import BlockerReason
+from custom_components.moisture_loop.slot_manager import SlotManager
 
 EXTERNAL = BlockerReason.EXTERNAL_FLOW
 OFF_UNCONFIRMED = BlockerReason.INTEGRATION_OFF_UNCONFIRMED

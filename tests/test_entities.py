@@ -18,7 +18,7 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.soilsync.const import DOMAIN
+from custom_components.moisture_loop.const import DOMAIN
 
 SENSOR = "sensor.moisture_1"
 ACTUATOR = "valve.valve_1"
@@ -272,8 +272,8 @@ class TestControls:
     async def test_controls_refuse_while_reconciliation_dirty(self, env) -> None:
         from homeassistant.exceptions import HomeAssistantError
 
-        from custom_components.soilsync.button import ZoneEvaluateButton
-        from custom_components.soilsync.switch import ZoneEnabledSwitch
+        from custom_components.moisture_loop.button import ZoneEvaluateButton
+        from custom_components.moisture_loop.switch import ZoneEnabledSwitch
 
         controller = env.runtime.controllers[env.subentry_id]
         switch = ZoneEnabledSwitch(env.runtime, controller, env.subentry_id)

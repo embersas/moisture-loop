@@ -25,12 +25,12 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.soilsync.const import (
+from custom_components.moisture_loop.const import (
     CONF_RUNTIME_STORE_GENERATION_ID,
     CONF_RUNTIME_STORE_INITIALIZED,
     DOMAIN,
 )
-from custom_components.soilsync.models import (
+from custom_components.moisture_loop.models import (
     BlockerReason,
     CompletionReason,
     ControllerState,
@@ -144,7 +144,7 @@ async def native_delete_via_websocket(
 class TestControllerEntryFlow:
     async def test_creates_single_entry_with_identity(self, hass) -> None:
         entry = await create_controller_entry(hass)
-        assert entry.title == "SoilSync"
+        assert entry.title == "MoistureLoop"
         generation = entry.data[CONF_RUNTIME_STORE_GENERATION_ID]
         assert isinstance(generation, str) and len(generation) == 36
         # The entry was created with initialized=false; real setup then ran
@@ -243,7 +243,7 @@ class TestZoneAddFlow:
         )
         # Bypass frontend filtering by feeding a wrong-domain entity that
         # exists; the selector schema allows any entity_id string here.
-        from custom_components.soilsync.config_flow import ZoneSubentryFlow
+        from custom_components.moisture_loop.config_flow import ZoneSubentryFlow
 
         handler = hass.config_entries.subentries._progress[flow["flow_id"]]
         assert isinstance(handler, ZoneSubentryFlow)
@@ -449,7 +449,7 @@ class TestZoneReconfigureFlow:
     async def make_entry_with_zone(self, hass) -> MockConfigEntry:
         entry = MockConfigEntry(
             domain=DOMAIN,
-            title="SoilSync",
+            title="MoistureLoop",
             data={
                 CONF_RUNTIME_STORE_GENERATION_ID: "gen-1",
                 CONF_RUNTIME_STORE_INITIALIZED: True,
@@ -1266,10 +1266,10 @@ class TestFlowReconciliationBursts:
 class TestFlowEdges:
     async def test_direct_second_user_step_aborts(self, hass) -> None:
         """Defense-in-depth abort inside the step itself."""
-        from custom_components.soilsync.config_flow import SoilSyncConfigFlow
+        from custom_components.moisture_loop.config_flow import MoistureLoopConfigFlow
 
         await create_controller_entry(hass)
-        flow = SoilSyncConfigFlow()
+        flow = MoistureLoopConfigFlow()
         flow.hass = hass
         result = await flow.async_step_user(None)
         assert result["type"] is FlowResultType.ABORT
@@ -1313,7 +1313,7 @@ class TestFlowEdges:
         assert result["errors"] == {"base": "invalid_configuration"}
 
     async def test_validate_full_short_circuits_on_identity_error(self, hass, entities) -> None:
-        from custom_components.soilsync.config_flow import ZoneSubentryFlow
+        from custom_components.moisture_loop.config_flow import ZoneSubentryFlow
 
         entry = await create_controller_entry(hass)
         flow = await hass.config_entries.subentries.async_init(
