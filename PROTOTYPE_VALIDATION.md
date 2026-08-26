@@ -796,8 +796,12 @@ authorization. A first B1 attempt on 2026-08-25 was correctly aborted when the
 then-deployed integration did not expose an actuator transition. After the
 physical controller was exposed through a confirmed-working local integration,
 B1 was separately re-authorized and completed on 2026-08-26. B2 was then
-separately authorized, executed once on 2026-08-26, and stopped at
-`[?] Requires specification review` after Docker forced termination.
+separately authorized and executed once on 2026-08-26; that first trial stopped
+at `[?] Requires specification review` after Docker forced termination, which
+produced finding B2-1 and the `0.1.0-spec.5` amendment. After the spec.5
+Stage-1 implementation was built, gated, deployed and byte-verified, B2 was
+separately re-authorized and **passed** on the corrected implementation the
+same day.
 
 ### B1 Physical valve matrix
 
@@ -911,6 +915,38 @@ real behaviour.
 | B2 fixture | Retained and inert: physical `tuya_local` `valve` channel plus a labelled nonphysical MQTT moisture fixture at `50.0`; AUTO thresholds `1.0`/`2.0` so automatic watering can never trigger; `manual_max_duration_s: 120`; `actuator_confirm_timeout_s: 30`; current-day conservative runtime `51.649538 s` of `180 s`, leaving `128.35 s`. Effective external stop window unchanged at Docker's default SIGTERM plus 10 s grace (measured ~10.03 s). Host-side control was not re-established: the external stop, Docker events, container logs and host timeline need the operator-supplied SSH path, and no observer is currently armed |
 | Status | B2 remains `[?] Pending corrected physical revalidation`. Automated evidence is not physical evidence: no water flowed, no valve opened, and no Home Assistant process was stopped with flow in progress during this remediation |
 
+### B2 Active-flow shutdown OFF timing - corrected trial, 2026-08-26
+
+The first B2 trial recorded above remains unchanged historical evidence of the
+`0.1.0-spec.4` implementation's real behaviour. This is the separately
+authorized corrected trial against the deployed `0.1.0-spec.5` Stage-1
+implementation.
+
+| Field | Record |
+|---|---|
+| Authorization | Exact operator reply `PROCEED B2 ACTIVE SHUTDOWN`, received after the refreshed checkpoint and after every prerequisite was reported ready. One physical MANUAL session and one normal external cooperative container stop only |
+| Deployed source | `LIVE HOME ASSISTANT`: `/config/custom_components/soilsync` verified **byte-for-byte** against implementation SHA `c81f598969ff544abd64915fe92e8f5ae13d4086`. Method: `docker exec` `sha256sum` over every non-`__pycache__` file, compared with the SHA-256 of each `git show c81f598:custom_components/soilsync/<path>` blob. 24 files in the commit tree, 24 deployed, 0 missing, 0 extra, 0 content differences; deterministic whole-tree digest `75d97d50aa3ad8e44015599a2a5130b285281cac363f6bbdd08260cd57a8937d` on both sides |
+| Environment | Home Assistant Core `2026.7.2`, Home Assistant Container on Docker `29.6.1`, host networking, `restart: unless-stopped`, entrypoint `/init`. Container `homeassistant`, `restartCount=0`, uptime 6 h at trial start. SoilSync `0.1.0`, specification `0.1.0-spec.5` |
+| Cooperative stop configuration | Re-verified unchanged and **not** modified: container `StopSignal=""` and `StopTimeout=nil`, image `StopSignal=""`, no Compose `stop_grace_period`/`stop_signal`, no daemon `shutdown-timeout`. Effective window is Docker's default SIGTERM plus **10 s**. `SHUTDOWN_OFF_BUDGET_S` remained `8.0` |
+| Physical actuator | `LIVE PHYSICAL`: the same real first outlet of the four-channel irrigation controller used in B1, exposed as a `tuya_local` Home Assistant `valve` with OPEN+CLOSE (features 3), no position, registry-confirmed durable identity, initial terminal `closed` |
+| Fixture | The retained temporary zone with a clearly labelled nonphysical MQTT moisture entity at `50.0` used only as config-flow plumbing. AUTO thresholds `1.0`/`2.0` make automatic watering impossible at that value; the trial used one bounded 120 s MANUAL request |
+| Preflight | Machine-enforced and recorded: actuator terminal `closed`; `stage1_job_registered: true`; `shutdown_off_budget_s: 8.0`; `process_stopping: false`; controller `idle`; lifecycle `active`; no blocker, possible-flow owner, actuator fault, open accounting, slot owner, or tombstone; `may_be_flowing: false`. The orchestrator refuses to start otherwise |
+| Evidence streams | Two independent Home Assistant WebSocket witnesses (a standalone record-only observer armed beforehand, plus the orchestrator's own socket sharing one high-resolution monotonic clock with stop dispatch); host Docker events and container logs; terminal valve and controller telemetry. Raw household evidence stays under gitignored `evidence/private/` |
+| Active-flow proof | T0 MANUAL request `2026-08-26T09:40:54.014812Z`. T1 terminal `open` `09:40:55.475235Z` (**T0->T1 1.4604197 s**). T2 independent controller status `manual` `09:40:55.593154Z` (**T0->T2 1.578338 s**). Terminal OPEN plus separate controller telemetry proves real controller operation, not action acceptance |
+| Physical water delivered | `LIVE PHYSICAL`: after the trial the controller independently reported **use time 6 s** and **consumption 0.5 L** for the session, confirming actual water flow and its end |
+| External stop | After **3.127564 s** of corroborated steady operation the external control process issued exactly `docker stop homeassistant` on a pre-opened SSH session. T3 `09:40:58.602799Z`. Live Docker events recorded **signal 15 (SIGTERM) at T3+0.111 s**, offset-corrected against a measured host/workstation clock skew of 5.043 s |
+| Shutdown OFF observation | **T5 SoilSync shutdown-path `valve.close_valve` dispatch `09:40:58.775012Z` = T3+0.1722111 s.** **T6 physical terminal `closed` `09:40:59.962363Z` = T3+1.3595596 s** (T5->T6 **1.1873485 s**). Both witnesses agree. The predeclared direct-Home-Assistant fallback at T3+7 s was never reached and never fired, so T5 is a genuine SoilSync-owned dispatch |
+| Budget margin | Terminal OFF was proven at **1.3596 s** against the `SHUTDOWN_OFF_BUDGET_S` of `8.0 s`, leaving **6.64 s (83%) unused**, and **8.82 s** before the container's forced boundary. The first trial produced no T5, no T6, and no measurable interval at all |
+| Session outcome during shutdown | `soilsync_session_finished` fired **at 09:40:59.973Z, during shutdown**, not at restart. Reason `home_assistant_shutdown`, mode `manual`, requested/effective 120 s, no clamps, **`runtime_estimated: false`**, `runtime_estimation_reason: none`, measured runtime **5.911839 s**. Runtime today closed live to 57.561377 s of the 180 s budget. The first trial could only produce an estimated 51.649538 s reconstructed at startup under `off_unconfirmed` |
+| Clean-run marker | The stopped run was recorded **clean**: the next run reads `previous_run_was_clean: true`. The Stage-1 owner therefore completed every required OFF, every safety transaction under the unchanged immediate fresh-Store save/read-back verification, and the final verified clean marker, all before the process ended. This is the exact contract finding B2-1 proved impossible from `EVENT_HOMEASSISTANT_STOP`, and the container log shows that old failure mode (`StoreWriteVerificationError: read-back revision mismatch` inside `async_handle_ha_stop`) occurring one last time at 08:59:20Z on the previously deployed build |
+| Container exit | `HOST / CONTAINER EVIDENCE`: the container still required SIGKILL, `exitCode=137`, `finishedAt` T3+10.178 s. This is Home Assistant's **overall** shutdown (Stages 2-4 across roughly one hundred integrations) exceeding Docker's 10 s grace; it is a deployment characteristic, not a SoilSync one. It demonstrably did not affect the result: every SoilSync obligation, including the verified clean marker, completed 8.8 s earlier. No separate hard-kill command was issued |
+| Restart and recovery | T9 `docker start homeassistant` `09:41:09.246993Z`; T10 authenticated API healthy after **23.771378 s**. Startup issued **no** new ON, adopted no session, and required no crash reconciliation: it began from a clean previous run. Final state is controller `idle`, actuator terminal `closed`, no session, slot owner, blocker, possible-flow owner, fault, Repair, or open accounting; `may_be_flowing: false`; **0 open Repairs instance-wide** |
+| Fallback interval decision | The 8 s value is **retained unchanged**. This trial finally measures the interval it bounds: 1.3596 s, with 83% headroom. Tuning remains a separately authorized specification decision and no value was changed here |
+| Defects | No new SoilSync defect and no specification contradiction. The single observation worth recording is deployment-level, not SoilSync-level: full Home Assistant shutdown does not complete inside this container's 10 s grace |
+| Evidence classes | Physical commands, measured water, terminal states, and controller telemetry: `LIVE PHYSICAL`. Home Assistant state/events/Store/restart reconciliation: `LIVE HOME ASSISTANT`. Signal, stop budget, exit code, and container restart: `HOST / CONTAINER EVIDENCE` |
+| Status | **`[x] PASS`**: §46 item 4's measured physical active-flow shutdown OFF timing is met. Shutdown-path terminal OFF was proven at T3+1.3596 s, well inside both the 8 s SoilSync budget and the 10 s external cooperative window, with accounting closed live and the run verifiably marked clean |
+| Cleanup | Physical valve terminal `closed`; physical controller `idle`; SoilSync `idle`; watering and problem binary sensors OFF; no owner, blocker, fault, Repair, or open accounting. Home Assistant and the container are healthy. The temporary zone and its nonphysical MQTT fixture are retained inert pending a separate cleanup decision. No SSH key was installed on the host; the temporary password was used only in memory and should now be rotated |
+
 ## Current cleanup inventory
 
 - The B2 run's terminal safety state supersedes the earlier zero-fixture B1
@@ -1009,7 +1045,7 @@ Repairs.
 
 ## Current slice verdict
 
-`[~] PARTIAL`.
+`[x] COMPLETE`.
 
 **Phase A is complete.** A1, A2, A4, and A6 are `PASS` on live evidence. **A3 is
 `PASS`**: durable Registry identity retention passed on 2026-08-24, and after the
@@ -1034,6 +1070,12 @@ defect and no specification contradiction.
 
 Phase A therefore closes `[x] Complete`. **B1 is `[x] PASS`** on literal
 physical HA-valve evidence plus the permitted live synthetic template matrix.
+**B2 is `[x] PASS`** on the 2026-08-26 corrected trial against the byte-verified
+deployed spec.5 implementation: shutdown-path terminal OFF proven at T3+1.3596 s
+with the run recorded clean. **Phase B is therefore `[x] Complete` and Slice 13
+is `[x] Complete`**: all seven §46 prototype validations have live evidence. The
+paragraph below records the first, failed B2 attempt and is retained unchanged as
+historical evidence.
 **B2 is `[?] Requires specification review`** after one authorized live
 active-flow trial reached Docker's forced 10 s boundary without shutdown-path
 terminal OFF proof. Startup reconciliation failed closed and eventually proved
@@ -1049,9 +1091,17 @@ That spec.5 implementation remediation was then separately authorized and
 completed on 2026-08-26 and is recorded above. The runtime now owns full-process
 shutdown through exactly one removable Stage-1 `async_add_shutdown_job`, the
 `EVENT_HOMEASSISTANT_STOP` owner is gone, clean-run evidence is aggregated
-explicitly, and LC4 is driven by the real `hass.async_stop()` Stage-1 path. That
-is automated and deployment evidence only. **B2 is still `[?] Pending corrected
-physical revalidation`**: no water flowed, no valve was opened, and no Home
-Assistant process was stopped with flow in progress. Phase B remains
-`[~] Partial` and Slice 13 remains `[~] Partial`. A repeat physical trial
-requires a fresh exact operator water authorization.
+explicitly, and LC4 is driven by the real `hass.async_stop()` Stage-1 path.
+
+The corrected physical trial was then separately authorized with the exact
+operator reply and **passed** on 2026-08-26. Against the byte-verified deployed
+`c81f598` build, one bounded 120 s physical MANUAL session delivered real water
+(controller-reported 6 s use time and 0.5 L), and one normal external
+`docker stop` produced SIGTERM at T3+0.111 s, a SoilSync shutdown-path
+`valve.close_valve` dispatch at **T3+0.1722111 s**, and physical terminal
+`closed` at **T3+1.3595596 s** — inside both the unchanged 8 s
+`SHUTDOWN_OFF_BUDGET_S` and the 10 s external cooperative window, with 83%
+budget headroom. The session finished during shutdown as
+`home_assistant_shutdown` with **measured** (not estimated) runtime 5.911839 s,
+and the stopped run was recorded **clean**. **B2 is `[x] PASS`**, Phase B is
+`[x] Complete`, and all seven §46 prototype validations now have live evidence.

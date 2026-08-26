@@ -278,11 +278,14 @@ validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
    labelled synthetic entities.
 3. A real entity-registry rename trial — **validated** live, including rename
    during an active session, reload and restart while renamed, and restore.
-4. Measured physical shutdown OFF timing — **not passed**. A first physical
-   trial on 2026-08-26 was stopped by finding B2-1, a lifecycle defect in the
-   then-current specification. `0.1.0-spec.5` moved full-process shutdown
-   ownership to a single Home Assistant Stage-1 shutdown job and that change is
-   implemented, but a corrected physical revalidation has not been performed.
+4. Measured physical shutdown OFF timing — **validated / PASS**. A first trial
+   on 2026-08-26 was stopped by finding B2-1, a lifecycle defect in the
+   then-current specification; `0.1.0-spec.5` moved full-process shutdown
+   ownership to a single Home Assistant Stage-1 shutdown job. On the corrected
+   implementation, a physical active-flow trial proved shutdown-path terminal
+   valve CLOSED 1.36 s after a normal external container stop — inside both the
+   8-second internal budget and the 10-second external stop window — with
+   runtime measured rather than estimated and the run recorded clean.
 5. Approximately ten simultaneously dry zones in a deployment-scale exercise —
    **validated** live with ten synthetic zones.
 6. Deployment sensor-cadence/default validation — **validated / PASS**. A clean
@@ -294,11 +297,11 @@ validation. Status of the seven SPECIFICATION.md §46 / Slice 13 validations:
    presentation; the centralized `home-assistant/brands` submission is
    deliberately not made.
 
-Phase A is complete and item 2 has passed on real hardware. Item 4 — measured
-physical active-flow shutdown OFF timing — is the only remaining prototype
-validation, and it is the reason this release is not described as physically
-validated. `PROTOTYPE_VALIDATION.md` is the evidence ledger for all of the
-above.
+All seven prototype validations now have live evidence, including both
+water-carrying ones. `PROTOTYPE_VALIDATION.md` is the evidence ledger for all of
+the above, including the one failed attempt that is retained unchanged as
+historical evidence. Validation on this deployment is not a guarantee for other
+hardware, and the centralized brand submission remains deliberately unmade.
 
 Centralized brand submission, HACS default-store submission, and public release
 publication are not implied by the local icon or this repository metadata.
