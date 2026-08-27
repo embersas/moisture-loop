@@ -111,8 +111,8 @@ The public source and documentation repository is
 problems can be reported through its
 [issue tracker](https://github.com/embersas/moisture-loop/issues).
 
-No GitHub Release has been published, and MoistureLoop is not included in the
-HACS default store. It can be installed as a HACS custom repository:
+MoistureLoop is not included in the HACS default store. It can be installed as
+a HACS custom repository:
 
 1. Open HACS → Integrations → ⋮ → Custom repositories.
 2. Add `https://github.com/embersas/moisture-loop` as category Integration.

@@ -127,8 +127,10 @@ python -m ruff format --check .
 git diff --check
 ```
 
-Also parse every JSON/YAML metadata file, compare `strings.json` with
-`translations/en.json`, check service/icon/entity key parity, confirm manifest
+Also parse every JSON/YAML metadata file, confirm `translations/en.json`
+carries the fully expanded English strings (custom integrations do not use
+Core's build-time `strings.json`, so none is shipped), check
+service/icon/entity key parity, confirm manifest
 version `0.1.0`, HACS minimum `2025.9.0`, empty runtime requirements, and audit
 tracked release contents for virtual environments, caches, JUnit, diagnostics,
 secrets, or migration artifacts.

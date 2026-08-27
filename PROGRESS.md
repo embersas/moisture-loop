@@ -12,10 +12,10 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.5 conformance: `Spec.4 Remediation Stages 1-8, the spec.5 Stage-1 shutdown remediation (implementation c81f598969ff544abd64915fe92e8f5ae13d4086), and the nomenclature-only MoistureLoop canonical rename (ad2ca863b1efcc76645d39133c7f7d0c73a48794) are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 895 tests with the one deliberate pure-boundary skip; pure passes 443/443. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch; overall mandatory coverage 92.54%.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `No implementation work is open. Slice 14 real-sensor closed-loop validation is complete on live physical evidence. The next substantive work is the 0.1.0 release-readiness audit under the MoistureLoop identity, which requires its own explicit authorization; removing the temporary DISABLED Zone 6 validation zone should be part of that. No release/submission stage is authorized.`
+- Next implementation work: `No implementation work is open. The 0.1.0 release-readiness audit completed on 2026-08-27: the temporary DISABLED Zone 6 validation zone was removed through the native deletion path with a retained RETIRED tombstone, the localization packaging was reduced to translations/en.json per current custom-integration guidance, and the release candidate is ready. The next substantive work is the actual release/submission sequence (tag, GitHub Release, optional Brands, HACS default PR), each of which requires its own explicit authorization. No release/submission stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the MoistureLoop rename SHA ad2ca863b1efcc76645d39133c7f7d0c73a48794 (run 33019739998) and the documentation closeout SHA d34e4f03c231ca1a7af93805ad40dad2c61e39ce (run 33020561431) at the repository now named embersas/moisture-loop: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. Earlier results remain attributed to their original SHAs in the dated logs. Version is 0.1.0; no tag, GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[x] Complete. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [x] PASS: the corrected 2026-08-26 active-flow trial on the byte-verified spec.5 implementation proved shutdown-path terminal CLOSED at T3+1.3596 s with the run recorded clean. Phase B is [x] Complete. All seven §46 prototype validations have live evidence; the physical evidence was recorded under the then-current SoilSync name and remains valid because runtime semantics were unchanged by the rename.`
-- Overall status: `Slices 0-13 are complete. The spec.5 Stage-1 shutdown correction is implemented, fully gated, and physically validated; the first failed B2 attempt is retained unchanged as historical evidence. The product is canonically MoistureLoop with no stale active identity. Release readiness has not yet been audited and no release is authorized.`
+- Overall status: `Slices 0-14 are complete. The spec.5 Stage-1 shutdown correction is implemented, fully gated, and physically validated; the first failed B2 attempt is retained unchanged as historical evidence. The product is canonically MoistureLoop with no stale active identity. The 0.1.0 release-readiness audit completed on 2026-08-27 with verdict READY WITH NON-BLOCKING NOTES; no release is authorized.`
 
 On 2026-08-22 the user explicitly authorized and completed Spec.4 Remediation Stages 1, 2, and 3 in sequence. On 2026-08-23 the user explicitly authorized and completed Spec.4 Remediation Stages 4, 5, 6, 7, and 8, including privacy sanitization, self-hosted history replacement, first public GitHub publication, and exact-final-SHA hosted CI completion. Later on 2026-08-23 the user explicitly authorized Slice 13 prototype validation only, using GPT-5.6 Sol with extra-high reasoning. That run closed partial at the required UI/operator and physical-safety checkpoints and returned authorization to `None`. On 2026-08-24 the user explicitly authorized the canonical pre-release rename to SoilSync; that rename completed without resuming Slice 13 and returned authorization to `None`. The 2026-08-21 instruction "implement as per progress.md" remains recorded only as the historical authorization under which the spec.3 implementation was produced.
 
@@ -52,7 +52,7 @@ For this reconciliation, `[~] Spec.4 remediation required` means the slice's his
 | 12 | Distribution and documentation | [x] Exact public SHA passed all six GitHub-hosted jobs |
 | 13 | Prototype validations | [x] Complete; Phase A [x], B1 [x] PASS, B2 [x] PASS, Phase B [x] |
 
-Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[~]`: the dated live evidence below is retained, but no mock, harness, or absent hardware is treated as a prototype pass.
+Slices 0-12 are `[x]`. Slice 0 has reproducible pure, mandatory-minimum, and supported-current environments plus six non-optional CI jobs. Slice 12 closed when public SHA `43f24b12fc162412b534851b9c1b3762ca57cd98` passed all six hosted jobs. Slice 13 is `[x]`: Phase A, B1, and B2 all passed on the dated live evidence below; no mock, harness, or absent hardware was treated as a prototype pass.
 
 ## Specification Traceability
 
@@ -4688,3 +4688,139 @@ Timeline, Home Assistant UTC:
 - Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
   Brands NOT SUBMITTED. Physical-water authorization is consumed and
   authorization returns to `None`.
+
+## Session Log — 2026-08-27 (MoistureLoop 0.1.0 release-readiness audit)
+
+### Authorization and scope
+
+- The user explicitly authorized the final 0.1.0 pre-release audit and narrow,
+  non-behavioural release-readiness cleanup only. No tag, GitHub Release, HACS
+  default submission, Brands submission, product-version change, specification
+  change, runtime/controller/Store change, physical watering, or active-flow
+  shutdown testing was authorized, and none was performed.
+- Starting state verified exactly: local `main` = `origin/main` = `github/main`
+  = `0c0d008a98b60ee0a94fd23bf0ffcccb1b1d6daa`, clean worktree, no tags on any
+  remote, no GitHub Release, all six hosted CI jobs green on that SHA
+  (run 33036685007). GitHub metadata verified: public, not archived, Issues
+  enabled, expected description, all nine expected topics, default branch
+  `main`, GPL-3.0 detected. Live HA 2026.7.2 Container reached read-first over
+  WS/REST; the installed integration reported version `0.1.0` via the HACS
+  custom repository `embersas/moisture-loop` (installed at the rename SHA,
+  `pending-upgrade` toward main, expected); the single MoistureLoop entry was
+  `loaded` and healthy with 0 Repairs.
+
+### Temporary Slice 14 validation zone removed (NO WATER)
+
+- Pre-deletion proof on the live instance: zone status `disabled`; actuator
+  `valve.zone6_manual` `closed` and `proven_off: true`; all commandable
+  irrigation valves closed; no active session; slot owner `null` with empty
+  queue and grants enabled; no possible-flow owner; no blockers; no faults; no
+  open accounting; no pending grant; 0 Repairs. (One unrelated non-MoistureLoop
+  hose-timer valve entity was `unavailable`/offline; it is not commandable and
+  not an actuator of any MoistureLoop zone.)
+- The `MoistureLoop Real Sensor Validation - Zone 6` subentry was deleted via
+  the supported native `config_entries/subentries/delete` WebSocket path — the
+  same path the UI uses. No `.storage` file was touched. Reconciliation ran
+  normally (generation 2 -> 3, clean, admission open, zero reload).
+- Post-deletion verification: subentry absent; `num_subentries: 0`; entry still
+  `loaded`; all MoistureLoop zone entities removed; actuator still CLOSED; no
+  session/slot owner/possible-flow owner/blocker/fault/open accounting;
+  0 Repairs. The Store correctly retained the RETIRED safety tombstone
+  (`lifecycle: retired`, `runtime: null`, `open_accounting: false`) and the
+  zone history with the measured 64.133031 s Slice 14 runtime evidence, at
+  schema 2, store revision 36. Durable safety history was deliberately NOT
+  erased. The real Ecowitt sensor and Holman device were not modified.
+
+### Fresh ecosystem research (2026-08-27, authoritative sources)
+
+- HACS custom-repository requirements, HACS default-inclusion requirements,
+  the HACS Action validator set, hacs.json key semantics, HACS version/tag
+  handling, HA custom-integration manifest/localization documentation, the
+  2026.3 local brand-image mechanism, home-assistant/brands rules, and the
+  hassfest custom-integration plugin set were re-verified against live
+  hacs.xyz, developers.home-assistant.io, home-assistant.io release notes, and
+  the actual `hacs/integration`, `hacs/default`, `home-assistant/actions`, and
+  `home-assistant/core` (hassfest) sources.
+- Brand-asset conclusion: LOCAL BRAND ASSETS SUFFICIENT FOR HACS DEFAULT. The
+  current HACS validator (`custom_components/hacs/validate/brands.py`, change
+  "Allow local brands assets in the brands validator" #5128, 2026-02-28)
+  passes immediately when `custom_components/<domain>/brand/icon.png` exists
+  in the tree; the central `home-assistant/brands` lookup is only the
+  fallback. hassfest has no brands check. HA >= 2026.3 serves local brand
+  images with precedence over the CDN. Central Brands submission remains an
+  OPTIONAL cosmetic improvement for users on HA 2025.9-2026.2 (a manual
+  release-time decision, not a defect).
+- Localization conclusion: current HA developer documentation requires custom
+  integrations to ship fully expanded `translations/en.json` and states "Do
+  not use `strings.json` for custom components"; `strings.json` is a Core
+  build-time mechanism, inert at runtime for custom integrations on every
+  supported HA version. hassfest validates `strings.json` only if present and
+  does not require it; HACS does not require it. The tracked `strings.json`
+  (byte-identical duplicate of `translations/en.json`) was therefore removed
+  as narrow localization packaging cleanup. NOTE for the next explicit
+  specification review: the non-normative §38 architecture-plan file listing
+  in `SPECIFICATION.md` still names `strings.json`; a one-line layout note
+  amendment is needed there. The specification was not modified in this task.
+- Release/tag conclusion: tag `0.1.0` (exact match with the manifest version;
+  AwesomeVersion accepts v-prefixed tags too, but exact string equality with
+  the manifest version is the safest), published as a normal FULL GitHub
+  release (not a draft, not a prerelease — HACS hides prereleases unless the
+  user enables show-beta, and default inclusion requires a full release
+  created after the actions pass). No `zip_release`: with releases present and
+  no `zip_release`, HACS downloads the repository tree at the release tag,
+  which is the simplest supported mechanism for a pure-Python integration;
+  `hacs.json` stays minimal (`name`, `homeassistant: 2025.9.0`, both
+  respected/enforced by HACS).
+
+### Release-readiness fixes (narrow, non-behavioural)
+
+- `custom_components/moisture_loop/strings.json` removed (see above).
+- `DEVELOPMENT.md` quality-check paragraph updated to the en.json-only
+  localization layout.
+- `README.md` installation wording made release-agnostic ("No GitHub Release
+  has been published" would have become false at the moment of release).
+- `PROGRESS.md` current-position bullets updated and one stale `[~]` Slice 13
+  summary clause corrected to `[x]` (the table and dated logs already said
+  `[x]`); this dated entry appended.
+- No runtime, controller, state-machine, Store, specification, or behavioural
+  change of any kind. `SHUTDOWN_OFF_BUDGET_S` untouched (verified 8.0 live).
+
+### Gates actually run on the changed tree (all PASS)
+
+- Ruff lint and `ruff format --check`: clean; `git diff --check`: clean.
+- Pure suite (`.venv`, homeassistant proven absent): 443 passed;
+  `state_machine.py` 100.00% branch.
+- Mandatory HA 2025.9.0 (`.venv-ha`, exact pin verified, 15/15 HA1 contract
+  checks): 895 passed, 1 deliberate pure-boundary skip; overall branch
+  coverage 92.54% (>= 90 gate); `state_machine.py` 100.00%.
+- Supported-current HA 2026.8.3 (`.venv-ha-current`, exact pin verified, 15/15
+  contract checks): 895 passed, 1 deliberate pure-boundary skip; branch
+  coverage 92.55%.
+- Executed-evidence traceability: 134/134 normative IDs, I1-I37 37/37,
+  T1-T59 59/59, skip boundary exactly the one documented node. No new skip or
+  xfail anywhere.
+- Metadata: every JSON/YAML file parses; `services.yaml`/`translations/en.json`
+  /`icons.json` service and entity key parity exact; manifest `0.1.0`, empty
+  requirements, canonical URLs; `hacs.json` name `MoistureLoop`, minimum
+  `2025.9.0`; `brand/icon.png` valid 256x256 RGBA PNG with real transparency,
+  1164 bytes.
+- Privacy/security: tracked-content scan found no tokens, credentials, IPs,
+  MACs, or unredacted private identifiers; `.env` ignored and untracked;
+  `evidence/` fully ignored; runtime remains local-only with empty
+  requirements and no Recorder/cloud/telemetry dependency.
+- Local hassfest container preflight was unavailable (Docker daemon not
+  running); the authoritative hosted hassfest and HACS jobs are required to be
+  green on the final candidate SHA before any release action.
+
+### Closing status
+
+- Verdict: READY WITH NON-BLOCKING NOTES. Non-blocking notes: optional central
+  Brands submission for pre-2026.3 icon coverage; optional future
+  `icon@2x.png`/`logo.png` from a vector source (not fabricated by upscaling);
+  §38 spec layout listing still names `strings.json` (next spec review).
+- The final release candidate is the commit introducing this entry ("Prepare
+  MoistureLoop 0.1.0 release"), pushed to both `origin/main` and `github/main`
+  with all six hosted CI jobs required green on that exact SHA.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
+  Brands NOT SUBMITTED. Release authorization remains NONE; authorization
+  returns to `None`.
