@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -1619,3 +1620,323 @@ class TestNewZoneSafeDefault:
         assert history.zone_runtime.state is (
             ControllerState.IDLE if persisted_enabled else ControllerState.DISABLED
         )
+
+
+class TestSetupPresentation:
+    """0.1.1 setup-UX contract (presentation only).
+
+    These tests pin the user-facing Add zone / Reconfigure zone presentation
+    and prove that improving it changed no persisted key, default, bound,
+    selector semantic, or comparison wording. Nothing here asserts controller
+    behaviour; §9 semantics stay owned by the existing suites.
+    """
+
+    ADD_STEPS = ("user", "thresholds", "limits")
+    RECONFIGURE_STEPS = ("reconfigure", "reconfigure_thresholds", "reconfigure_limits")
+
+    # The exact 0.1.0 persisted vocabulary. A 0.1.1 presentation release may
+    # not add, remove, rename, or retype any of it.
+    PERSISTED_KEYS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "user": ("name", "moisture_sensor", "actuator"),
+        "thresholds": (
+            "start_threshold",
+            "target_threshold",
+            "pulse_duration",
+            "soak_duration",
+        ),
+        "limits": (
+            "max_cycles",
+            "max_session_runtime",
+            "max_daily_runtime",
+            "min_session_interval",
+            "sensor_max_age",
+            "actuator_confirm_timeout",
+            "manual_max_duration",
+        ),
+    }
+    # key -> (min, max, unit) exactly as published in 0.1.0.
+    NUMBER_BOUNDS: ClassVar[dict[str, tuple[int, int, str]]] = {
+        "start_threshold": (1, 99, "%"),
+        "target_threshold": (2, 100, "%"),
+        "pulse_duration": (30, 1800, "s"),
+        "soak_duration": (60, 14400, "s"),
+        "max_cycles": (1, 20, "cycles"),
+        "max_session_runtime": (30, 14400, "s"),
+        "max_daily_runtime": (30, 43200, "s"),
+        "min_session_interval": (900, 604800, "s"),
+        "sensor_max_age": (300, 86400, "s"),
+        "actuator_confirm_timeout": (5, 300, "s"),
+        "manual_max_duration": (60, 7200, "s"),
+    }
+
+    @staticmethod
+    def _strings() -> dict:
+        import json
+        from pathlib import Path
+
+        import custom_components.moisture_loop as package
+
+        root = Path(package.__file__).parent
+        return json.loads((root / "translations" / "en.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def _zone_steps(cls) -> dict:
+        return cls._strings()["config_subentries"]["zone"]["step"]
+
+    @staticmethod
+    def _schema_for(step_id: str):
+        from custom_components.moisture_loop.config_flow import (
+            _identity_schema,
+            _limits_schema,
+            _thresholds_schema,
+        )
+
+        return {
+            "user": _identity_schema,
+            "reconfigure": _identity_schema,
+            "thresholds": _thresholds_schema,
+            "reconfigure_thresholds": _thresholds_schema,
+            "limits": _limits_schema,
+            "reconfigure_limits": _limits_schema,
+        }[step_id]({})
+
+    @staticmethod
+    def _canonical(step_id: str) -> str:
+        if step_id == "reconfigure":
+            return "user"
+        return step_id.removeprefix("reconfigure_")
+
+    # -- field help exists and lines up with the real schema ---------------
+
+    def test_every_field_on_every_zone_step_has_a_label_and_a_description(self) -> None:
+        steps = self._zone_steps()
+        assert set(steps) == set(self.ADD_STEPS) | set(self.RECONFIGURE_STEPS)
+        for step_id, step in steps.items():
+            keys = set(self.PERSISTED_KEYS[self._canonical(step_id)])
+            assert set(step["data"]) == keys, step_id
+            # Native Home Assistant per-field help, not injected markup.
+            assert set(step["data_description"]) == keys, step_id
+            for key, text in step["data_description"].items():
+                assert text.strip() and text.rstrip().endswith("."), (step_id, key)
+                assert "<" not in text and ">" not in text, (step_id, key)
+
+    def test_translation_field_keys_match_the_real_voluptuous_schemas(self) -> None:
+        for step_id, step in self._zone_steps().items():
+            schema_keys = {str(marker) for marker in self._schema_for(step_id).schema}
+            assert set(step["data"]) == schema_keys, step_id
+            assert set(step["data_description"]) == schema_keys, step_id
+
+    def test_labels_never_repeat_a_unit_the_selector_already_renders(self) -> None:
+        for step_id, step in self._zone_steps().items():
+            for key, label in step["data"].items():
+                lowered = label.lower()
+                assert "(seconds)" not in lowered, (step_id, key)
+                assert "(s)" not in lowered, (step_id, key)
+                assert "(%)" not in label, (step_id, key)
+
+    def test_setup_copy_avoids_internal_controller_vocabulary(self) -> None:
+        banned = (
+            "canonical",
+            "lineage",
+            "admission",
+            "reconciliation",
+            "g-en",
+            "t46",
+            "t47",
+            "store generation",
+            "blocker",
+            "tombstone",
+            "subentry",
+        )
+        for step_id, step in self._zone_steps().items():
+            blob = " ".join(
+                [
+                    step["title"],
+                    step["description"],
+                    *step["data"].values(),
+                    *step["data_description"].values(),
+                ]
+            ).lower()
+            for term in banned:
+                assert term not in blob, (step_id, term)
+
+    # -- comparison semantics must survive the rewrite ---------------------
+
+    def test_threshold_copy_still_states_below_start_and_at_or_above_target(self) -> None:
+        steps = self._zone_steps()
+        for step_id in ("thresholds", "reconfigure_thresholds"):
+            step = steps[step_id]
+            assert "falls below the start threshold" in step["description"], step_id
+            start = step["data_description"]["start_threshold"]
+            target = step["data_description"]["target_threshold"]
+            assert "falls below this level" in start, step_id
+            assert "reaches or exceeds this level" in target, step_id
+            # Never imply <= start or > target.
+            for text in (step["description"], start, target):
+                lowered = text.lower()
+                assert "at or below the start" not in lowered, step_id
+                assert "above the target threshold" not in lowered, step_id
+                assert "exceeds the target" not in lowered, step_id
+
+    # -- Add vs Reconfigure ------------------------------------------------
+
+    def test_add_zone_limits_step_carries_the_new_zone_disabled_guidance(self) -> None:
+        description = self._zone_steps()["limits"]["description"]
+        assert "New zones start disabled" in description
+        assert "before enabling automatic watering" in description
+
+    def test_reconfigure_limits_step_never_claims_the_zone_will_be_disabled(self) -> None:
+        description = self._zone_steps()["reconfigure_limits"]["description"]
+        assert "New zones" not in description
+        assert "start disabled" not in description
+        # It states the truth the reconfigure path actually guarantees.
+        assert "keeps its current enabled or disabled state" in description
+
+    def test_reconfigure_identity_copy_is_written_for_an_existing_zone(self) -> None:
+        steps = self._zone_steps()
+        assert steps["reconfigure"]["description"].startswith("Update this zone's")
+        assert steps["user"]["description"].startswith("Name this zone")
+
+    # -- durations stay integer seconds ------------------------------------
+
+    def test_duration_fields_remain_seconds_number_selectors_with_0_1_0_bounds(self) -> None:
+        from homeassistant.helpers import selector
+
+        seen: set[str] = set()
+        for step_id in self.ADD_STEPS + self.RECONFIGURE_STEPS:
+            for marker, validator in self._schema_for(step_id).schema.items():
+                key = str(marker)
+                if key not in self.NUMBER_BOUNDS:
+                    continue
+                seen.add(key)
+                assert isinstance(validator, selector.NumberSelector), (step_id, key)
+                low, high, unit = self.NUMBER_BOUNDS[key]
+                config = validator.config
+                assert config["min"] == low, (step_id, key)
+                assert config["max"] == high, (step_id, key)
+                assert config["unit_of_measurement"] == unit, (step_id, key)
+                assert config["mode"] == "box", (step_id, key)
+        assert seen == set(self.NUMBER_BOUNDS)
+
+    def test_no_zone_step_uses_a_structured_duration_selector(self) -> None:
+        """DurationSelector returns a duration dict, never seconds.
+
+        It is deliberately not adopted in 0.1.1 (SPECIFICATION.md revision
+        note, 2026-08-28): it carries no min/max, rejects an integer default,
+        and its config schema differs across the two supported HA pins.
+        """
+        from homeassistant.helpers import selector
+
+        for step_id in self.ADD_STEPS + self.RECONFIGURE_STEPS:
+            for validator in self._schema_for(step_id).schema.values():
+                assert not isinstance(validator, selector.DurationSelector), step_id
+
+    def test_schema_defaults_are_the_unchanged_0_1_0_second_values(self) -> None:
+        expected = {
+            "start_threshold": 30.0,
+            "target_threshold": 40.0,
+            "pulse_duration": 300,
+            "soak_duration": 1200,
+            "max_cycles": 4,
+            "max_session_runtime": 1800,
+            "max_daily_runtime": 3600,
+            "min_session_interval": 21600,
+            "sensor_max_age": 7200,
+            "actuator_confirm_timeout": 30,
+            "manual_max_duration": 1800,
+        }
+        resolved: dict[str, object] = {}
+        for step_id in ("thresholds", "limits"):
+            for marker in self._schema_for(step_id).schema:
+                resolved[str(marker)] = marker.default()
+        assert resolved == expected
+        # Seconds, not a structured duration object.
+        for key in ("pulse_duration", "min_session_interval", "sensor_max_age"):
+            assert isinstance(resolved[key], int)
+
+    # -- runtime resolution through Home Assistant --------------------------
+
+    async def test_home_assistant_resolves_every_new_field_description(self, hass) -> None:
+        from homeassistant.helpers.translation import async_get_translations
+
+        await create_controller_entry(hass)
+        translations = await async_get_translations(hass, "en", "config_subentries", {DOMAIN})
+        prefix = f"component.{DOMAIN}.config_subentries.zone.step"
+        for step_id, step in self._zone_steps().items():
+            for key, text in step["data_description"].items():
+                assert translations[f"{prefix}.{step_id}.data_description.{key}"] == text
+            for key, label in step["data"].items():
+                assert translations[f"{prefix}.{step_id}.data.{key}"] == label
+
+    # -- persisted semantics are byte-identical to 0.1.0 --------------------
+
+    async def test_submitting_the_defaults_persists_the_exact_0_1_0_values(
+        self, hass, entities
+    ) -> None:
+        entry = await create_controller_entry(hass)
+        result = await run_zone_add_flow(hass, entry)
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        subentry = next(iter(entry.subentries.values()))
+        assert dict(subentry.data) == ZONE_DATA
+        for key in (
+            "pulse_duration",
+            "soak_duration",
+            "max_cycles",
+            "max_session_runtime",
+            "max_daily_runtime",
+            "min_session_interval",
+            "sensor_max_age",
+            "actuator_confirm_timeout",
+            "manual_max_duration",
+        ):
+            assert isinstance(subentry.data[key], int), key
+        for key in ("start_threshold", "target_threshold"):
+            assert isinstance(subentry.data[key], float), key
+
+    async def test_a_published_0_1_0_zone_reconfigures_with_no_migration_and_no_drift(
+        self, hass, entities
+    ) -> None:
+        """An untouched 0.1.0 subentry opens, prefills, and round-trips."""
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="MoistureLoop",
+            data={
+                CONF_RUNTIME_STORE_GENERATION_ID: "gen-1",
+                CONF_RUNTIME_STORE_INITIALIZED: True,
+            },
+            subentries_data=[
+                ConfigSubentryData(
+                    data=ZONE_DATA, subentry_type="zone", title="Front bed", unique_id=None
+                )
+            ],
+        )
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        subentry_id = next(iter(entry.subentries))
+        before = dict(entry.subentries[subentry_id].data)
+        unique_id_before = entry.subentries[subentry_id].unique_id
+
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "zone"),
+            context={"source": "reconfigure", "subentry_id": subentry_id},
+        )
+        # Every step prefills from the persisted seconds without conversion.
+        for step_id in self.RECONFIGURE_STEPS:
+            assert result["step_id"] == step_id
+            for marker in result["data_schema"].schema:
+                key = str(marker)
+                assert marker.default() == before[key], (step_id, key)
+            payload = {key: before[key] for key in self.PERSISTED_KEYS[self._canonical(step_id)]}
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], payload
+            )
+        await hass.async_block_till_done()
+
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        after = entry.subentries[subentry_id]
+        assert dict(after.data) == before == ZONE_DATA
+        assert after.subentry_id == subentry_id
+        assert after.unique_id == unique_id_before
+        assert after.title == "Front bed"

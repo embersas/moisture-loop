@@ -5672,3 +5672,192 @@ Timeline, Home Assistant UTC:
   release path; specification `0.1.0-spec.6`; live instance runs published
   `0.1.0`; Zone 6 preserved and disabled pending manual user re-enable; one
   user-actionable tombstone Repair outstanding by design. NO WATER.
+
+
+---
+
+## 0.1.1 setup-flow UX polish — implementation candidate (2026-08-28)
+
+Authorised presentation-only user-experience pass over the Add zone /
+Reconfigure zone screens, before any HACS default submission. No irrigation
+decision, threshold, pulse/soak, safety-limit, state-machine, or persisted
+configuration semantic was permitted to change, and none did.
+
+### Scope evidence — zero production Python touched
+
+`git diff --name-only -- 'custom_components/**/*.py'` is **empty**. The whole
+change is `translations/en.json` (copy), `manifest.json` (version), tests, and
+documentation. Every behavioural surface — `state_machine.py`, `models.py`,
+`zone_controller.py`, `runtime.py`, `reconciliation.py`, `storage.py`,
+`slot_manager.py`, `config_flow.py` — is byte-identical to the released
+`0.1.0` tree at `458455ca7672419b5875cbaae55b9ba072ea4fc3`.
+
+### Step 2 — native field-description mechanism
+
+`data_description` under each `config_subentries.zone.step.<step>` is the
+supported Home Assistant mechanism and is present in BOTH pinned harnesses
+(verified against `homeassistant/components/mqtt/strings.json`, which ships it
+for 9 of its 11 device-subentry steps on 2025.9.0 and on 2026.8.3). No HTML,
+no frontend hack, no custom frontend code. Runtime resolution is asserted
+through `async_get_translations(hass, "en", "config_subentries", {DOMAIN})`.
+
+### Step 6 — duration selector: evaluated, deliberately NOT adopted
+
+`selector.DurationSelector` was probed empirically in both environments:
+
+| Probe | HA 2025.9.0 | HA 2026.8.3 |
+|---|---|---|
+| `{"allow_negative": false}` config | accepted | accepted |
+| `{"enable_second": true}` config | **rejected** (`extra keys not allowed`) | accepted (default true) |
+| `allow_negative` default | `True` | `False` |
+| `__call__({"hours": 6})` | `{'hours': 6}` (NOT normalised to seconds) | `{'hours': 6}` |
+| `__call__(300)` | **rejected** (`expected dict`) | **rejected** |
+| `min` / `max` in `CONFIG_SCHEMA` | absent | absent |
+
+It returns an unnormalised structured duration dict, rejects an integer
+default, carries no bounds, and its config schema differs across the two
+supported pins. Adopting it would require a dict<->seconds conversion layer on
+the primary safety-configuration path and would replace today's
+field-attributed frontend range enforcement with an unattributed backend
+`invalid_configuration` refusal — a UX regression inside a UX release. This is
+exactly the "invasive conversion / compatibility ambiguity" case the task said
+not to force into 0.1.1. Durations stay integer seconds behind the unchanged
+`NumberSelector` bounds; the human equivalent is stated in each field
+description instead (`21600` -> "900 to 604800 seconds (15 minutes to 7
+days)").
+
+### Steps 3-5, 10-11 — copy
+
+Every one of the six zone steps now carries a `data_description` for every
+field. Labels dropped the unit text the selector suffix already renders and
+lost the controller jargon: `Maximum session runtime (seconds)` ->
+`Maximum watering per session`; `Maximum daily runtime (seconds)` ->
+`Maximum watering per day`; `Sensor report maximum age (seconds)` ->
+`Maximum sensor age`; `Minimum automatic session interval (seconds)` ->
+`Minimum time between automatic sessions`; `Actuator confirmation timeout
+(seconds)` -> `Valve confirmation timeout`; `Manual watering maximum duration
+(seconds)` -> `Maximum manual watering duration`; `Irrigation actuator (switch
+or valve)` -> `Watering switch or valve`. Persisted keys, entity IDs, and
+service IDs are untouched.
+
+Comparison semantics are preserved verbatim in the copy and pinned by test:
+AUTO starts strictly BELOW start ("falls below this level") and the target is
+satisfied AT OR ABOVE ("reaches or exceeds this level"). A test also refuses
+the inverted phrasings.
+
+### Step 8 — validation
+
+No validation rule changed. Only wording: `target_not_above_start`,
+`duplicate_actuator`, `wrong_domain`, `valve_features_missing`,
+`actuator_identity_conflict`, and `invalid_configuration` were rewritten in
+plain language; `invalid_configuration` now names the actual cross-field rule
+(session/daily runtime must be at least the pulse duration) that the frontend
+bounds cannot pre-empt. Error KEYS are unchanged and existing tests assert on
+keys only.
+
+### Step 9 — Add vs Reconfigure split
+
+The LC14 "New zones start disabled" guidance now appears ONLY on the Add zone
+safety-limits step. `reconfigure_limits` instead states the truth that path
+actually guarantees — "This zone keeps its current enabled or disabled state
+when you save" — which the existing
+`test_reconfigure_preserves_persisted_enabled_state` already proves.
+
+### Step 14 — tests
+
+14 new tests in `tests/test_config_flow.py::TestSetupPresentation`, green on
+both harnesses: field help exists for every field on every step; translation
+keys match the real voluptuous schemas; labels never repeat a rendered unit;
+copy carries no internal vocabulary; threshold comparison wording preserved;
+Add carries the disabled guidance and Reconfigure does not; every duration
+field is still a seconds `NumberSelector` with the exact 0.1.0 min/max/unit;
+no step uses a structured duration selector; schema defaults are the unchanged
+0.1.0 integer seconds; Home Assistant resolves every new description; a
+defaults submission persists exactly the 0.1.0 values with unchanged types;
+and a published 0.1.0 zone enters reconfigure, prefills from persisted seconds
+with no migration, round-trips to `reconfigure_successful`, and keeps its
+data, subentry ID, unique ID, and title.
+
+### Step 15 — gates
+
+- Ruff lint: clean. Ruff format: 48 files already formatted. `git diff --check`: clean.
+- Pure (no HA installed): **451 passed**, `state_machine.py` **100.00%** branch.
+- HA 2025.9.0: contract PASS; **932 passed, 1 skipped**; total **92.54%**;
+  `state_machine.py` 100.00% branch; >=90% gate met.
+- HA 2026.8.3: contract PASS; **932 passed, 1 skipped** (933 collected);
+  total **92.36%**; `state_machine.py` 100.00% branch.
+- The single skip in each HA run is the documented boundary
+  `TestPureBoundary::test_importing_models_does_not_import_homeassistant`,
+  which passes in the pure report. No new skip, no xfail.
+- Traceability: **135/135** normative IDs, **37/37** invariants, **59/59**
+  transitions passing. Counts unchanged — no traceability change was
+  manufactured for presentation text.
+- Metadata: all tracked JSON/YAML parse; manifest `0.1.1`, `hub`,
+  `single_config_entry`, empty requirements; HACS minimum `2025.9.0`; no
+  `strings.json` shipped; step placeholders resolve to
+  `{shared_sensor_warning}` only; services parity across `services.yaml`,
+  translations, and `icons.json`; no venv/cache/JUnit/diagnostics/secret
+  artifacts tracked.
+- Local hassfest container preflight could not run (Docker daemon not
+  reachable on this workstation). The required hosted `hassfest` and `hacs`
+  jobs remain the authority on the final commit.
+- Local-only / Recorder-independence audits: covered by
+  `test_local_only_and_no_recorder_dependency` and
+  `test_pure_modules_have_no_homeassistant_import`, green in the pure run.
+
+### Steps 17-21 — LIVE DEPLOYMENT NOT PERFORMED (BLOCKED, NO WATER)
+
+Live pre-flight read the instance read-only (REST `/api/template`,
+`/api/config/config_entries/entry`, `/api/diagnostics/config_entry/...`).
+Nothing was written, restarted, reloaded, enabled, disabled, or acknowledged.
+
+Home Assistant 2026.7.2, entry `01M10YAXHYHPZEKYZDRW5ES3ZR`, **two** zone
+subentries — Zone 1 was added by the user since the 0.1.0 closeout (which
+recorded 1 subentry).
+
+- **Zone 6** (`01M10Z5D3QSJ431S722THGZHXT`, `valve.zone6_manual`) is SAFE:
+  `enabled=false`, state DISABLED, moisture 30.0 valid, needs-water off, no
+  blockers, no possible-flow owner, no open accounting, no session,
+  actuator proven OFF. Full settings snapshot captured for the
+  unchanged-proof (start 30.0 / target 40.0 / pulse 300 / soak 1200 /
+  cycles 4 / session 1800 / daily 3600 / interval 21600 / sensor age 7200 /
+  confirm 30 / manual 1800; `config_fingerprint` `d628c70b`;
+  `safety_record_id` `ee93c5cc-33a9-4849-a74b-57d06613b0fe`).
+- **Zone 1** (`01M12NV3T89G489TJ6HFRB3NNW`, `valve.zone1_4_zone_1`) is the
+  blocker: `enabled=true`, state IDLE, lifecycle active, moisture **14.0**
+  against a start threshold of 30.0, observation `valid` with an age of
+  effectively zero (the sensor reports continuously), actuator available and
+  proven OFF, `runtime_eligible: true`, `needs_water: on`, no previous
+  session so the minimum-interval gate is open, and it is **already queued in
+  the slot manager** (`owner: null`, `queue: ["01M12NV3T89G489TJ6HFRB3NNW"]`).
+
+  The ONLY thing standing between Zone 1 and physical water right now is the
+  global retained water-resource blocker `actuator_not_proven_off` owned by
+  safety record `64958e85-8cf2-4afe-9a27-10cd01fcd6e7` — the historical
+  validation tombstone this task explicitly must not alter. Deploying the
+  candidate requires a restart/reload, which is precisely when that retained
+  hazard is re-derived. Zone 1 is otherwise fully eligible and first in the
+  queue.
+
+The task's controlling live rule is NO WATER, and "if current conditions could
+cause AUTO watering after restart: STOP". Zone 1 satisfies that condition. The
+task equally forbids silently disabling a zone, and the enable state of the
+user's live irrigation is the user's decision, so no enable state was touched.
+Live UX validation, the live safety regression, the `0.1.1` tag, the GitHub
+Release, and HACS publish/install verification are therefore all deferred
+pending the user's decision on Zone 1.
+
+All commandable valves are CLOSED (`valve.zone6_manual`,
+`valve.zone5_manual`, `valve.zone1_4_zone_1..4`). No session, no slot owner,
+no possible-flow owner, no open accounting. **NO WATER** occurred during this
+work.
+
+### Status
+
+- Version `0.1.1` prepared; specification remains `0.1.0-spec.6` under the
+  existing non-behavioural presentation-correction precedent (revision note
+  added to the header and a bullet to §42).
+- Tag `0.1.0`, its GitHub Release, and commit
+  `458455ca7672419b5875cbaae55b9ba072ea4fc3` are untouched.
+- No `0.1.1` tag and no `0.1.1` release created.
+- HACS default: NOT SUBMITTED. Home Assistant Brands: NOT SUBMITTED.

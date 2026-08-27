@@ -126,8 +126,9 @@ For manual development installation, copy
 
 1. Settings → Devices & services → Add integration → MoistureLoop.
 2. Create the single controller entry.
-3. On that entry, choose Add zone and select the name, sensor, actuator,
-   thresholds, pulse/soak timing, and safety limits.
+3. On that entry, choose Add zone and select the zone name, its soil-moisture
+   sensor, and the switch or valve that waters it, then set the thresholds,
+   pulse/soak timing, and safety limits. Each field explains itself in the form.
 4. The new zone is created **disabled**. Review its settings on the zone
    device page, then turn its Enabled switch on when ready.
 
@@ -137,19 +138,22 @@ must support both open and close; position-only valves are unsupported.
 `opening`, `closing`, unknown, unavailable, and a nonzero reported position are
 never proof of OFF.
 
-| Setting | Default | Allowed range |
-|---|---:|---:|
-| Start threshold | 30% | 1–99; strictly below target |
-| Target threshold | 40% | 2–100; strictly above start |
-| Pulse duration | 5 min | 30 s–30 min |
-| Soak duration | 20 min | 1 min–4 h |
-| Maximum cycles | 4 | 1–20 |
-| Maximum session runtime | 30 min | pulse duration–4 h |
-| Maximum daily runtime | 60 min | pulse duration–12 h |
-| Minimum AUTO session interval | 6 h | 15 min–7 d |
-| Sensor report maximum age | 2 h | 5 min–24 h |
-| Actuator confirmation timeout | 30 s | 5 s–5 min |
-| Manual maximum duration | 30 min | 1 min–2 h |
+Every duration is configured in whole seconds; the setup screens state each
+field's allowed range in seconds and in human units.
+
+| Setup label | Setting | Default | Allowed range |
+|---|---|---:|---:|
+| Start threshold | `start_threshold` | 30% | 1–99; strictly below target |
+| Target threshold | `target_threshold` | 40% | 2–100; strictly above start |
+| Pulse duration | `pulse_duration` | 5 min (300 s) | 30 s–30 min |
+| Soak duration | `soak_duration` | 20 min (1200 s) | 1 min–4 h |
+| Maximum cycles per session | `max_cycles` | 4 | 1–20 |
+| Maximum watering per session | `max_session_runtime` | 30 min (1800 s) | pulse duration–4 h |
+| Maximum watering per day | `max_daily_runtime` | 60 min (3600 s) | pulse duration–12 h |
+| Minimum time between automatic sessions | `min_session_interval` | 6 h (21600 s) | 15 min–7 d |
+| Maximum sensor age | `sensor_max_age` | 2 h (7200 s) | 5 min–24 h |
+| Valve confirmation timeout | `actuator_confirm_timeout` | 30 s | 5 s–5 min |
+| Maximum manual watering duration | `manual_max_duration` | 30 min (1800 s) | 1 min–2 h |
 
 Defaults are conservative starting points, not agronomic advice. Calibrate for
 the soil, emitters, probe placement, and sensor cadence in the deployment.

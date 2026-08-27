@@ -20,66 +20,106 @@
       "step": {
         "user": {
           "title": "Zone identity",
-          "description": "Name the zone and select its soil-moisture sensor and irrigation actuator. {shared_sensor_warning}",
+          "description": "Name this zone, then choose the sensor that measures its soil moisture and the switch or valve that waters it. {shared_sensor_warning}",
           "data": {
             "name": "Zone name",
             "moisture_sensor": "Soil-moisture sensor",
-            "actuator": "Irrigation actuator (switch or valve)"
+            "actuator": "Watering switch or valve"
+          },
+          "data_description": {
+            "name": "Shown on this zone's device and entities.",
+            "moisture_sensor": "The Home Assistant sensor MoistureLoop reads to decide when this zone needs water.",
+            "actuator": "The switch or valve that turns this zone's water on and off."
           }
         },
         "thresholds": {
           "title": "Thresholds and timing",
-          "description": "A new automatic session starts strictly below the start threshold and completes at or above the target. Every pulse is followed by the full soak before a new reading can decide. {shared_sensor_warning}",
+          "description": "MoistureLoop starts automatic watering when soil moisture falls below the start threshold. It waters in pulses, waits for the soil to soak, then checks a fresh moisture reading. Watering finishes when the target is reached or a safety limit is reached. {shared_sensor_warning}",
           "data": {
-            "start_threshold": "Start threshold (%)",
-            "target_threshold": "Target threshold (%)",
-            "pulse_duration": "Pulse duration (seconds)",
-            "soak_duration": "Soak duration (seconds)"
+            "start_threshold": "Start threshold",
+            "target_threshold": "Target threshold",
+            "pulse_duration": "Pulse duration",
+            "soak_duration": "Soak duration"
+          },
+          "data_description": {
+            "start_threshold": "Watering can start when soil moisture falls below this level. 1 to 99%.",
+            "target_threshold": "Watering stops once a fresh moisture reading reaches or exceeds this level. Must be above the start threshold. 2 to 100%.",
+            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 1800 seconds (30 seconds to 30 minutes).",
+            "soak_duration": "How long MoistureLoop waits after each pulse before using a new moisture reading. 60 to 14400 seconds (1 minute to 4 hours)."
           }
         },
         "limits": {
           "title": "Safety limits",
-          "description": "Hard bounds for automatic and manual watering. Sensor report maximum age is measured from the report timestamp Home Assistant exposes. Ensure the selected moisture entity continues to produce Home Assistant reports often enough during healthy operation, including when its value is unchanged. New zones are created disabled: review the zone settings, then turn Enabled on when you are ready for automatic watering. {shared_sensor_warning}",
+          "description": "These limits prevent excessive watering and set how fresh the sensor and valve responses must be. New zones start disabled, so you can review these settings before enabling automatic watering. {shared_sensor_warning}",
           "data": {
             "max_cycles": "Maximum cycles per session",
-            "max_session_runtime": "Maximum session runtime (seconds)",
-            "max_daily_runtime": "Maximum daily runtime (seconds)",
-            "min_session_interval": "Minimum automatic session interval (seconds)",
-            "sensor_max_age": "Sensor report maximum age (seconds)",
-            "actuator_confirm_timeout": "Actuator confirmation timeout (seconds)",
-            "manual_max_duration": "Manual watering maximum duration (seconds)"
+            "max_session_runtime": "Maximum watering per session",
+            "max_daily_runtime": "Maximum watering per day",
+            "min_session_interval": "Minimum time between automatic sessions",
+            "sensor_max_age": "Maximum sensor age",
+            "actuator_confirm_timeout": "Valve confirmation timeout",
+            "manual_max_duration": "Maximum manual watering duration"
+          },
+          "data_description": {
+            "max_cycles": "Maximum number of watering pulses allowed in one automatic session. 1 to 20.",
+            "max_session_runtime": "Maximum total valve-open time allowed during one watering session. At least the pulse duration, up to 14400 seconds (4 hours).",
+            "max_daily_runtime": "Maximum total valve-open time this zone may use in one day. At least the pulse duration, up to 43200 seconds (12 hours).",
+            "min_session_interval": "Minimum time between completed automatic watering sessions. 900 to 604800 seconds (15 minutes to 7 days).",
+            "sensor_max_age": "Moisture reports older than this are considered stale and cannot start watering. Age is measured from the report timestamp Home Assistant exposes, so pick a sensor that keeps reporting this often even when its value does not change. 300 to 86400 seconds (5 minutes to 24 hours).",
+            "actuator_confirm_timeout": "How long MoistureLoop waits for the switch or valve to confirm that it opened or closed. 5 to 300 seconds (5 seconds to 5 minutes).",
+            "manual_max_duration": "Maximum duration allowed for a single manual watering request. 60 to 7200 seconds (1 minute to 2 hours)."
           }
         },
         "reconfigure": {
           "title": "Zone identity",
-          "description": "Update the zone identity. Changing configuration safely terminates any active session first. {shared_sensor_warning}",
+          "description": "Update this zone's name, sensor, or watering switch or valve. Saving a change safely stops any watering that is in progress first. {shared_sensor_warning}",
           "data": {
             "name": "Zone name",
             "moisture_sensor": "Soil-moisture sensor",
-            "actuator": "Irrigation actuator (switch or valve)"
+            "actuator": "Watering switch or valve"
+          },
+          "data_description": {
+            "name": "Shown on this zone's device and entities.",
+            "moisture_sensor": "The Home Assistant sensor MoistureLoop reads to decide when this zone needs water.",
+            "actuator": "The switch or valve that turns this zone's water on and off."
           }
         },
         "reconfigure_thresholds": {
           "title": "Thresholds and timing",
-          "description": "{shared_sensor_warning}",
+          "description": "MoistureLoop starts automatic watering when soil moisture falls below the start threshold. It waters in pulses, waits for the soil to soak, then checks a fresh moisture reading. Watering finishes when the target is reached or a safety limit is reached. {shared_sensor_warning}",
           "data": {
-            "start_threshold": "Start threshold (%)",
-            "target_threshold": "Target threshold (%)",
-            "pulse_duration": "Pulse duration (seconds)",
-            "soak_duration": "Soak duration (seconds)"
+            "start_threshold": "Start threshold",
+            "target_threshold": "Target threshold",
+            "pulse_duration": "Pulse duration",
+            "soak_duration": "Soak duration"
+          },
+          "data_description": {
+            "start_threshold": "Watering can start when soil moisture falls below this level. 1 to 99%.",
+            "target_threshold": "Watering stops once a fresh moisture reading reaches or exceeds this level. Must be above the start threshold. 2 to 100%.",
+            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 1800 seconds (30 seconds to 30 minutes).",
+            "soak_duration": "How long MoistureLoop waits after each pulse before using a new moisture reading. 60 to 14400 seconds (1 minute to 4 hours)."
           }
         },
         "reconfigure_limits": {
           "title": "Safety limits",
-          "description": "Sensor report maximum age is measured from the report timestamp Home Assistant exposes. Ensure the selected moisture entity continues to produce Home Assistant reports often enough during healthy operation, including when its value is unchanged. {shared_sensor_warning}",
+          "description": "These limits prevent excessive watering and set how fresh the sensor and valve responses must be. This zone keeps its current enabled or disabled state when you save. {shared_sensor_warning}",
           "data": {
             "max_cycles": "Maximum cycles per session",
-            "max_session_runtime": "Maximum session runtime (seconds)",
-            "max_daily_runtime": "Maximum daily runtime (seconds)",
-            "min_session_interval": "Minimum automatic session interval (seconds)",
-            "sensor_max_age": "Sensor report maximum age (seconds)",
-            "actuator_confirm_timeout": "Actuator confirmation timeout (seconds)",
-            "manual_max_duration": "Manual watering maximum duration (seconds)"
+            "max_session_runtime": "Maximum watering per session",
+            "max_daily_runtime": "Maximum watering per day",
+            "min_session_interval": "Minimum time between automatic sessions",
+            "sensor_max_age": "Maximum sensor age",
+            "actuator_confirm_timeout": "Valve confirmation timeout",
+            "manual_max_duration": "Maximum manual watering duration"
+          },
+          "data_description": {
+            "max_cycles": "Maximum number of watering pulses allowed in one automatic session. 1 to 20.",
+            "max_session_runtime": "Maximum total valve-open time allowed during one watering session. At least the pulse duration, up to 14400 seconds (4 hours).",
+            "max_daily_runtime": "Maximum total valve-open time this zone may use in one day. At least the pulse duration, up to 43200 seconds (12 hours).",
+            "min_session_interval": "Minimum time between completed automatic watering sessions. 900 to 604800 seconds (15 minutes to 7 days).",
+            "sensor_max_age": "Moisture reports older than this are considered stale and cannot start watering. Age is measured from the report timestamp Home Assistant exposes, so pick a sensor that keeps reporting this often even when its value does not change. 300 to 86400 seconds (5 minutes to 24 hours).",
+            "actuator_confirm_timeout": "How long MoistureLoop waits for the switch or valve to confirm that it opened or closed. 5 to 300 seconds (5 seconds to 5 minutes).",
+            "manual_max_duration": "Maximum duration allowed for a single manual watering request. 60 to 7200 seconds (1 minute to 2 hours)."
           }
         }
       },
@@ -87,12 +127,12 @@
         "invalid_name": "Zone names must be 1-64 characters.",
         "duplicate_name": "Another zone already uses this name (names are compared case-insensitively).",
         "entity_not_found": "This entity does not exist.",
-        "wrong_domain": "Unsupported entity type for this field.",
-        "valve_features_missing": "This valve does not support both open and close commands; position-only valves are not supported.",
-        "duplicate_actuator": "Another zone already controls this actuator.",
-        "actuator_identity_conflict": "This actuator conflicts with retained durable identity evidence. Restore or resolve the original actuator identity before continuing.",
-        "target_not_above_start": "The target threshold must be strictly greater than the start threshold.",
-        "invalid_configuration": "One or more values are outside their allowed ranges."
+        "wrong_domain": "This entity type cannot be used for this field.",
+        "valve_features_missing": "This valve cannot be commanded open and closed, so it cannot be used. Position-only valves are not supported.",
+        "duplicate_actuator": "Another zone already uses this switch or valve.",
+        "actuator_identity_conflict": "This switch or valve conflicts with the watering history MoistureLoop kept for it. Restore the original entity, or pick a different one, before continuing.",
+        "target_not_above_start": "The target threshold must be higher than the start threshold.",
+        "invalid_configuration": "One or more values are outside their allowed range. Check that the maximum watering per session and per day are both at least as long as the pulse duration."
       },
       "abort": {
         "reconfigure_successful": "Zone updated. Any previously active session was safely terminated."
