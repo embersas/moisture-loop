@@ -5576,3 +5576,99 @@ Timeline, Home Assistant UTC:
   verification PENDING USER ACTION (temporarily disable Zone 6, then
   re-authorize the install verification); HACS default NOT SUBMITTED; Brands
   NOT SUBMITTED. NO WATER.
+
+## Session Log — 2026-08-28 (0.1.0 published-release install verification, Steps 10-12)
+
+### Authorization and scope
+
+- The user temporarily disabled Zone 6 themselves and explicitly authorized
+  completion of the previously blocked release-verification Steps 10-12 only:
+  install the published HACS release 0.1.0, restart as required, verify the
+  published-tag installation path, verify permanent Zone 6 preservation, and
+  perform the final no-water safety regression. NO WATER authorized; Zone 6
+  settings untouched; Zone 6 NOT re-enabled at the end (user will re-enable
+  manually); HACS default and Brands remain NOT authorized.
+
+### Re-run precheck — PASS
+
+- Zone 6 confirmed DISABLED live before any change: Enabled switch off, status
+  `disabled`, `enabled=false` in the runtime and store. All commandable
+  irrigation valves CLOSED, no active session, slot owner null with empty
+  queue, no possible-flow owner, no open accounting, no blocker, no fault,
+  actuator proven-off, 0 Repairs. Full read-only pre-install baseline captured
+  for the identity diff.
+
+### Step 10 — published-release HACS install — PASS
+
+- Supported HACS release install: `hacs/repository/download` (repo id
+  `1343557518`, version `0.1.0`). `installed_version` moved
+  `5867181a75b72a3e37eae02ea001459de9cff578` -> `0.1.0`,
+  `pending_upgrade` -> false. This exercised the PUBLIC release/tag path, not
+  an exact-SHA development download.
+- `homeassistant.restart` invoked; HA (Core 2026.7.2) returned to RUNNING in
+  under a minute. After restart and a further HACS refresh: installed `0.1.0`,
+  available `0.1.0`, `pending_upgrade` false, no parsing/metadata/artifact
+  error. Diagnostics report moisture_loop version `0.1.0`,
+  `integration_type` `hub`, `single_config_entry` true, `iot_class`
+  `calculated` — the tagged release content (tag -> `458455ca7672…`).
+
+### Step 11 — post-install live regression — PASS
+
+- Integration loads: entry `loaded`, 1 subentry, no setup/config-flow error.
+- Permanent Zone 6 preserved EXACTLY: identical subentry, device, and all 11
+  entity registry rows/unique IDs; identical sensor
+  (`sensor.soil_moisture_zone6`) and actuator (`valve.zone6_manual`) durable
+  identities; identical thresholds and timings (`config_fingerprint`
+  unchanged); `safety_record_id`, `safety_lineage_id`, `zone_history_id`,
+  lifecycle, daily accounting (0.0 s today), `last_session_end_utc`
+  2026-08-27T07:36:32Z, and last-session summary all identical; enabled state
+  unchanged (still disabled, exactly as the user left it); every entity state
+  byte-identical pre/post. Only expected volatility: store revision advanced
+  and the entry-wide `applied_shadow.applied_generation` runtime counter reset
+  with the fresh entry setup (3 -> 2) — the same reconciliation-bookkeeping
+  counter previously documented; no durable field changed.
+- Presentation: Status is a translated enum (`disabled`/`idle`/`watering`/
+  `soaking`/`fault`); Needs water carries NO moisture device-class (no
+  inverted Wet/Dry rendering); Watering is `running`; Problem is `problem`;
+  "Minimum interval ends", "Check now", and "Stop watering" names retained.
+- ONE Repair appeared after restart:
+  `tombstone_actuator_missing_…_64958e85-8cf2-4afe-9a27-10cd01fcd6e7`
+  (severity error), for the RETIRED tombstone of the 2026-08-27 temporary
+  validation zone whose synthetic MQTT fixture entity was deliberately deleted
+  during that cleanup. This is exactly the SPECIFICATION.md §34 fail-closed
+  behaviour ("a retained tombstone actuator cannot be resolved by its durable
+  identity"), surfacing on the FIRST restart since the fixture entity was
+  removed. It is a latent consequence of the earlier cleanup, NOT a 0.1.0
+  install defect — the identical tree would raise it on any restart. The same
+  condition gives that tombstone record a record-scoped
+  `actuator_not_proven_off` blocker and lifecycle `delete_pending`; global
+  admission remains OPEN with grants enabled, and Zone 6 carries no blocker.
+  The Repair was left for the user to resolve via the supported Repairs flow;
+  nothing was acknowledged, merged, or cleared by this session.
+
+### Step 12 — final live safety — PASS (NO WATER)
+
+- All commandable irrigation valves CLOSED (`valve.zone6_manual`,
+  `valve.zone5_manual`, `valve.zone1_4_zone_1..4`; only offline
+  non-commandable non-MoistureLoop entities are non-closed). No active
+  session; slot owner null, queue empty; no possible-flow owner; no open
+  accounting; no fault; Zone 6 blockers empty. The only Repair and the only
+  blocker are the expected tombstone items above. Zone 6 daily runtime today
+  0.0 s and the Watering binary sensor stayed off throughout — **NO WATER**
+  occurred at any point during release execution or verification.
+- Zone 6 left DISABLED exactly as the user set it; not re-enabled.
+
+### Closeout
+
+- HACS-default readiness: the last open item (published tag/release install
+  path verified live) is now CLOSED. All read-only criteria pass. HACS default
+  submission remains NOT SUBMITTED and NOT authorized; Brands remains NOT
+  SUBMITTED and NOT authorized. The next user decision authorizes those
+  separately.
+- Tag `0.1.0` and GitHub Release `378108158` remain immutable at
+  `458455ca7672419b5875cbaae55b9ba072ea4fc3`. This entry is post-release
+  documentation only.
+- State: version `0.1.0` RELEASED and live-verified through the public HACS
+  release path; specification `0.1.0-spec.6`; live instance runs published
+  `0.1.0`; Zone 6 preserved and disabled pending manual user re-enable; one
+  user-actionable tombstone Repair outstanding by design. NO WATER.
