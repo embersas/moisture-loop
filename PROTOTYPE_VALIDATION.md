@@ -1119,3 +1119,65 @@ budget headroom. The session finished during shutdown as
 `home_assistant_shutdown` with **measured** (not estimated) runtime 5.911839 s,
 and the stopped run was recorded **clean**. **B2 is `[x] PASS`**, Phase B is
 `[x] Complete`, and all seven §46 prototype validations now have live evidence.
+
+## Slice 14 - Real-sensor closed-loop validation (physical AUTO), 2026-08-27
+
+`[x] PASS`. One bounded physical AUTO session was separately authorized and run
+against the deployed `ad2ca86` build, using the real Ecowitt soil probe
+`sensor.soil_moisture_zone6` (GW2000C, soil channel 1) and the real Holman
+`WX1` Zone 6 tap-timer outlet (`tuya_local`, OPEN|CLOSE, entity ID redacted)
+serving the same garden bed.
+
+**Sensor freshness path.** The unchanged-value `state_reported` path was
+exercised end to end by real hardware: 14 genuine reports were captured during
+the trial at an exact 60 s cadence, every one carrying the identical value `32`
+with `last_changed` static, so `State.last_reported` advanced on
+`state_reported` alone. Freshness must be read from the live State object or the
+event path; REST `GET /api/states` serves a permanently cached `last_reported`
+(`State._as_dict` is an `@under_cached_property` never invalidated by the
+in-place mutation in the identical-state branch of
+`StateMachine.async_set_internal`) and cannot observe report advancement. This
+is the same Core-level report-visibility limitation already recorded under A5.
+
+**Configuration.** `M` = 32 %, `start_threshold` 34 %, `target_threshold` 36 %,
+`pulse_duration_s` 30, `soak_duration_s` 180, `max_cycles` 2,
+`max_session_runtime_s` 120, `max_daily_runtime_s` 300,
+`min_session_interval_s` 900, `sensor_max_age_s` 7200,
+`actuator_confirm_timeout_s` 30. No production default, Store schema, runtime
+code, state machine, or normative specification was changed.
+
+**Timeline (Home Assistant UTC clock).** `T0` enable `03:17:13.511`;
+`session_started` `03:17:13.662` (+0.151 s); valve confirmed OPEN
+`03:17:13.893`; confirmed CLOSED `03:17:45.211` (pulse 1 = **31.318 s**); soak 1
+from `03:17:45.225` with deadline `03:20:45.225`. Three mid-soak reports
+(`03:18:32`, `03:19:32`, `03:20:32`) were correctly **ignored**; the first
+eligible post-soak report `R1` arrived `03:21:32.863` (**+47.638 s** after the
+deadline) at 32 %, and the continuation decision followed **0.021 s** later at
+`03:21:32.884`. Valve OPEN `03:21:34.136`, CLOSED `03:22:05.474` (pulse 2 =
+**31.338 s**); soak 2 from `03:22:05.487`, deadline `03:25:05.487`; three more
+mid-soak reports ignored; `R2` `03:25:32.874` (**+27.387 s**) at 32 %, and
+`session_finished` **0.020 s** later at `03:25:32.894`.
+
+**Outcome.** `reason: max_cycles`, `cycles: 2`, `moisture_before` 32.0,
+`moisture_after` 32.0, target unmet — a valid Branch B result. Runtime was
+`64.133031 s` with `runtime_estimated: false` (**measured**, not estimated)
+against 62.657 s of observed valve-open wall time, i.e. conservatively
+over-counted by 1.476 s and inside the 120 s session cap. Independent
+device-side confirmation came from the Holman controller's own status moving
+`idle -> manual -> idle` twice, coincident with each commanded pulse, and its
+activity counter changing from `unknown` to a non-zero record.
+
+**Terminal safety.** After the session: physical Zone 6 outlet terminal
+`closed` with `is_closed: true`, all six commandable irrigation valves closed,
+no session, no slot owner, no queue, no blocker, no possible-flow owner, no open
+accounting, no actuator or zone fault, no identity incident, Store schema 2,
+reconciliation clean, and **0 Repairs**. The validation zone was returned to
+`DISABLED`.
+
+**Scope of the claim.** This validates software closed-loop behaviour only -
+real report, AUTO decision, real actuation, bounded OFF, full soak, real
+post-soak report, closed-loop decision, clean terminal state. It makes **no**
+agronomic claim; two 30 s pulses are a safety-bounded software test, not an
+irrigation recommendation. AUTO admission at `T0` was driven by the already
+fresh real report rather than by a newly arriving one, which is recorded
+truthfully; both closed-loop continuation decisions were report-driven.

@@ -6,13 +6,13 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`. Slice 14 Checkpoint A (real-sensor closed-loop validation, NON-WATER preflight) is `[x] PASS` as of 2026-08-27: the real Ecowitt sensor is proven to report every 60.0 s including unchanged values, the real Holman Zone 6 `WX1` actuator is registry-confirmed terminal CLOSED, and a temporary validation zone exists but is left DISABLED with no water ever commanded. Checkpoint B physical AUTO validation requires explicit physical-water authorization. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
+- Current authorized work: `None`. Slice 14 is `[x] Complete`: Checkpoint A (NON-WATER preflight) and Checkpoint B (physical AUTO) both `[x] PASS` on 2026-08-27. Checkpoint B ran one bounded real AUTO session on the real Ecowitt sensor and the real Holman Zone 6 `WX1` outlet: two 31.3 s pulses, two full 180 s soaks, both continuation decisions driven strictly by real post-soak `state_reported` reports, finishing `max_cycles` with measured runtime 64.133031 s, terminal actuator CLOSED, 0 Repairs, and the validation zone returned to DISABLED. Physical-water authorization is consumed; no further physical watering is authorized. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
 - Specification version: `0.1.0-spec.5` (unchanged by the 2026-08-27 nomenclature-only revision note)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.5 conformance: `Spec.4 Remediation Stages 1-8, the spec.5 Stage-1 shutdown remediation (implementation c81f598969ff544abd64915fe92e8f5ae13d4086), and the nomenclature-only MoistureLoop canonical rename (ad2ca863b1efcc76645d39133c7f7d0c73a48794) are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 895 tests with the one deliberate pure-boundary skip; pure passes 443/443. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch; overall mandatory coverage 92.54%.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `No implementation work is open. Slice 14 Checkpoint A non-water preflight is complete; the next substantive work is Slice 14 Checkpoint B, the controlled real-sensor physical AUTO validation on the live deployment using the staged Zone 6 parameters, followed by the 0.1.0 release-readiness audit under the MoistureLoop identity. Checkpoint B requires explicit physical-water authorization and each stage requires its own explicit authorization. No release/submission stage is authorized.`
+- Next implementation work: `No implementation work is open. Slice 14 real-sensor closed-loop validation is complete on live physical evidence. The next substantive work is the 0.1.0 release-readiness audit under the MoistureLoop identity, which requires its own explicit authorization; removing the temporary DISABLED Zone 6 validation zone should be part of that. No release/submission stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the MoistureLoop rename SHA ad2ca863b1efcc76645d39133c7f7d0c73a48794 (run 33019739998) and the documentation closeout SHA d34e4f03c231ca1a7af93805ad40dad2c61e39ce (run 33020561431) at the repository now named embersas/moisture-loop: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. Earlier results remain attributed to their original SHAs in the dated logs. Version is 0.1.0; no tag, GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[x] Complete. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [x] PASS: the corrected 2026-08-26 active-flow trial on the byte-verified spec.5 implementation proved shutdown-path terminal CLOSED at T3+1.3596 s with the run recorded clean. Phase B is [x] Complete. All seven §46 prototype validations have live evidence; the physical evidence was recorded under the then-current SoilSync name and remains valid because runtime semantics were unchanged by the rename.`
 - Overall status: `Slices 0-13 are complete. The spec.5 Stage-1 shutdown correction is implemented, fully gated, and physically validated; the first failed B2 attempt is retained unchanged as historical evidence. The product is canonically MoistureLoop with no stale active identity. Release readiness has not yet been audited and no release is authorized.`
@@ -4537,3 +4537,154 @@ terminates through an existing transition. No new ambiguity was found.
   that native subentry deletion may retain Store tombstones.
 - Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
   Brands NOT SUBMITTED. Authorization returns to `None`.
+
+## Session Log — 2026-08-27 (Slice 14 real-sensor closed-loop validation, Checkpoint B physical AUTO)
+
+### Authorization, reason, and scope
+
+- The user authorized exactly ONE bounded physical AUTO watering session using
+  the real Ecowitt sensor and the real Holman Zone 6 outlet. Manual opening,
+  `start_manual_watering`, any other zone, active-flow shutdown, restart during
+  flow, code/state-machine/schema/default changes, tags, releases, and HACS or
+  Brands submission were all explicitly out of scope, as was any remediation if
+  a defect were found. Authorization is now consumed.
+
+### Phase 0 - Checkpoint A evidence synchronised
+
+- The Checkpoint A documentation commit
+  `998bf5eef915678c317371b7559e015aeae9d424` was already present on `origin` and
+  was pushed to `github` before water. The push had previously failed `403`
+  because Git Credential Manager was selecting a work account with `pull`-only
+  rights; it was resolved by scoping the credential to this repository with
+  `git config --local credential.https://github.com.username embersas`. No force
+  push, no credential printed or weakened, and no commit in history carries a
+  non-personal identity.
+- `local HEAD = origin/main = github/main = 998bf5e`, branch `main`, clean
+  worktree, no tags. Hosted CI run `33035255621` for exactly that SHA reported
+  **6/6 jobs green**: Lint and format check, Pure-layer tests, HA 2025.9.0
+  harness (mandatory), HA 2026.8.3 supported-current harness, hassfest, and
+  HACS validation.
+
+### Phase 1 - fresh live safety precheck
+
+- MoistureLoop `loaded`, version `0.1.0`, domain `moisture_loop`, one config
+  entry, the single validation zone present and `DISABLED`, no session, no slot
+  owner, no blocker, no possible-flow owner, no open accounting, no fault, Store
+  schema 2, reconciliation clean, **0 Repairs**.
+- All six commandable irrigation valves proven terminal CLOSED with
+  `is_closed: true` (entity IDs redacted). An Orbit BHyve valve on a separate
+  offline hub is `unavailable`, not commandable, and excluded by the user.
+- Holman Zone 6 timer idle: status `idle`, flow total `0 L`, time-remaining
+  `unknown`, watering-delay `cancel`, alarm `0`, battery `100`, and the
+  next-watering payload decoding to all-zero bytes, so no autonomous schedule
+  was armed.
+- Two genuinely new sensor reports were captured before proceeding, at an exact
+  60.0 s cadence, value `32`, freshest read at 0.2 s age.
+
+### Phase 2 - final thresholds chosen from a fresh reading, while DISABLED
+
+- `M` = 32 %, so thresholds were set to `M+2` / `M+4` = **start 34.0 %,
+  target 36.0 %**, replacing the Checkpoint A target of 40 %. `M` is strictly
+  below start. Applied by supported zone reconfiguration while the zone remained
+  `DISABLED`; afterwards the zone was still `DISABLED`, the actuator still
+  CLOSED, no session, no blocker, no fault, reconciliation clean at generation
+  2/2, and `runtime_eligible` was `true`, confirming the zone would become
+  AUTO-eligible purely on being enabled.
+- Retained unchanged: pulse 30 s, soak 180 s, max cycles 2, max session runtime
+  120 s, max daily runtime 300 s, minimum interval 900 s, sensor max age 7200 s,
+  actuator confirmation timeout 30 s, manual maximum 1800 s.
+
+### Phase 3 - observers armed before enabling
+
+- A single observer process was armed and proven live **before** the enable,
+  subscribing over WebSocket to `moisture_loop_session_started`,
+  `moisture_loop_session_finished`, `moisture_loop_fault`,
+  `moisture_loop_fault_cleared` and `state_changed`, and polling the live State
+  path every 2 s for sensor `last_reported`/value, valve state and `is_closed`,
+  MoistureLoop status and runtime, and Holman controller status, flow total and
+  time-remaining. Liveness was confirmed by observing two 60 s report intervals
+  before the enable was issued.
+- All timeline values below come from one clock, Home Assistant's, via event
+  `time_fired`, State `last_changed`/`last_reported`, and template `now()`. The
+  local workstation clock ran about 4 s behind and was never used.
+
+### Phase 4/5/6/7/8 - the physical trial
+
+Timeline, Home Assistant UTC:
+
+| Label | Time | Note |
+|---|---|---|
+| `T0` | `03:17:13.511` | zone ENABLE issued |
+| `T1` | `03:17:13.662` | `session_started`, mode `auto`, +0.151 s from `T0` |
+| `T2` | `03:17:13.893` | valve confirmed OPEN, +0.231 s from session start |
+| `T4` | `03:17:45.211` | valve confirmed CLOSED, **pulse 1 = 31.318 s** |
+| `S1` | `03:17:45.225` | soak 1 begins |
+| `S1_END` | `03:20:45.225` | soak 1 deadline |
+| `R1` | `03:21:32.863` | first eligible post-soak report, **+47.638 s**, value 32 % |
+| `D1` | `03:21:32.884` | continue decision, **+0.021 s after `R1`** |
+| `T5` | `03:21:34.136` | valve confirmed OPEN, +1.252 s from `D1` |
+| `T6` | `03:22:05.474` | valve confirmed CLOSED, **pulse 2 = 31.338 s** |
+| `S2` | `03:22:05.487` | soak 2 begins |
+| `S2_END` | `03:25:05.487` | soak 2 deadline |
+| `R2` | `03:25:32.874` | first eligible post-soak report, **+27.387 s**, value 32 % |
+| `T_END` | `03:25:32.894` | `session_finished`, **+0.020 s after `R2`** |
+
+- **AUTO admission, recorded truthfully.** The session began on the enable
+  itself, 0.151 s after `T0`, because a fresh VALID real report from
+  `03:16:32` already satisfied admission. It was not triggered by a newly
+  arriving report. Both closed-loop continuation decisions, however, were
+  strictly report-driven, following `R1` and `R2` by 0.021 s and 0.020 s.
+  `moisture_loop.evaluate_zone` was never called, no manual watering service was
+  used, no valve was opened by hand, and no sensor state was synthesized.
+- **Post-soak freshness was honoured.** Three mid-soak reports were available
+  during each soak (`03:18:32`, `03:19:32`, `03:20:32` in soak 1;
+  `03:22:32`, `03:23:32`, `03:24:32` in soak 2) and every one was correctly
+  **ignored**. Each decision used only the first report at or after its soak
+  deadline.
+- **Branch B applied.** `R1` = 32 % < target 36 %, so exactly one further
+  bounded pulse ran. `R2` = 32 % < 36 % with `max_cycles` exhausted, so the
+  session finished.
+- 14 genuine sensor reports were captured across the trial, all value `32`, at a
+  60 s cadence, exercising the unchanged-value `state_reported` freshness path
+  under real load.
+
+### Phase 9/10 - outcome and terminal safety
+
+- `session_finished`: `reason max_cycles`, `mode auto`, `cycles 2`,
+  `moisture_before 32.0`, `moisture_after 32.0`, `clamp_reasons []`,
+  `runtime_s 64.133031`, **`runtime_estimated: false`** with
+  `runtime_estimation_reason none`. Measured runtime exceeds the 62.657 s of
+  observed valve-open wall time by 1.476 s, i.e. conservatively over-counted as
+  the safety model requires, and is inside the 120 s session cap.
+- Independent device-side evidence: the Holman controller's own status moved
+  `idle -> manual -> idle` twice, coincident with each commanded pulse, and its
+  activity counter moved from `unknown` to a record containing a single non-zero
+  byte. The `WX1` reports no litre total for this outlet, so controller status
+  is the primary independent witness.
+- Terminal state after the session: physical Zone 6 outlet `closed` with
+  `is_closed: true`; all six commandable irrigation valves closed; no session;
+  no slot owner; empty queue; no blocker; no possible-flow owner; no open
+  accounting; no actuator fault; no zone fault; no identity incident;
+  acknowledgement not required; Store schema 2; reconciliation clean;
+  **0 Repairs**.
+- The validation zone was then returned to **`DISABLED`** at `03:28:24.733`,
+  re-verified as `disabled` with the actuator still CLOSED, no pending AUTO, no
+  slot owner, no blocker, no possible-flow owner and no open accounting. The
+  `next_eligible` sensor reads `03:37:05Z`, i.e. session end plus the 900 s
+  minimum interval, and cannot fire while the zone is disabled.
+
+### Verdict
+
+- **Checkpoint B is `[x] PASS`.** All fifteen Phase 11 criteria are met. The
+  proven chain is: real Ecowitt report -> AUTO decision -> real Holman watering
+  -> bounded OFF -> full 180 s soak -> real post-soak report -> closed-loop
+  decision -> clean terminal state.
+- No agronomic claim is made. Two 30 s pulses are a safety-bounded software
+  test, not an irrigation recommendation; the bed moisture was unchanged at
+  32 % throughout, which is expected for roughly 63 s of water.
+- No production defect was exposed, so no remediation was performed or needed.
+- The temporary validation zone remains present but `DISABLED` and should be
+  removed before release; native subentry deletion may retain Store tombstones.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
+  Brands NOT SUBMITTED. Physical-water authorization is consumed and
+  authorization returns to `None`.
