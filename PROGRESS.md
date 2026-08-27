@@ -5435,3 +5435,144 @@ Timeline, Home Assistant UTC:
 - Version `0.1.0`; specification `0.1.0-spec.6`; tag NONE; GitHub Release NONE;
   HACS default NOT SUBMITTED; Brands NOT SUBMITTED. No release or submission is
   authorized. Authorization returns to NONE.
+
+## Session Log — 2026-08-28 (MoistureLoop 0.1.0 release execution)
+
+### Authorization and scope
+
+- The user explicitly authorized the 0.1.0 release execution: create the final
+  `0.1.0` tag, push it to both remotes, create the normal public GitHub
+  Release, verify the published release and the HACS release discovery/install
+  path, perform a safe live upgrade to the published release if all
+  preconditions pass, and record closeout evidence. NO product/code changes,
+  no history rewrite, no force push, no HACS-default submission, no Brands
+  submission, and NO WATER were authorized.
+- Canonical release target: `458455ca7672419b5875cbaae55b9ba072ea4fc3`
+  ("Record pre-release new-zone safe-default correction"), version `0.1.0`,
+  specification `0.1.0-spec.6`, traceability 135/135 normative IDs, I1-I37,
+  T1-T59. The underlying behavioural implementation remains
+  `5867181a75b72a3e37eae02ea001459de9cff578`; the tag points at the
+  documentation-only closeout above it, as decided.
+
+### Release precheck — PASS
+
+- Branch `main`, worktree clean, local HEAD = origin/main = github/main =
+  `458455ca7672419b5875cbaae55b9ba072ea4fc3`.
+- Hosted CI run `33061352340` verified on the exact SHA: completed/success
+  with all six jobs GREEN (Lint and format check; Pure-layer tests; HA
+  2025.9.0 mandatory; HA 2026.8.3 supported-current; hassfest; HACS
+  validation).
+- Manifest at the release SHA: version `0.1.0`, `integration_type` `hub`,
+  `single_config_entry` true, `iot_class` `calculated`, `requirements` `[]`.
+  `hacs.json` minimum Home Assistant `2025.9.0`.
+- No pre-existing tag `0.1.0` or `v0.1.0` locally or on either remote; GitHub
+  Releases collection empty; repository public, Issues enabled, default branch
+  `main`, not archived.
+- Release-tree content audit at the exact SHA: 62 tracked files; required
+  public files present (`custom_components/moisture_loop/` with
+  `manifest.json`, `translations/en.json`, `icons.json`, `services.yaml`,
+  `brand/icon.png`; `README.md`, `LICENSE`, `TRADEMARKS.md`, `hacs.json`,
+  `SPECIFICATION.md`, `DEVELOPMENT.md`). No `strings.json`, no virtualenv,
+  cache, test output, diagnostics dump, credential, secret, or private LAN
+  data; a targeted token/IP/credential grep over the tagged tree found only
+  documentation prose describing prior zero-finding scans.
+
+### Tag and remote parity — DONE
+
+- Annotated tag `0.1.0` ("MoistureLoop 0.1.0") created; `git rev-list -n 1
+  0.1.0` = `458455ca7672419b5875cbaae55b9ba072ea4fc3` verified locally BEFORE
+  pushing. Tag object `5663b0338c3abc1c11d7e2610307724c53d6d01c`.
+- Pushed (no force) to `origin` (git.lukestanbury.com) and `github`
+  (github.com/embersas, embersas credential). Post-push `ls-remote` on both
+  remotes shows the identical tag object and identical dereferenced target
+  `458455ca…`; `main` did not move on either remote (both still `458455ca…`).
+
+### GitHub Release — PUBLISHED
+
+- Created via the GitHub REST API authenticated as `embersas` (the `gh` CLI is
+  intentionally NOT used on this project because it carries the work
+  identity). HTTP 201; author `embersas`.
+- Release id `378108158`, tag `0.1.0`, title "MoistureLoop 0.1.0",
+  draft=false, prerelease=false, latest release. Public URL:
+  https://github.com/embersas/moisture-loop/releases/tag/0.1.0
+- Notes are the approved first-public-release notes (highlights, requirements,
+  custom-HACS installation, fail-closed safety model, explicit 0.1.0
+  non-goals, validation against HA 2025.9.0 and 2026.8.3, new-zones-start-
+  disabled). No private infrastructure information. No custom ZIP asset was
+  created: HACS consumes the source tree at the release tag (0 uploaded
+  assets, standard source archives only).
+- Independent public verification: `releases/latest` returns exactly this
+  release; the releases collection contains exactly one release;
+  `git/ref/tags/0.1.0` -> annotated tag `5663b033…` -> commit `458455ca…`;
+  release page HTTP 200; zipball HTTP 200; raw tagged
+  `custom_components/moisture_loop/manifest.json` says version `0.1.0`,
+  `integration_type` `hub`; tagged `hacs.json` present and correct.
+
+### HACS custom-repository discovery — VERIFIED
+
+- Live instance (HA Core 2026.7.2, HACS 2.0.5) reached read-only over the
+  authenticated WebSocket API; the bearer credential was never printed.
+- Before refresh HACS still advertised the exact-commit development version;
+  after a supported `hacs/repository/refresh` of the existing custom
+  repository (id `1343557518`), HACS reports `available_version = 0.1.0` with
+  `pending_upgrade = true` against installed development build
+  `5867181a75b72a3e37eae02ea001459de9cff578`. No parsing/metadata error, no
+  missing-release-artifact error; local brand/icon handling unchanged.
+
+### Published-release install precheck — STOPPED (user action required)
+
+- Permanent live Zone 6 read-only baseline captured (entry loaded, 1 subentry,
+  11 registry entities, sensor `sensor.soil_moisture_zone6`, actuator
+  `valve.zone6_manual`, start 30.0 / target 40.0, durable safety lineage,
+  schema 2 store, daily runtime today 0.0 s, last session ended
+  2026-08-27T07:36:32Z). Zone 6 was NOT modified in any way.
+- Live safety at precheck: status `idle`, no active session, slot owner null,
+  empty queue, no possible-flow owner, no open accounting, no blocker, no
+  fault, actuator classification proven-off, 0 Repairs issues, and every
+  commandable irrigation valve/switch CLOSED/off (`valve.zone6_manual`,
+  `valve.zone5_manual`, `valve.zone1_4_zone_1..4` closed; the only non-closed
+  actuators are offline non-commandable non-MoistureLoop entities).
+- HOWEVER: Zone 6 is currently ENABLED (`enabled = true`, Enabled switch on),
+  its minimum session interval has already elapsed, daily budget is unused,
+  and the latest valid fresh observation reads **30.0 — exactly at the 30.0
+  start threshold**. Any post-restart fresh report below 30.0 would correctly
+  begin AUTO watering of the real valve. Installing/restarting could therefore
+  result in automatic watering under current dry conditions, and NO WATER is
+  authorized.
+- Per the release instructions this session did NOT silently disable Zone 6
+  and STOPPED before the install:
+  **USER MUST TEMPORARILY DISABLE ZONE 6 BEFORE PUBLISHED-RELEASE INSTALL
+  VERIFICATION.**
+- Consequently the published-tag HACS install (Step 10), post-install live
+  regression (Step 11), and final post-install safety pass (Step 12) were NOT
+  executed. The live instance intentionally remains on the verified
+  development build `5867181…` (functionally the same integration tree as the
+  release; the closeout commit is documentation-only). NO restart was
+  performed. NO WATER occurred during this session.
+
+### HACS default readiness (read-only) — pending install verification
+
+- Ready: public GitHub Release `0.1.0` exists and is latest; repository
+  public; hosted HACS validation job GREEN on the release SHA; `hacs.json`
+  valid; README installation/configuration documentation present; repository
+  metadata (description/issues/default branch) adequate; local
+  `brand/icon.png` present at the tag.
+- Not yet satisfied: the published tag/release install path has not been
+  verified live (blocked above). HACS default submission remains NOT
+  SUBMITTED and NOT authorized; Brands remains NOT SUBMITTED and NOT
+  authorized.
+
+### Immutability and closeout
+
+- Tag `0.1.0` and GitHub Release `378108158` are now immutable: no deletion,
+  move, force-update, retarget, or content replacement. Any post-publication
+  defect requires a NEW version.
+- This PROGRESS.md entry is a normal forward documentation-only commit on
+  `main` AFTER the tag; it is intentionally NOT part of 0.1.0. The released
+  code remains exactly `458455ca7672419b5875cbaae55b9ba072ea4fc3`.
+- State: version `0.1.0`; specification `0.1.0-spec.6`; tag `0.1.0` PUSHED to
+  both remotes; GitHub Release PUBLISHED and publicly verified; HACS custom
+  repository discovery of `0.1.0` VERIFIED; published-release live install
+  verification PENDING USER ACTION (temporarily disable Zone 6, then
+  re-authorize the install verification); HACS default NOT SUBMITTED; Brands
+  NOT SUBMITTED. NO WATER.
