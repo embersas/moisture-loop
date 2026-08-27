@@ -256,6 +256,135 @@ class TestBinarySensors:
         ]
 
 
+class TestPresentationMetadata:
+    """User-facing semantics (§28): device classes, state translations, icons.
+
+    ``needs_water`` ON means "needs water" (dry). ``BinarySensorDeviceClass.
+    MOISTURE`` means ON = wet, so that device class is prohibited here; the
+    wording comes from ``translation_key`` state translations instead.
+    """
+
+    async def test_needs_water_never_uses_moisture_device_class(self, env) -> None:
+        from homeassistant.components.binary_sensor import BinarySensorDeviceClass
+
+        from custom_components.moisture_loop.binary_sensor import (
+            ZoneNeedsWaterBinarySensor,
+            ZoneProblemBinarySensor,
+            ZoneWateringBinarySensor,
+        )
+
+        controller = env.runtime.controllers[env.subentry_id]
+        needs_water = ZoneNeedsWaterBinarySensor(env.runtime, controller, env.subentry_id)
+        watering = ZoneWateringBinarySensor(env.runtime, controller, env.subentry_id)
+        problem = ZoneProblemBinarySensor(env.runtime, controller, env.subentry_id)
+        # ON == dry/needs water: any device class whose ON means "wet" is a
+        # semantic inversion. needs_water must carry no device class at all.
+        assert needs_water.device_class is None
+        eid = entity_id(env.hass, "binary_sensor", f"{env.subentry_id}_needs_water")
+        assert env.hass.states.get(eid).attributes.get("device_class") is None
+        # The correct native device classes stay in place.
+        assert watering.device_class is BinarySensorDeviceClass.RUNNING
+        assert problem.device_class is BinarySensorDeviceClass.PROBLEM
+        watering = entity_id(env.hass, "binary_sensor", f"{env.subentry_id}_watering")
+        problem = entity_id(env.hass, "binary_sensor", f"{env.subentry_id}_problem")
+        assert env.hass.states.get(watering).attributes["device_class"] == "running"
+        assert env.hass.states.get(problem).attributes["device_class"] == "problem"
+
+    async def test_needs_water_semantics_map_to_threshold(self, env) -> None:
+        # ON strictly below the start threshold (30.0); OFF at/above it.
+        eid = entity_id(env.hass, "binary_sensor", f"{env.subentry_id}_needs_water")
+        await set_moisture(env, "30.0")
+        assert env.hass.states.get(eid).state == "off"
+        await set_moisture(env, "29.999")
+        assert env.hass.states.get(eid).state == "on"
+
+    async def test_entity_state_translations_load(self, env) -> None:
+        from homeassistant.helpers.translation import async_get_translations
+
+        from custom_components.moisture_loop.models import ControllerState
+
+        translations = await async_get_translations(env.hass, "en", "entity", {DOMAIN})
+        prefix = f"component.{DOMAIN}.entity"
+        assert translations[f"{prefix}.binary_sensor.needs_water.state.on"] == "Yes"
+        assert translations[f"{prefix}.binary_sensor.needs_water.state.off"] == "No"
+        expected_status = {
+            "disabled": "Disabled",
+            "idle": "Idle",
+            "watering": "Watering",
+            "soaking": "Soaking",
+            "fault": "Fault",
+        }
+        assert {state.value for state in ControllerState} == set(expected_status)
+        for raw, label in expected_status.items():
+            assert translations[f"{prefix}.sensor.status.state.{raw}"] == label
+
+    async def test_status_raw_enum_values_unchanged(self, env) -> None:
+        # Automations keep seeing the raw enum strings; translation is
+        # frontend-only presentation.
+        from custom_components.moisture_loop.models import ControllerState
+        from custom_components.moisture_loop.sensor import ZoneStatusSensor
+
+        controller = env.runtime.controllers[env.subentry_id]
+        status = ZoneStatusSensor(env.runtime, controller, env.subentry_id)
+        assert status.options == ["disabled", "idle", "watering", "soaking", "fault"]
+        assert status.options == [state.value for state in ControllerState]
+        eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
+        state = env.hass.states.get(eid)
+        assert state.state == "idle"
+        assert state.attributes["options"] == [s.value for s in ControllerState]
+
+    async def test_translation_and_icon_parity(self, env) -> None:
+        import json
+        from pathlib import Path
+
+        import yaml
+
+        import custom_components.moisture_loop as package
+
+        root = Path(package.__file__).parent
+        strings = json.loads((root / "translations" / "en.json").read_text(encoding="utf-8"))
+        icons = json.loads((root / "icons.json").read_text(encoding="utf-8"))
+        services_yaml = yaml.safe_load((root / "services.yaml").read_text(encoding="utf-8"))
+
+        expected_entities = {
+            "sensor": {"status", "watering_runtime_today", "last_session", "next_eligible"},
+            "binary_sensor": {"watering", "problem", "needs_water"},
+            "switch": {"enabled"},
+            "button": {"stop", "evaluate_now", "clear_fault"},
+        }
+        for platform, keys in expected_entities.items():
+            assert set(strings["entity"][platform]) == keys, platform
+            assert set(icons["entity"][platform]) == keys, platform
+        # Status state icons and translations cover exactly the enum options.
+        status_states = {"disabled", "idle", "watering", "soaking", "fault"}
+        assert set(strings["entity"]["sensor"]["status"]["state"]) == status_states
+        assert set(icons["entity"]["sensor"]["status"]["state"]) == status_states
+        assert set(strings["entity"]["binary_sensor"]["needs_water"]["state"]) == {"on", "off"}
+        assert set(icons["entity"]["binary_sensor"]["needs_water"]["state"]) == {"on", "off"}
+        # Services parity across services.yaml, translations, and icons.
+        service_keys = {"start_manual_watering", "stop_watering", "evaluate_zone", "clear_fault"}
+        assert set(services_yaml) == service_keys
+        assert set(strings["services"]) == service_keys
+        assert set(icons["services"]) == service_keys
+
+    async def test_unique_ids_unchanged_by_presentation_metadata(self, env) -> None:
+        # The registry rows keep the stable {subentry_id}_{key} unique IDs, so
+        # presentation-only metadata cannot re-identify an existing zone.
+        registry = er.async_get(env.hass)
+        for platform, keys in {
+            "sensor": ["status", "watering_runtime_today", "last_session", "next_eligible"],
+            "binary_sensor": ["watering", "problem", "needs_water"],
+            "switch": ["enabled"],
+            "button": ["stop", "evaluate_now", "clear_fault"],
+        }.items():
+            for key in keys:
+                eid = entity_id(env.hass, platform, f"{env.subentry_id}_{key}")
+                entry = registry.async_get(eid)
+                assert entry is not None
+                assert entry.unique_id == f"{env.subentry_id}_{key}"
+                assert entry.translation_key == key
+
+
 class TestControls:
     async def test_enabled_switch_round_trip(self, env) -> None:
         eid = entity_id(env.hass, "switch", f"{env.subentry_id}_enabled")

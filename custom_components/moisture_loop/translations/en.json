@@ -102,7 +102,14 @@
   "entity": {
     "sensor": {
       "status": {
-        "name": "Status"
+        "name": "Status",
+        "state": {
+          "disabled": "Disabled",
+          "idle": "Idle",
+          "watering": "Watering",
+          "soaking": "Soaking",
+          "fault": "Fault"
+        }
       },
       "watering_runtime_today": {
         "name": "Watering runtime today"
@@ -111,7 +118,7 @@
         "name": "Last session"
       },
       "next_eligible": {
-        "name": "Next eligible"
+        "name": "Minimum interval ends"
       }
     },
     "binary_sensor": {
@@ -122,7 +129,11 @@
         "name": "Problem"
       },
       "needs_water": {
-        "name": "Needs water"
+        "name": "Needs water",
+        "state": {
+          "on": "Yes",
+          "off": "No"
+        }
       }
     },
     "switch": {
@@ -132,10 +143,10 @@
     },
     "button": {
       "stop": {
-        "name": "Stop"
+        "name": "Stop watering"
       },
       "evaluate_now": {
-        "name": "Evaluate now"
+        "name": "Check now"
       },
       "clear_fault": {
         "name": "Clear fault"
@@ -168,8 +179,8 @@
       }
     },
     "evaluate_zone": {
-      "name": "Evaluate zone",
-      "description": "Run a normal guarded automatic evaluation. Bypasses nothing.",
+      "name": "Check zone",
+      "description": "Run a normal guarded automatic check of whether the zone should water now. Bypasses nothing.",
       "fields": {
         "device_id": {
           "name": "Zone",

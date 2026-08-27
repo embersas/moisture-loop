@@ -187,8 +187,9 @@ internally as a retained tombstone. This is deliberate:
 ## Entities
 
 Each active zone exposes status, current-day watering runtime, last-session and
-next-eligible sensors; watering, problem, and needs-water binary sensors; an
-enabled switch; and Stop, Evaluate now, and Clear fault buttons. `needs_water`
+minimum-interval sensors; watering, problem, and needs-water binary sensors; an
+enabled switch; and Stop watering, Check now, and Clear fault buttons (entity
+keys `stop`, `evaluate_now`, `clear_fault` are unchanged). `needs_water`
 is informational and never bypasses an AUTO guard. There is no manual-start
 button because a safe manual request requires an explicit duration.
 

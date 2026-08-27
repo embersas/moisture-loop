@@ -1,7 +1,16 @@
 {
   "entity": {
     "sensor": {
-      "status": { "default": "mdi:state-machine" },
+      "status": {
+        "default": "mdi:sprinkler",
+        "state": {
+          "disabled": "mdi:power-off",
+          "idle": "mdi:sprinkler",
+          "watering": "mdi:sprinkler-variant",
+          "soaking": "mdi:timer-sand",
+          "fault": "mdi:alert-circle"
+        }
+      },
       "watering_runtime_today": { "default": "mdi:timer-outline" },
       "last_session": { "default": "mdi:history" },
       "next_eligible": { "default": "mdi:clock-start" }
@@ -9,7 +18,13 @@
     "binary_sensor": {
       "watering": { "default": "mdi:sprinkler-variant" },
       "problem": { "default": "mdi:alert-circle-outline" },
-      "needs_water": { "default": "mdi:water-alert" }
+      "needs_water": {
+        "default": "mdi:water-alert",
+        "state": {
+          "on": "mdi:water-alert",
+          "off": "mdi:water-check"
+        }
+      }
     },
     "switch": {
       "enabled": { "default": "mdi:power" }

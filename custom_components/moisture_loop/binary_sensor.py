@@ -86,9 +86,11 @@ class ZoneNeedsWaterBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
     ON only when the latest observation is VALID+fresh and strictly below
     the start threshold; unavailable when invalid, unavailable, stale, or
     absent — never falsely OFF.
-    """
 
-    _attr_device_class = BinarySensorDeviceClass.MOISTURE
+    No device class: ON means "needs water" (dry), which is the opposite of
+    ``BinarySensorDeviceClass.MOISTURE`` (ON = wet). State wording comes from
+    the ``needs_water`` translation key instead (Yes/No).
+    """
 
     def __init__(self, runtime: EntryRuntime, controller: ZoneController, subentry_id: str) -> None:
         super().__init__(runtime, controller, subentry_id, "needs_water")
