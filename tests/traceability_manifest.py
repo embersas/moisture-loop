@@ -1,4 +1,4 @@
-"""Mechanical spec.4 Stage-7 traceability data.
+"""Mechanical spec.6 Stage-7 traceability data.
 
 The specification remains the inventory authority. This module connects each
 normative ID to substantive pytest evidence; ``test_traceability.py`` checks
@@ -474,6 +474,48 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             HA,
         ),
     ),
+    "LC14": both(
+        Evidence(
+            "tests/test_state_machine.py::TestNewZoneSafeDefault::test_lc14_fresh_default_admits_no_auto_when_every_other_gate_passes",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_state_machine.py::TestNewZoneSafeDefault::test_lc14_repeated_qualifying_reports_never_arm_the_fresh_default",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_state_machine.py::TestNewZoneSafeDefault::test_lc14_manual_is_refused_on_the_fresh_default",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_lc14_fresh_zone_is_created_disabled_and_admits_nothing",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_lc14_two_further_fresh_reports_do_not_arm_the_new_zone",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_lc14_manual_watering_is_refused_while_the_new_zone_is_disabled",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_lc14_explicit_enable_is_the_normal_activation_path",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_lc14_enabled_switch_entity_reflects_the_runtime_state",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_persisted_enabled_state_survives_reload_and_restart",
+            HA,
+        ),
+        Evidence(
+            "tests/test_config_flow.py::TestNewZoneSafeDefault::test_reconfigure_preserves_persisted_enabled_state",
+            HA,
+        ),
+    ),
     # Native deletion and final-ON.
     "ND1": ha(
         "tests/test_config_flow.py::TestNativeSubentryDeletion::test_idle_delete_uses_real_websocket_path_without_reload_and_keeps_safety_record"
@@ -815,7 +857,7 @@ INVARIANT_TRACEABILITY: dict[str, InvariantTrace] = {
         ("ER4", "ER7", "AR9"),
         (Evidence("tests/test_foundation.py::test_blocker_ownership_is_safety_record_only", PURE),),
     ),
-    "I20": InvariantTrace(("ZoneHistory.zone_runtime",), ("AC1", "AR11", "AR12")),
+    "I20": InvariantTrace(("ZoneHistory.zone_runtime",), ("AC1", "AR11", "AR12", "LC14")),
     "I21": InvariantTrace(("SlotManager owner",), ("ER8",)),
     "I22": InvariantTrace(("session owner", "first-terminal arbitration"), ("AC2", "ND17")),
     "I23": InvariantTrace(("ZoneHistory interval",), ("AR8", "PI26")),

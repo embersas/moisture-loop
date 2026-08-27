@@ -108,6 +108,10 @@ async def setup_with_zone(hass) -> tuple:
     result = await hass.config_entries.subentries.async_configure(result["flow_id"], LIMITS)
     await settle(hass)  # the scheduled reload picks up the new zone
     subentry_id = next(iter(entry.subentries))
+    # LC14: a new zone is created disabled. These entity/presentation tests
+    # describe an operational zone, so enable it exactly as a user would.
+    await entry.runtime_data.controllers[subentry_id].async_set_enabled(True)
+    await settle(hass)
     return entry, subentry_id
 
 

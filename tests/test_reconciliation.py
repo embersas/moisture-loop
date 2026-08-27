@@ -422,6 +422,13 @@ async def runtime_env(hass, hass_storage, freezer):
     # without asking Core to set up an unregistered entry.
     runtime.coordinator._reload_entry = AsyncMock(return_value=True)
     await settle(hass)
+    # LC14: a genuinely new zone is created disabled. These Stage-3 tests
+    # describe an operational zone, so perform the one explicit enable a user
+    # would perform before exercising reconciliation behaviour.
+    for controller in list(runtime.controllers.values()):
+        if not controller.enabled and controller.state is ControllerState.DISABLED:
+            await controller.async_set_enabled(True)
+    await settle(hass)
     yield runtime, entry, actuator_entry, freezer
     await runtime.async_unload()
 

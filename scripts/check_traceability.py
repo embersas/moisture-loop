@@ -157,9 +157,22 @@ def main() -> int:
     if status_for(expected_boundary, reports[PURE]) != "passed":
         failures.append("documented HA skip lacks passing pure-environment evidence")
 
-    print(f"Normative IDs: expected=134 discovered=134 unique=134 mapped=134 passing={passing_ids}")
-    print(f"Invariants: expected=37 mapped=37 passing={passing_invariants}")
-    print(f"Transitions: expected=59 implementation=59 tested={passing_transitions}")
+    # Counts are derived from the authoritative manifest, never hand-edited.
+    total_ids = len(NORMATIVE_TEST_EVIDENCE)
+    total_invariants = len(INVARIANT_TRACEABILITY)
+    total_transitions = len(TRANSITION_EVIDENCE)
+    print(
+        f"Normative IDs: expected={total_ids} discovered={total_ids} "
+        f"unique={total_ids} mapped={total_ids} passing={passing_ids}"
+    )
+    print(
+        f"Invariants: expected={total_invariants} mapped={total_invariants} "
+        f"passing={passing_invariants}"
+    )
+    print(
+        f"Transitions: expected={total_transitions} "
+        f"implementation={total_transitions} tested={passing_transitions}"
+    )
     print(f"Skips: pure={skipped[PURE]} ha={skipped[HA]}")
     if failures:
         print("Traceability failures:")

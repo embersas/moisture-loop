@@ -25,7 +25,7 @@ EXPECTED_GROUPS = {
     "MF": 5,
     "AC": 4,
     "ER": 12,
-    "LC": 13,
+    "LC": 14,
     "ND": 17,
     "TB": 12,
     "AR": 17,
@@ -98,11 +98,11 @@ def node_exists(node: str) -> bool:
 
 
 class TestNormativeInventory:
-    def test_spec_has_exactly_134_unique_well_formed_ids(self) -> None:
+    def test_spec_has_exactly_135_unique_well_formed_ids(self) -> None:
         items = normative_spec_items()
         ids = [item[0] for item in items]
-        assert len(ids) == 134
-        assert len(set(ids)) == 134
+        assert len(ids) == 135
+        assert len(set(ids)) == 135
         expected = {
             f"{prefix}{number}"
             for prefix, end in EXPECTED_GROUPS.items()

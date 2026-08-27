@@ -2443,3 +2443,94 @@ class TestRemainingCommitAndBranchPaths:
             )
         )
         assert d.no_op
+
+
+class TestNewZoneSafeDefault:
+    """LC14/I20: the fresh-zone DISABLED default is inert at the pure layer.
+
+    The authoritative fresh-zone default itself is persisted by the entry
+    reconciler (a Home Assistant layer), so these tests own the pure half of
+    the contract: a zone holding that default admits nothing, and only an
+    explicit enable moves it, through the existing T46/T47 rows.
+    """
+
+    def _fully_eligible(self, event: object) -> TransitionInput:
+        """Everything an AUTO start needs, except ``enabled``."""
+        return make_input(
+            ControllerState.DISABLED,
+            event,
+            enabled=False,
+            observation=obs(value=27.0),  # VALID, fresh, strictly below start 30
+            actuator=READY,  # available and proven OFF
+            resource=GRANTED,  # slot grantable, no blocker
+            daily=0.0,  # whole daily budget available
+            last_end=None,  # minimum interval satisfied
+            fault=None,
+        )
+
+    @pytest.mark.parametrize(
+        "event",
+        [AutoEvaluate(), MoistureReport(obs(value=27.0)), SlotGranted()],
+    )
+    def test_lc14_fresh_default_admits_no_auto_when_every_other_gate_passes(
+        self, event: object
+    ) -> None:
+        d = decide(self._fully_eligible(event))
+        assert d.no_op
+        assert d.new_state is None
+        assert d.session is None
+        assert not any(isinstance(action, (TurnOn, RequestSlot)) for action in d.actions)
+
+    def test_lc14_repeated_qualifying_reports_never_arm_the_fresh_default(self) -> None:
+        """Two further VALID, fresh, below-threshold reports stay inert."""
+        for offset in (60, 120):
+            report = MoistureReport(obs(value=26.0, at=NOW + timedelta(seconds=offset)))
+            d = decide(
+                make_input(
+                    ControllerState.DISABLED,
+                    report,
+                    enabled=False,
+                    observation=report.observation,
+                    now=NOW + timedelta(seconds=offset),
+                )
+            )
+            assert d.no_op
+            assert d.session is None
+            assert not any(isinstance(action, (TurnOn, RequestSlot)) for action in d.actions)
+
+    def test_lc14_manual_is_refused_on_the_fresh_default(self) -> None:
+        d = decide(make_input(ControllerState.DISABLED, ManualStartRequested(600.0), enabled=False))
+        assert d.session is None
+        assert d.guard_result is not None
+        assert not d.guard_result.passed
+        assert "G-EN" in d.guard_result.failed_guards
+        assert not any(isinstance(action, TurnOn) for action in d.actions)
+
+    def test_lc14_explicit_enable_uses_the_existing_t47_path(self) -> None:
+        d = decide(self._fully_eligible(EnableRequested()))
+        assert d.transition_id == "T47"
+        assert d.new_state is ControllerState.IDLE
+        assert any(isinstance(action, ScheduleEvaluation) for action in d.actions)
+        assert not any(isinstance(action, TurnOn) for action in d.actions)
+
+    def test_lc14_explicit_enable_with_a_fault_uses_the_existing_t46_path(self) -> None:
+        d = decide(
+            make_input(
+                ControllerState.DISABLED,
+                EnableRequested(),
+                enabled=False,
+                fault=FaultCode.SENSOR_STALE,
+            )
+        )
+        assert d.transition_id == "T46"
+        assert d.new_state is ControllerState.FAULT
+        assert d.fault is FaultCode.SENSOR_STALE
+
+    def test_lc14_controller_state_set_is_still_exactly_five(self) -> None:
+        assert [member.value for member in ControllerState] == [
+            "disabled",
+            "idle",
+            "watering",
+            "soaking",
+            "fault",
+        ]

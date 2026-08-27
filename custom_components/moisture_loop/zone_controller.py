@@ -515,8 +515,13 @@ class ZoneController:
         self._clock = clock if clock is not None else dt_util.utcnow
 
         self._lock = asyncio.Lock()
-        self._state: ControllerState = ControllerState.IDLE
-        self._enabled = True
+        # Fail-closed pre-adoption defaults.  ``async_attach()`` always
+        # replaces both from the canonical ``zone_runtime`` authority before
+        # any listener, timer, or session task exists; keeping the
+        # unadopted default DISABLED/not-enabled means a controller can never
+        # be watering-eligible merely because it was constructed (§24.4, I20).
+        self._state: ControllerState = ControllerState.DISABLED
+        self._enabled = False
         self._session: SessionContext | None = None
         self._active_fault: FaultCode | None = None
         self._secondary_fault: FaultCode | None = None

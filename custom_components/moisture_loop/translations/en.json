@@ -39,7 +39,7 @@
         },
         "limits": {
           "title": "Safety limits",
-          "description": "Hard bounds for automatic and manual watering. Sensor report maximum age is measured from the report timestamp Home Assistant exposes. Ensure the selected moisture entity continues to produce Home Assistant reports often enough during healthy operation, including when its value is unchanged. {shared_sensor_warning}",
+          "description": "Hard bounds for automatic and manual watering. Sensor report maximum age is measured from the report timestamp Home Assistant exposes. Ensure the selected moisture entity continues to produce Home Assistant reports often enough during healthy operation, including when its value is unchanged. New zones are created disabled: review the zone settings, then turn Enabled on when you are ready for automatic watering. {shared_sensor_warning}",
           "data": {
             "max_cycles": "Maximum cycles per session",
             "max_session_runtime": "Maximum session runtime (seconds)",

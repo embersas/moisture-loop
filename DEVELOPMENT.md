@@ -1,6 +1,6 @@
 # Development guide
 
-`SPECIFICATION.md` version `0.1.0-spec.5` is authoritative. Home Assistant
+`SPECIFICATION.md` version `0.1.0-spec.6` is authoritative. Home Assistant
 2025.9.0 or later is supported; 2025.9.0 is the mandatory minimum and must
 remain tested separately from the explicitly pinned supported-current release.
 No environment may be upgraded in place from one HA line to the other.
@@ -102,9 +102,10 @@ After the pure and mandatory-minimum JUnit reports exist:
 .venv-ha-min\Scripts\python.exe scripts/check_traceability.py --show I37 --show T59 --show ND17
 ```
 
-The executed-evidence checker enforces all 134 normative IDs, I1-I37, T1-T59,
-and the documented skip boundary. The authoritative mapping remains in
-`tests/traceability_manifest.py`; do not duplicate it in user documentation.
+The executed-evidence checker enforces all 135 normative IDs, I1-I37, T1-T59,
+and the documented skip boundary. Its printed totals are derived from the
+authoritative mapping in `tests/traceability_manifest.py` rather than
+hand-edited literals; do not duplicate that mapping in user documentation.
 
 Useful focused commands, runnable in either compatible HA harness unless noted:
 

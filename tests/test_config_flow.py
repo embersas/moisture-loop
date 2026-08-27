@@ -19,6 +19,8 @@ from aiohttp import TCPConnector
 from aiohttp.resolver import ThreadedResolver
 from aiohttp.test_utils import TestClient, TestServer
 from homeassistant.config_entries import ConfigSubentryData
+from homeassistant.const import EVENT_CALL_SERVICE
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -35,6 +37,7 @@ from custom_components.moisture_loop.models import (
     CompletionReason,
     ControllerState,
     FaultCode,
+    MoistureClassification,
     PersistedSession,
     PossibleFlowOwner,
     PulseDeadlineReached,
@@ -544,9 +547,12 @@ class TestZoneReconfigureFlow:
         entry = await create_controller_entry(hass)
         await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": actuator.entity_id})
         await hass.async_block_till_done()
-        hass.states.async_set(SENSOR, "20")
         runtime = entry.runtime_data
         subentry_id = next(iter(entry.subentries))
+        # LC14: the new zone is created disabled; enable it as a user would.
+        await runtime.controllers[subentry_id].async_set_enabled(True)
+        await hass.async_block_till_done()
+        hass.states.async_set(SENSOR, "20")
         for _ in range(20):
             await asyncio.sleep(0)
             if runtime.controllers[subentry_id].state is ControllerState.WATERING:
@@ -707,6 +713,10 @@ class TestZoneReconfigureFlow:
         runtime = entry.runtime_data
         a_subentry_id = next(iter(entry.subentries))
         a_history_id = runtime.bindings[a_subentry_id].zone_history_id
+        # LC14: A is created disabled; this test asserts the A -> B FAULT
+        # derivation, so enable the zone first as a user would.
+        await runtime.controllers[a_subentry_id].async_set_enabled(True)
+        await hass.async_block_till_done()
 
         _, result = await self.start_reconfigure(hass, entry)
         result = await hass.config_entries.subentries.async_configure(
@@ -794,6 +804,11 @@ class TestZoneReconfigureFlow:
         runtime = entry.runtime_data
         a_subentry_id = next(iter(entry.subentries))
         a_history_id = runtime.bindings[a_subentry_id].zone_history_id
+        # LC14: A is created disabled; the assertion under test is that the
+        # current zone keeps ITS OWN enabled value across the handoff, so
+        # enable it explicitly first.
+        await runtime.controllers[a_subentry_id].async_set_enabled(True)
+        await hass.async_block_till_done()
         assert runtime.controllers[a_subentry_id].enabled
 
         _, result = await self.start_reconfigure(hass, entry)
@@ -856,6 +871,10 @@ class TestZoneReconfigureFlow:
         runtime = entry.runtime_data
         a_subentry_id = next(iter(entry.subentries))
         a_history_id = runtime.bindings[a_subentry_id].zone_history_id
+        # LC14: A is created disabled; this test asserts retained-B session
+        # closure for an operational current zone, so enable A first.
+        await runtime.controllers[a_subentry_id].async_set_enabled(True)
+        await hass.async_block_till_done()
         b_record = runtime.store.data.safety_records[b_record_id]
         b_history = runtime.store.data.zone_histories[b_record.zone_history_id]
         instant = hass.states.get(SENSOR).last_reported
@@ -1326,3 +1345,277 @@ class TestFlowEdges:
         assert isinstance(handler, ZoneSubentryFlow)
         errors = handler._validate_full({**ZONE_DATA, "name": ""}, reconfigure_id=None)
         assert errors == {"name": "invalid_name"}
+
+
+class TestNewZoneSafeDefault:
+    """LC14/I20: creation is disabled; existing zones keep their own state."""
+
+    async def _dry_actuator(self, hass):
+        """A registry-known, proven-closed actuator with observed commands.
+
+        Commands are observed two independent ways: the registered service
+        handlers count them, and a bus listener records every `call_service`
+        event, so an ON attempt is provable even if no handler ran.
+        """
+        registry = er.async_get(hass)
+        actuator = registry.async_get_or_create(
+            "valve", "test", "safe-default-valve", suggested_object_id="safe_default_valve"
+        )
+        calls: dict = {"on": 0, "off": 0, "entity_id": actuator.entity_id, "events": []}
+
+        async def open_valve(call) -> None:
+            calls["on"] += 1
+            hass.states.async_set(
+                actuator.entity_id, "open", {"supported_features": 3}, context=call.context
+            )
+
+        async def close_valve(call) -> None:
+            calls["off"] += 1
+            hass.states.async_set(
+                actuator.entity_id, "closed", {"supported_features": 3}, context=call.context
+            )
+
+        hass.services.async_register("valve", "open_valve", open_valve)
+        hass.services.async_register("valve", "close_valve", close_valve)
+
+        @callback
+        def _record(event) -> None:
+            calls["events"].append((event.data.get("domain"), event.data.get("service")))
+
+        hass.bus.async_listen(EVENT_CALL_SERVICE, _record)
+        # VALID, fresh, strictly below the 30% start threshold.
+        hass.states.async_set(SENSOR, "20")
+        hass.states.async_set(actuator.entity_id, "closed", {"supported_features": 3})
+        return calls
+
+    @staticmethod
+    def _no_actuator_on(calls) -> bool:
+        return calls["on"] == 0 and not any(
+            (domain, service) in (("valve", "open_valve"), ("switch", "turn_on"))
+            for domain, service in calls["events"]
+        )
+
+    async def _settle(self, hass) -> None:
+        await hass.async_block_till_done()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        await hass.async_block_till_done()
+
+    def _assert_inert(self, runtime, subentry_id, calls) -> None:
+        controller = runtime.controllers[subentry_id]
+        binding = runtime.bindings[subentry_id]
+        record = runtime.store.data.safety_records[binding.safety_record_id]
+        history = runtime.store.data.zone_histories[binding.zone_history_id]
+        slots = runtime.slots.snapshot()
+
+        assert history.zone_runtime.enabled is False
+        assert history.zone_runtime.state is ControllerState.DISABLED
+        assert history.zone_runtime.session is None
+        assert history.zone_runtime.zone_fault is None
+        assert controller.enabled is False
+        assert controller.state is ControllerState.DISABLED
+        assert controller.session is None
+        assert controller.active_fault is None
+        assert record.possible_flow_owner is None
+        assert record.actuator_fault is None
+        assert record.blocker_reasons == ()
+        assert history.daily is None or history.daily.runtime_s == 0.0
+        assert slots.owner != subentry_id
+        assert subentry_id not in slots.queue
+        assert slots.blockers == ()
+        assert self._no_actuator_on(calls)
+        assert not controller.external_on
+
+    async def test_lc14_fresh_zone_is_created_disabled_and_admits_nothing(
+        self, hass, entities
+    ) -> None:
+        calls = await self._dry_actuator(hass)
+        entry = await create_controller_entry(hass)
+        result = await run_zone_add_flow(
+            hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await self._settle(hass)
+
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+        controller = runtime.controllers[subentry_id]
+        # Every AUTO gate other than G-EN is satisfied at creation.
+        assert controller.observation.classification is MoistureClassification.VALID
+        assert controller.observation.value is not None
+        assert controller.observation.value < controller.config.start_threshold
+        assert controller.assessment.available and controller.assessment.proven_off
+        self._assert_inert(runtime, subentry_id, calls)
+        assert hass.states.get(calls["entity_id"]).state == "closed"
+
+    async def test_lc14_two_further_fresh_reports_do_not_arm_the_new_zone(
+        self, hass, entities
+    ) -> None:
+        calls = await self._dry_actuator(hass)
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+
+        for value in ("19", "18"):
+            hass.states.async_set(SENSOR, value)
+            await self._settle(hass)
+            self._assert_inert(runtime, subentry_id, calls)
+
+    async def test_lc14_manual_watering_is_refused_while_the_new_zone_is_disabled(
+        self, hass, entities
+    ) -> None:
+        calls = await self._dry_actuator(hass)
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+
+        decision = await runtime.controllers[subentry_id].async_manual_start(600.0)
+        assert decision.guard_result is not None
+        assert not decision.guard_result.passed
+        assert "G-EN" in decision.guard_result.failed_guards
+        await self._settle(hass)
+        self._assert_inert(runtime, subentry_id, calls)
+
+    async def test_lc14_explicit_enable_is_the_normal_activation_path(self, hass, entities) -> None:
+        calls = await self._dry_actuator(hass)
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+        controller = runtime.controllers[subentry_id]
+
+        await controller.async_set_enabled(True)
+        await self._settle(hass)
+        for _ in range(40):
+            if calls["on"]:
+                break
+            await asyncio.sleep(0)
+            await hass.async_block_till_done()
+
+        binding = runtime.bindings[subentry_id]
+        history = runtime.store.data.zone_histories[binding.zone_history_id]
+        assert controller.enabled is True
+        assert history.zone_runtime.enabled is True
+        # The zone was already dry, fresh, and otherwise eligible, so the
+        # explicit enable legitimately admits AUTO through the normal gates.
+        assert controller.state is ControllerState.WATERING
+        assert controller.session is not None
+        assert calls["on"] == 1
+
+    async def test_lc14_enabled_switch_entity_reflects_the_runtime_state(
+        self, hass, entities
+    ) -> None:
+        calls = await self._dry_actuator(hass)
+        hass.states.async_set(SENSOR, "55")
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+
+        switch_entity = next(
+            state.entity_id
+            for state in hass.states.async_all("switch")
+            if state.entity_id.startswith("switch.front_bed")
+        )
+        status_entity = next(
+            state.entity_id
+            for state in hass.states.async_all("sensor")
+            if state.entity_id.startswith("sensor.front_bed_status")
+        )
+        assert hass.states.get(switch_entity).state == "off"
+        assert hass.states.get(status_entity).state == "disabled"
+
+        await runtime.controllers[subentry_id].async_set_enabled(True)
+        await self._settle(hass)
+        assert hass.states.get(switch_entity).state == "on"
+        assert hass.states.get(status_entity).state == "idle"
+
+    @pytest.mark.parametrize("persisted_enabled", [True, False])
+    async def test_persisted_enabled_state_survives_reload_and_restart(
+        self, hass, entities, persisted_enabled
+    ) -> None:
+        """Steps B/C/F/G: an existing zone is never reset to the new default."""
+        calls = await self._dry_actuator(hass)
+        # Keep the sensor above target so an enabled zone rests in IDLE.
+        hass.states.async_set(SENSOR, "55")
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+        history_id = runtime.bindings[subentry_id].zone_history_id
+        if persisted_enabled:
+            await runtime.controllers[subentry_id].async_set_enabled(True)
+            await self._settle(hass)
+        assert (
+            runtime.store.data.zone_histories[history_id].zone_runtime.enabled is persisted_enabled
+        )
+
+        await hass.config_entries.async_reload(entry.entry_id)
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        assert runtime.controllers[subentry_id].enabled is persisted_enabled
+        assert (
+            runtime.store.data.zone_histories[history_id].zone_runtime.enabled is persisted_enabled
+        )
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await self._settle(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        controller = runtime.controllers[subentry_id]
+        assert controller.enabled is persisted_enabled
+        assert controller.state is (
+            ControllerState.IDLE if persisted_enabled else ControllerState.DISABLED
+        )
+        assert (
+            runtime.store.data.zone_histories[history_id].zone_runtime.enabled is persisted_enabled
+        )
+
+    @pytest.mark.parametrize("persisted_enabled", [True, False])
+    async def test_reconfigure_preserves_persisted_enabled_state(
+        self, hass, entities, persisted_enabled
+    ) -> None:
+        """Steps D/E: reconciling an existing zone keeps its persisted value."""
+        calls = await self._dry_actuator(hass)
+        hass.states.async_set(SENSOR, "55")
+        entry = await create_controller_entry(hass)
+        await run_zone_add_flow(hass, entry, identity={**IDENTITY, "actuator": calls["entity_id"]})
+        await self._settle(hass)
+        runtime = entry.runtime_data
+        subentry_id = next(iter(entry.subentries))
+        history_id = runtime.bindings[subentry_id].zone_history_id
+        if persisted_enabled:
+            await runtime.controllers[subentry_id].async_set_enabled(True)
+            await self._settle(hass)
+
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, "zone"),
+            context={"source": "reconfigure", "subentry_id": subentry_id},
+        )
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {**IDENTITY, "actuator": calls["entity_id"]}
+        )
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {**THRESHOLDS, "start_threshold": 25.0}
+        )
+        result = await hass.config_entries.subentries.async_configure(result["flow_id"], LIMITS)
+        assert result["type"] is FlowResultType.ABORT
+        await self._settle(hass)
+
+        runtime = entry.runtime_data
+        controller = runtime.controllers[subentry_id]
+        history = runtime.store.data.zone_histories[history_id]
+        assert controller.config.start_threshold == 25.0
+        assert controller.enabled is persisted_enabled
+        assert history.zone_runtime.enabled is persisted_enabled
+        assert history.zone_runtime.state is (
+            ControllerState.IDLE if persisted_enabled else ControllerState.DISABLED
+        )

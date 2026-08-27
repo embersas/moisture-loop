@@ -173,6 +173,10 @@ async def command_env(request, hass, hass_storage, freezer):
     await settle(hass)
     subentry_id = next(iter(entry.subentries))
     controller = runtime.controllers[subentry_id]
+    # LC14: a new zone is created disabled; these command/gate tests describe
+    # an operational zone, so enable it exactly as a user would.
+    await controller.async_set_enabled(True)
+    await settle(hass)
     env = SimpleNamespace(
         hass=hass,
         runtime=runtime,

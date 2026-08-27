@@ -128,6 +128,8 @@ For manual development installation, copy
 2. Create the single controller entry.
 3. On that entry, choose Add zone and select the name, sensor, actuator,
    thresholds, pulse/soak timing, and safety limits.
+4. The new zone is created **disabled**. Review its settings on the zone
+   device page, then turn its Enabled switch on when ready.
 
 Each native config subentry becomes one zone device. The configured sensor must
 produce a finite number from 0 through 100. A `switch` uses ON/OFF. A `valve`
@@ -151,6 +153,23 @@ never proof of OFF.
 
 Defaults are conservative starting points, not agronomic advice. Calibrate for
 the soil, emitters, probe placement, and sensor cadence in the deployment.
+
+### New zones start disabled
+
+A newly created zone begins disabled, in state `Disabled`, with its Enabled
+switch off. No automatic or manual watering is possible for it until the zone is
+explicitly enabled, and creation itself never starts a session or commands the
+actuator on — even when the moisture reading is already below the start
+threshold and every other gate would pass.
+
+Enabling is the deliberate activation step, so be aware of the opposite
+direction: if the zone is already dry, fresh, and otherwise eligible when
+Enabled is switched on, automatic watering can begin immediately. Confirm the
+thresholds, timing, and safety limits first.
+
+Existing zones are unaffected. Enabled or disabled state is durable runtime
+state: it survives restart, reload, reconfiguration, and delete/re-add of the
+same durable actuator, and is changed only by an explicit user action.
 
 ### Add and reconfigure behavior
 

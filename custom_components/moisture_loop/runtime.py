@@ -1552,6 +1552,18 @@ class EntryRuntime:
         )
 
     def _new_zone_history(self, record: SafetyRecord, zone: ImmutableZoneSnapshot) -> ZoneHistory:
+        """Mint the first ``zone_runtime`` for a genuinely new logical zone.
+
+        §24.4/LC14: a newly configured zone begins ``enabled=false`` in state
+        DISABLED.  This is the single authoritative fresh-zone default and it
+        is persisted and read-back verified before any controller for the zone
+        is constructed, published, or admitted, so no creation-time interval
+        exists in which the zone is watering-eligible.  Only an explicit user
+        enable through the supported control path may lift it.  Existing zones
+        never reach this method: every adoption path (same-subentry continuity,
+        exact durable-identity re-add, schema migration, A -> B replacement)
+        preserves its persisted ``zone_runtime.enabled`` (§25.5, I20).
+        """
         from .models import ZoneRuntime
 
         return ZoneHistory(
@@ -1561,8 +1573,8 @@ class EntryRuntime:
             last_session_end_utc=None,
             last_auto_session_start_utc=None,
             zone_runtime=ZoneRuntime(
-                enabled=True,
-                state=ControllerState.IDLE,
+                enabled=False,
+                state=ControllerState.DISABLED,
                 zone_fault=None,
                 secondary_fault=None,
                 sensor_identity=SensorIdentity(
@@ -2331,7 +2343,14 @@ class EntryRuntime:
             histories[current_history.zone_history_id] = current_history.evolve(
                 zone_runtime=replace(
                     current_runtime,
-                    state=ControllerState.IDLE,
+                    # §24.4 derivation order: a disabled zone stays DISABLED
+                    # when its configuration fault clears; only an enabled
+                    # zone returns to IDLE.
+                    state=(
+                        ControllerState.IDLE
+                        if current_runtime.enabled
+                        else ControllerState.DISABLED
+                    ),
                     zone_fault=None,
                 )
             )

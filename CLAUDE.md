@@ -5,8 +5,8 @@ This file provides repository guidance to Claude Code and other coding agents.
 ## Project state
 
 MoistureLoop v0.1 is implemented under `custom_components/moisture_loop/`.
-`SPECIFICATION.md` version `0.1.0-spec.5` is the authoritative behavioural and
-safety contract. Preserve the Stage 7 traceability evidence: 134 normative
+`SPECIFICATION.md` version `0.1.0-spec.6` is the authoritative behavioural and
+safety contract. Preserve the Stage 7 traceability evidence: 135 normative
 behavioural IDs, invariants I1-I37, and transitions T1-T59.
 
 Home Assistant 2025.9.0 or later is supported. The mandatory minimum and the
@@ -29,6 +29,9 @@ lint, hassfest, and HACS commands.
   manipulation.
 - Manual watering is bounded. Shutdown, restart, deletion, and configuration
   change never resume an interrupted WATERING pulse.
+- A genuinely new zone is created `enabled=false` in DISABLED by the entry
+  reconciler (`runtime.py` `_new_zone_history`) and admits no watering until an
+  explicit user enable. Every existing zone keeps its persisted `enabled`.
 
 ## Working conventions
 

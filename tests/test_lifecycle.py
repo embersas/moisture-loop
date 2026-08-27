@@ -371,10 +371,24 @@ async def advance(env, seconds: float) -> None:
     await settle(env.hass)
 
 
-async def start_runtime(hass, entry) -> EntryRuntime:
+async def start_runtime(hass, entry, *, enable_zones: bool = True) -> EntryRuntime:
+    """Initialize the entry runtime, enabling freshly created zones.
+
+    LC14 creates a genuinely new zone disabled. Almost every lifecycle test
+    describes an operational zone, so by default this helper performs the one
+    explicit enable a user would perform. It never touches a zone whose
+    persisted runtime already carries an ``enabled`` value, so seeded
+    restart/crash snapshots keep exactly their own state. Tests that assert
+    the fresh-creation default itself pass ``enable_zones=False``.
+    """
     runtime = EntryRuntime(hass, entry)
     await runtime.async_initialize()
     await settle(hass)
+    if enable_zones:
+        for controller in list(runtime.controllers.values()):
+            if not controller.enabled and controller.state is ControllerState.DISABLED:
+                await controller.async_set_enabled(True)
+        await settle(hass)
     return runtime
 
 
@@ -656,13 +670,22 @@ class TestF1RestartRecoveryBlockerRelease:
 class TestFirstInstallAndIdentity:
     async def test_first_install_transaction(self, env) -> None:
         entry = make_entry(env.hass, initialized=False)
-        runtime = await start_runtime(env.hass, entry)
+        runtime = await start_runtime(env.hass, entry, enable_zones=False)
         assert runtime.setup_classification is SetupClassification.FIRST_INSTALL
         # §23.5 step 5: the flag update happened only after verification.
         assert entry.data[CONF_RUNTIME_STORE_INITIALIZED] is True
         zone_id = zone_subentry_id(entry)
-        assert runtime.controllers[zone_id].state is ControllerState.IDLE
+        # LC14: the first-ever zone of a first-ever install is created
+        # disabled, and grants are still armed for the entry.
+        controller = runtime.controllers[zone_id]
+        assert controller.state is ControllerState.DISABLED
+        assert controller.enabled is False
+        assert controller.session is None
+        history = runtime.store.data.zone_histories[controller.zone_history_id]
+        assert history.zone_runtime.enabled is False
+        assert history.zone_runtime.state is ControllerState.DISABLED
         assert runtime.slots.snapshot().grants_enabled
+        assert env.switch.on_calls == 0
         await runtime.async_unload()
 
     async def test_interrupted_initialization_completes_flag(self, env) -> None:
