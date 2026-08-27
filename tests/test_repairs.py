@@ -352,7 +352,7 @@ class TestDiagnostics:
     async def test_diagnostics_content_and_redaction(self, env) -> None:
         await set_moisture(env, "20")  # active session for anchors
         diagnostics = await async_get_config_entry_diagnostics(env.hass, env.entry)
-        assert diagnostics["manifest"]["integration_type"] == "helper"
+        assert diagnostics["manifest"]["integration_type"] == "hub"
         # The zone-add reload re-ran setup: the first pass was the first
         # install; this (second) run adopted the initialized store.
         assert diagnostics["store"]["setup_classification"] == "initialized_ok"

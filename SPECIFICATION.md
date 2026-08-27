@@ -14,6 +14,8 @@
 
 > **Revision note (nomenclature only, 2026-08-27):** before the first 0.1.0 release the SoilSync product identity was abandoned because a materially overlapping agricultural/software business already uses that name. The canonical identity returned to **MoistureLoop**, domain `moisture_loop`, integration directory `custom_components/moisture_loop/`, public repository `embersas/moisture-loop`. Current identifiers in this document (actions `moisture_loop.*`, events `moisture_loop_*`, Store key prefix `moisture_loop.<entry_id>`, Repairs/translation domain, brand path) follow that identity. Controller behaviour, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, the spec.5 Stage-1 shutdown lifecycle rules, `SHUTDOWN_OFF_BUDGET_S`, and the B1/B2 physical evidence recorded under the then-current SoilSync name are unchanged; the spec version stays `0.1.0-spec.5`, following the precedent that nomenclature-only edits do not increment it.
 >
+> **Corrective revision note (metadata/UI only, 2026-08-27):** before the first 0.1.0 release, live Home Assistant UI validation showed that `integration_type: helper` incorrectly placed the one-controller/multi-zone integration under **Helpers**, where selecting its controller attempted an unsupported helper options flow. The manifest classification is corrected to `hub`: one controller config entry manages multiple logical zone subentries/devices and orchestrates their selected sensor and actuator services. This changes only Home Assistant metadata/UI placement. Controller semantics, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, safety and watering behaviour are unchanged, so the version remains `0.1.0-spec.5` under the existing non-behavioural correction precedent.
+>
 > **Revision note:** spec.5 is a normative architectural lifecycle revision. Slice 13 physical validation finding B2-1 exposed a mismatch between the spec.4 `EVENT_HOMEASSISTANT_STOP` shutdown hook and supported Home Assistant Store behaviour: Core cancels background tasks and sets `CoreState.stopping` *before* firing that event, and `Store.async_save()` then only queues its payload for `EVENT_HOMEASSISTANT_FINAL_WRITE` instead of writing immediately, so the mandatory fresh same-key read-back can observe nothing newer than the previous revision. Full-process shutdown safety ownership therefore moves to exactly one removable `HomeAssistant.async_add_shutdown_job()` HassJob per loaded entry runtime, which Core executes and awaits in Stage 1 of `async_stop()` before background-task cancellation, before `CoreState.stopping`, and before `EVENT_HOMEASSISTANT_STOP`. The strict §23.4 Store save/fresh-read/verify contract is unchanged and gains no shutdown exception. Clean-run evidence is strengthened: the clean marker is the final verified safety transaction and may be written only after complete, successful, verified Stage-1 handling. `EVENT_HOMEASSISTANT_STOP` loses all MoistureLoop safety ownership. The five controller states, T1-T59, I1-I37, the 134 normative behavioural test IDs, Store schema 2, and the Home Assistant 2025.9.0 minimum are unchanged. All settled spec.4 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
 >
 > **Revision note:** spec.4 is a normative architectural revision that resolves the config-subentry deletion lifecycle mismatch found during implementation. Home Assistant removes a native subentry before scheduling an unawaited config-entry update listener, so configuration-object lifetime is now separated from runtime safety-object lifetime. The approved design is update-listener-driven tombstoned runtime reconciliation with authoritative final pre-ON configuration gates, persisted actuator identity, Store/config startup-union reconciliation, and listener-owned add/reconfigure/delete synchronization. This final corrective edit makes one canonical mutable safety record authoritative for each durable actuator lineage, defines independent zone-budget continuity when reconfiguration replaces actuator A with B, and broadens only the T21/T39 trigger wording to cover both reconfiguration and deletion reconciliation. The Home Assistant 2025.9.0 minimum is unchanged. All settled spec.3 behaviour remains normative except where this lifecycle correction explicitly strengthens it.
@@ -42,7 +44,7 @@ Key architectural decisions are:
 - actuator-specific safety identity kept separate from logical zone irrigation history, so replacing actuator A with B preserves A's hazards and the zone's conservative budget/interval independently;
 - exactly one removable Home Assistant Stage-1 shutdown job, registered through `HomeAssistant.async_add_shutdown_job()` per loaded entry runtime, as the sole authoritative full-process shutdown owner, running to completion before background-task cancellation, `CoreState.stopping`, and `EVENT_HOMEASSISTANT_STOP`;
 - actions registered once from integration-level `async_setup`;
-- `integration_type: helper`, `iot_class: calculated`, and `single_config_entry: true`;
+- `integration_type: hub`, `iot_class: calculated`, and `single_config_entry: true`;
 - completely local operation with no cloud, telemetry, API key, or external service.
 
 Implementation readiness verdict: **READY WITH PROTOTYPE VALIDATIONS** (§46 and the final verdict).
@@ -151,18 +153,18 @@ Each action operates on a zone device as a whole, so the public schema requires 
 
 ### 5.4 Manifest classification
 
-MoistureLoop is not a gateway to discovered devices. It consumes existing HA entities and adds calculated control/helper behaviour. The manifest therefore uses:
+MoistureLoop is a controller hub over user-selected existing HA entities. One controller config entry manages multiple logical zone subentries/devices and orchestrates each zone's selected moisture sensor and actuator services. The manifest therefore uses:
 
 ```jsonc
 {
-  "integration_type": "helper",
+  "integration_type": "hub",
   "iot_class": "calculated",
   "single_config_entry": true,
   "config_flow": true
 }
 ```
 
-`helper` is the documented type for integrations that provide helper entities/logic; `calculated` is the IoT class for integrations that do not communicate independently. `single_config_entry` accurately represents the one-controller topology. ([Integration manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/))
+`hub` is the documented type for one integration/config entry that gateways multiple devices or services. MoistureLoop's child devices are configured zone subentries rather than discovered vendor hardware, but its one-controller/multiple-child topology matches that definition. `helper` is wrong because it is reserved for integrations whose main focus is providing an entity to help users with automations. `calculated` remains the IoT class because MoistureLoop does not communicate independently, and `single_config_entry` accurately represents the one-controller topology. ([Integration manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/))
 
 ### 5.5 Async, lifecycle, Repairs, and diagnostics
 
@@ -2133,7 +2135,7 @@ This is an architecture plan, not authorization to scaffold in this task.
 ```text
 custom_components/moisture_loop/
   __init__.py              # async_setup actions; entry setup/unload lifecycle
-  manifest.json            # helper, calculated, single_config_entry
+  manifest.json            # hub, calculated, single_config_entry
   const.py
   models.py
   state_machine.py          # no homeassistant imports
@@ -2506,7 +2508,7 @@ Functional and safety release gates:
 21. Actions are registered once in `async_setup`, remain discoverable unloaded, validate device/subentry/runtime, and raise translated errors.
 22. One config-entry update listener owns add/reconfigure/delete synchronization; reconfigure uses `async_update_and_abort`, `async_update_reload_and_abort` is absent from the normative runtime architecture, flow-owned add reload is removed, and at most one reconciler-owned reload is scheduled per stable batch.
 23. Every normative Home Assistant API/lifecycle claim is source-verified and exercised where practical on 2025.9.0, including the native websocket deletion path and unawaited post-removal listener; no private interception or 2025.7/2025.8 compatibility is claimed.
-24. Manifest is `helper`/`calculated`/single-entry and passes hassfest; HACS metadata declares Home Assistant 2025.9.0 and packaging passes current validation.
+24. Manifest is `hub`/`calculated`/single-entry and passes hassfest; HACS metadata declares Home Assistant 2025.9.0 and packaging passes current validation.
 25. Repairs use supported `IssueSeverity` constants.
 26. All 59 transition rows are represented in the state diagram, and table/diagram parity is mechanically reviewed before release.
 27. Every I1-I37 invariant maps to passing tests using mocked time and no real sleeps, including LC13 and AR1-AR17.
@@ -2598,7 +2600,7 @@ Removed as open questions because release-source behaviour is conclusive: the 20
 | Actuator replacement | A retained with A-owned hazards; B resolved independently; logical zone budget/interval merged conservatively by contribution identity before B ACTIVE; zone_runtime operational state (enabled/state/sensor/session) follows the logical zone with deterministic DISABLED/FAULT/IDLE post-handoff derivation |
 | Tombstone retention | no automatic v0.1 purge; entry-level exact-record Repair acknowledgement |
 | Actions | register once in `async_setup`; required zone device ID |
-| Manifest | helper / calculated / single config entry |
+| Manifest | hub / calculated / single config entry |
 | Logging | pulse/soak details DEBUG; session INFO; safety WARNING/ERROR |
 | HA minimum | 2025.9.0 unchanged; public listener/subentry APIs and native deletion ordering source-verified; HACS metadata matches |
 

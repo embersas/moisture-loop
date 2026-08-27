@@ -253,6 +253,8 @@ def test_canonical_identity_has_no_stale_product_name() -> None:
     manifest = json.loads((integration / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["domain"] == "moisture_loop" == integration.name
     assert manifest["name"] == "MoistureLoop"
+    assert manifest["integration_type"] == "hub"
+    assert manifest["integration_type"] != "helper"
     assert "embersas/moisture-loop" in manifest["documentation"]
     assert "embersas/moisture-loop" in manifest["issue_tracker"]
     assert json.loads((REPO_ROOT / "hacs.json").read_text(encoding="utf-8"))["name"] == (

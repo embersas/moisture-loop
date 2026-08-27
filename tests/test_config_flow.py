@@ -161,6 +161,9 @@ class TestControllerEntryFlow:
         result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "single_instance_allowed"
+        # ``single_config_entry`` is enforced by Core before this integration's
+        # user step runs, so Core also owns the abort translation.
+        assert result["translation_domain"] == "homeassistant"
 
     async def test_generation_is_unique_per_entry(self, hass) -> None:
         entry = await create_controller_entry(hass)

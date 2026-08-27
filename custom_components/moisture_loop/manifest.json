@@ -4,7 +4,7 @@
   "codeowners": ["@embersas"],
   "config_flow": true,
   "documentation": "https://github.com/embersas/moisture-loop",
-  "integration_type": "helper",
+  "integration_type": "hub",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/embersas/moisture-loop/issues",
   "requirements": [],

@@ -224,7 +224,7 @@ async def async_get_config_entry_diagnostics(
     return {
         "home_assistant_version": ha_version,
         "manifest": {
-            "integration_type": "helper",
+            "integration_type": "hub",
             "iot_class": "calculated",
             "single_config_entry": True,
         },
