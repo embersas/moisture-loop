@@ -4948,3 +4948,144 @@ Timeline, Home Assistant UTC:
 - Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
   Brands NOT SUBMITTED. No release or submission is authorized. Authorization
   returns to NONE.
+
+## Session Log — 2026-08-27 (Final pre-release entity presentation audit)
+
+### Authorization, reason, and scope
+
+- The user authorized the final pre-release user-facing UX / entity-semantics
+  pass: audit every normal zone entity, control, state label, and icon; make
+  narrow presentation / entity-metadata / translation corrections only. NO
+  physical watering and NO release/tag/HACS-default submission authorized.
+- Baseline verified: `main` clean at candidate
+  `1df55b78b142e3d4f19e9e93ebc41a0f55a22fb4` = origin/main = github/main; no
+  tag; no GitHub Release. The user's FIRST PERMANENT zone (Zone 6) exists live
+  and had to be preserved with identical identity.
+
+### User-observed defect and root cause
+
+- Live Zone 6 showed `Needs water: Wet`. Root cause:
+  `ZoneNeedsWaterBinarySensor` declared
+  `BinarySensorDeviceClass.MOISTURE`, whose Core semantics are ON = "Wet" /
+  OFF = "Dry" — the exact opposite of the entity's meaning (ON = latest
+  VALID+fresh observation strictly below the start threshold, i.e. the zone
+  meets the moisture criterion for needing water). Spec §28.2 defines the
+  semantics but never required that device class, so the correction is
+  presentation-only; `0.1.0-spec.5` is unchanged.
+
+### Corrections (commit "Polish MoistureLoop zone presentation")
+
+- `needs_water`: removed the MOISTURE device class (no replacement class; no
+  documented Core class matches ON = needs water). Added supported
+  `translation_key` state translations ON = `Yes` / OFF = `No` — the
+  mechanism is proven core practice on both supported pins (56 core
+  binary_sensor precedents on HA 2025.9.0; 53 on 2026.8.3). Raw `on`/`off`
+  states, availability semantics (unavailable when not VALID — never falsely
+  OFF), the `binary_sensor` domain, unique ID, and translation key are all
+  unchanged.
+- `status`: added entity state translations Disabled/Idle/Watering/Soaking/
+  Fault; raw enum states and `ControllerState` untouched (automations see the
+  same strings). Added state icons (default `mdi:sprinkler`; disabled
+  `mdi:power-off`, idle `mdi:sprinkler`, watering `mdi:sprinkler-variant`,
+  soaking `mdi:timer-sand`, fault `mdi:alert-circle`), replacing the
+  developer-facing `mdi:state-machine` default.
+- `needs_water` icons: state icons on `mdi:water-alert` / off
+  `mdi:water-check`.
+- Display names via translations only (keys/unique IDs/service IDs
+  unchanged): `next_eligible` -> "Minimum interval ends" (the value is only
+  last session end + configured minimum interval; "Next eligible" overstated
+  AUTO eligibility), button `stop` -> "Stop watering", button `evaluate_now`
+  -> "Check now", action `evaluate_zone` display name -> "Check zone".
+  README entity wording aligned.
+- Deliberately unchanged: `watering` (RUNNING: ON -> Running / OFF -> Not
+  running is semantically correct), `problem` (PROBLEM: ON -> Problem / OFF
+  -> OK correct), `enabled` switch, `clear_fault`, "Last session" (Unknown is
+  the truthful native no-history rendering of a timestamp sensor), "Watering
+  runtime today" (conservative accounting accrues at pulse OFF confirmation;
+  name remains truthful; accounting untouched per authorization).
+- New §28 presentation regression tests (`TestPresentationMetadata`, 6
+  tests): needs_water threshold semantics both directions, no MOISTURE
+  device class ever again, correct RUNNING/PROBLEM classes retained, state
+  translations actually load via `async_get_translations` on both harnesses,
+  raw enum options unchanged, translation/icons/services parity, and
+  unique-ID/translation-key stability.
+
+### Zone-creation enabled-by-default review (REVIEW ONLY — deferred)
+
+- Confirmed: a newly created zone starts enabled (`zone_controller.py`
+  fresh-controller default) and may begin AUTO watering immediately when the
+  live reading is already below the start threshold and all gates pass —
+  exactly what the permanent Zone 6 did on creation. Recommendation for a
+  separate pre-release decision: create new zones DISABLED (or add explicit
+  final-step confirmation text warning that watering may begin immediately).
+  Changing the default is behavioral (controller/spec/tests) and was
+  intentionally NOT implemented under this presentation-only authorization.
+
+### Gates on new candidate `bf6b5521ff77ce911679c6e6c62af846f4fe16e8`
+
+- Ruff lint + format clean; `git diff --check` clean; all JSON/YAML metadata
+  parse; privacy/local-only/Recorder-independence greps clean.
+- Pure (.venv, no homeassistant): 443 passed; state_machine 100.00% branch.
+- HA 2025.9.0 (.venv-ha): contract PASS; 901 passed + 1 deliberate
+  pure-boundary skip; coverage 92.54% (>=90); state_machine 100% branch.
+- HA 2026.8.3 (.venv-ha-current): contract PASS; 901 passed + 1 skip;
+  coverage 92.55%.
+- Traceability: 134/134 normative IDs, I1-I37 (37/37), T1-T59 (59/59), skip
+  boundary exact. No new skip, no xfail.
+- Pushed fast-forward to origin/main and github/main (local = origin =
+  github). All six hosted jobs GREEN on the exact SHA: lint/format, pure,
+  HA 2025.9.0, HA 2026.8.3, hassfest, HACS. Previous candidate
+  `1df55b78b142e3d4f19e9e93ebc41a0f55a22fb4` is superseded.
+
+### Exact-SHA live deployment and Zone 6 preservation (NO WATER)
+
+- Pre-deployment read-only evidence: the user had already safely disabled
+  Zone 6 (status `disabled`, enabled `off`, watering `off`, last session
+  completed 07:36:32Z, no session/owner/blocker/possible-flow/open
+  accounting), 0 Repairs, physical `valve.zone6_manual` and every other
+  commandable irrigation valve terminal CLOSED (the only non-closed valve is
+  the offline, non-commandable, non-MoistureLoop smart-hose-timer entity).
+  Because the zone was already disabled, deployment proceeded per the
+  authorized safe branch; the user's enable state was never altered.
+- Supported HACS `hacs/repository/refresh` then `hacs/repository/download`
+  installed exactly full commit `bf6b5521ff77ce911679c6e6c62af846f4fe16e8`;
+  one supported `homeassistant.restart` with all water OFF; Core 2026.7.2
+  healthy in 52 s.
+- Identity preservation proven by byte-identical before/after registry
+  snapshots: same single Zone 6 device, same 11 entity registry rows (same
+  registry entry ids, same `{subentry_id}_{key}` unique IDs on the same
+  subentry prefix, same entity_ids, same translation keys), 1 subentry, no
+  duplicates. Post-restart: 0 Repairs, Zone 6 still disabled, all commandable
+  valves CLOSED. NO WATER occurred.
+
+### Live UI acceptance (HA 2026.7.2, passive state only)
+
+- The live instance's own `frontend/get_translations` payload (the exact
+  resource table the frontend renders from) now serves:
+  `needs_water.state.on = Yes`, `needs_water.state.off = No`,
+  `status.state.* = Disabled/Idle/Watering/Soaking/Fault`,
+  `evaluate_now.name = Check now`, `stop.name = Stop watering`,
+  `next_eligible.name = Minimum interval ends`.
+- Live Zone 6 rendered values (raw -> displayed): Status `disabled` ->
+  "Disabled"; Needs water `unavailable` -> "Unavailable" with device_class
+  now None (the source `sensor.soil_moisture_zone6` reads 31 and reports
+  healthily; the disabled zone is not validating freshness — the designed
+  §28.2 fail-visible behavior, identical on the previous build while
+  disabled, and it renders Yes/No whenever the observation is VALID);
+  Watering `off` (RUNNING) -> "Not running"; Problem `off` (PROBLEM) ->
+  "OK"; Minimum interval ends `2026-08-27T13:36:32+00:00`; Last session
+  `2026-08-27T07:36:32+00:00`; Watering runtime today `908.5 s`; Enabled
+  `off`; buttons Check now / Stop watering / Clear fault. The inverted
+  "Needs water: Wet" pairing is gone. Direct browser screenshots were not
+  possible this session (Claude-in-Chrome extension not connected; no
+  authenticated frontend session, and credential entry is out of bounds);
+  the served-translation + raw-state evidence above is deterministic.
+
+### Closeout
+
+- This documentation-only closeout commit is the new final candidate and must
+  carry its own six-job hosted GREEN on its exact SHA (recorded in the final
+  handoff); it does not change the deployed integration component tree.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT
+  SUBMITTED; Brands NOT SUBMITTED. No release or submission is authorized.
+  Authorization returns to NONE.
