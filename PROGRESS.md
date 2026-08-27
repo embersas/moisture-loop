@@ -6,13 +6,13 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
+- Current authorized work: `None`. Slice 14 Checkpoint A (real-sensor closed-loop validation, NON-WATER preflight) is `[x] PASS` as of 2026-08-27: the real Ecowitt sensor is proven to report every 60.0 s including unchanged values, the real Holman Zone 6 `WX1` actuator is registry-confirmed terminal CLOSED, and a temporary validation zone exists but is left DISABLED with no water ever commanded. Checkpoint B physical AUTO validation requires explicit physical-water authorization. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
 - Specification version: `0.1.0-spec.5` (unchanged by the 2026-08-27 nomenclature-only revision note)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.5 conformance: `Spec.4 Remediation Stages 1-8, the spec.5 Stage-1 shutdown remediation (implementation c81f598969ff544abd64915fe92e8f5ae13d4086), and the nomenclature-only MoistureLoop canonical rename (ad2ca863b1efcc76645d39133c7f7d0c73a48794) are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 895 tests with the one deliberate pure-boundary skip; pure passes 443/443. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch; overall mandatory coverage 92.54%.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
-- Next implementation work: `No implementation work is open. The next substantive work is a controlled real-soil-moisture-sensor AUTO validation on the live deployment, followed by the 0.1.0 release-readiness audit under the MoistureLoop identity; each requires its own explicit authorization. No release/submission stage is authorized.`
+- Next implementation work: `No implementation work is open. Slice 14 Checkpoint A non-water preflight is complete; the next substantive work is Slice 14 Checkpoint B, the controlled real-sensor physical AUTO validation on the live deployment using the staged Zone 6 parameters, followed by the 0.1.0 release-readiness audit under the MoistureLoop identity. Checkpoint B requires explicit physical-water authorization and each stage requires its own explicit authorization. No release/submission stage is authorized.`
 - Release gates: `All six GitHub-hosted jobs passed the MoistureLoop rename SHA ad2ca863b1efcc76645d39133c7f7d0c73a48794 (run 33019739998) and the documentation closeout SHA d34e4f03c231ca1a7af93805ad40dad2c61e39ce (run 33020561431) at the repository now named embersas/moisture-loop: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, and HACS. Earlier results remain attributed to their original SHAs in the dated logs. Version is 0.1.0; no tag, GitHub Release, HACS default-store submission, or Brands submission has occurred.`
 - Slice 13: `[x] Complete. A1-A6 are all PASS and Phase A is [x] Complete. B1 is [x] PASS on distinct LIVE PHYSICAL, LIVE HOME ASSISTANT, and LIVE HOME ASSISTANT WITH SYNTHETIC TEST ENTITY evidence. B2 is [x] PASS: the corrected 2026-08-26 active-flow trial on the byte-verified spec.5 implementation proved shutdown-path terminal CLOSED at T3+1.3596 s with the run recorded clean. Phase B is [x] Complete. All seven §46 prototype validations have live evidence; the physical evidence was recorded under the then-current SoilSync name and remains valid because runtime semantics were unchanged by the rename.`
 - Overall status: `Slices 0-13 are complete. The spec.5 Stage-1 shutdown correction is implemented, fully gated, and physically validated; the first failed B2 attempt is retained unchanged as historical evidence. The product is canonically MoistureLoop with no stale active identity. Release readiness has not yet been audited and no release is authorized.`
@@ -4359,3 +4359,181 @@ terminates through an existing transition. No new ambiguity was found.
   B2 trial, are unchanged. Next substantive work: controlled real-sensor AUTO
   validation, then the 0.1.0 release-readiness audit. Authorization returns to
   `None`.
+
+## Session Log — 2026-08-27 (Slice 14 real-sensor closed-loop validation, Checkpoint A non-water preflight)
+
+### Authorization, reason, and scope
+
+- The user authorized Slice 14 Checkpoint A: a NON-WATER preflight preparing the
+  first real end-to-end closed-loop irrigation validation. No valve command, no
+  manual watering, no AUTO enablement, no tag, and no release were authorized.
+  Checkpoint B physical watering remains unauthorized and requires explicit
+  physical-water authorization.
+- Baseline verified before any live interaction: local `HEAD`
+  `d84295d28ce37be6b90a0f575398438a9d357443` on `main`, clean worktree,
+  `origin/main` and `github/main` both at that SHA, no tags. `.env` is
+  `.gitignore`d (line 44) and untracked. Live Home Assistant `2026.7.2`
+  `RUNNING`; MoistureLoop `0.1.0` `loaded` as `moisture_loop` with exactly one
+  config entry and 0 subentries; no SoilSync integration present; 0 Repairs.
+  HACS reported installed version
+  `ad2ca863b1efcc76645d39133c7f7d0c73a48794` as expected, with
+  `pending_upgrade` only against the later documentation-only commits.
+
+### Approved physical pairing
+
+- Moisture sensor: `sensor.soil_moisture_zone6`, registry-proven Ecowitt and not
+  identified by friendly name: `platform: ecowitt`, owning config entry domain
+  `ecowitt` (`loaded`), device Ecowitt `GW2000C` (`sw_version` 158, identifier
+  `ecowitt`/`<station key redacted>`), `unique_id` suffix `-soilmoisture1` (soil channel
+  1), `original_device_class: moisture`, `state_class: measurement`, unit `%`.
+  The operator-set name `Soil Moisture - Zone 6` overrides the original
+  `Soil Moisture 1`.
+- Actuator: the real Holman Zone 6 outlet, registry-proven and not identified by
+  friendly name: device `Zone6`, manufacturer `Holman`, model `WX1`, platform
+  `tuya_local` (local integration), device identifier
+  `tuya_local`/`<device id redacted>/DB011`, entity `unique_id` suffix
+  `-valve_manual`, firmware `HOL9H115-101-000-000`, `device_class: water`,
+  `supported_features: 3` (OPEN plus CLOSE, no SET_POSITION). Because `WX1` is a
+  single-outlet tap timer and the device exposes exactly one valve entity, the
+  Zone 6 outlet identification is unambiguous.
+- Same-bed mapping is recorded as operator-asserted, corroborated by the
+  operator deliberately renaming Ecowitt soil channel 1 to
+  `Soil Moisture - Zone 6`. It is **not** independently machine-verifiable:
+  neither entity carries an area, label, or alias. Recorded so the claim is not
+  overstated.
+
+### Sensor reporting cadence and the measurement method that proves it
+
+- **PASS.** Five consecutive observations captured with the value unchanged at
+  `32` throughout and `last_reported` advancing every **60.0 s**
+  (`02:31:32.824`, `02:32:32.850`, `02:33:32.831`, `02:34:32.824`,
+  `02:35:32.845`) while `last_changed` remained static at `01:01:31.399`. This is
+  the unchanged-value report case: `state_reported` fired on all five,
+  `state_changed` on none. Spec.5 invariant **I2** is satisfied in the field by
+  real hardware.
+- **Methodology finding, recorded because it invalidates the obvious approach.**
+  REST `GET /api/states` **cannot** observe report freshness. `State._as_dict` is
+  an `@under_cached_property` computed once at State construction; the
+  identical-state path in `StateMachine.async_set_internal` advances
+  `last_reported` **in place** and fires `EVENT_STATE_REPORTED` without
+  invalidating that cache. Because `last_changed == last_reported` at
+  construction, the cached dict reports them equal permanently. Any freshness
+  assessment read from `/api/states` therefore shows a healthy 60 s-cadence
+  sensor as arbitrarily stale. This is almost certainly an intentional Home
+  Assistant performance tradeoff, `state_reported` being high-volume.
+- Correct read used instead: `POST /api/template` rendering
+  `states.sensor.soil_moisture_zone6.last_reported`, which reads the live State
+  object. Two related traps also recorded: the entity `available` property is
+  only re-evaluated during a state write, so a stale-but-present state never
+  flips to `unavailable` and availability is not evidence that uploads are
+  arriving; and WebSocket `subscribe_entities` listens to `EVENT_STATE_CHANGED`
+  only while `subscribe_events` refuses `state_reported` (Event filter is
+  required), so neither can observe unchanged reports.
+- Ecowitt itself is correct and requires no upstream issue: `aioecowitt`
+  `server.py` iterates every datapoint in each upload and calls
+  `sensor.update_value()` unconditionally, and `update_value()` fires all
+  callbacks unconditionally (verified at tag `2026.6.0`); Home Assistant
+  `ecowitt/entity.py` calls `async_write_ha_state()` on every callback.
+- Value-change behaviour, recorded separately because it is **not** a freshness
+  property: over 90 days of hourly long-term statistics (1071 buckets), only
+  5.3% of hours contain a value change, with gap-free flat runs of median 12 h
+  and maximum 139 h. During real wetting the sensor is highly responsive
+  (`45` to `46` to `43` to `41` to `40` to `39` to `38` to `37` at 1-4 minute
+  intervals on 2026-08-26). Statistics coverage gaps correspond to periods the
+  operator had the gateway legitimately unplugged and are not sensor faults.
+
+### MoistureLoop interpretation of the real sensor
+
+- Evaluated through the production pure model (`MoistureObservation`) against
+  the Home Assistant clock: raw `32` parses to `32.0`, within
+  `MOISTURE_MIN..MOISTURE_MAX`, classification `valid`, `reported_at_utc`
+  sourced from `State.last_reported`, age `23.6 s`, `is_fresh` `True` at the
+  retained 2 h default, no sensor fault.
+- Confirmed independently inside the live runtime after zone creation: the zone
+  observation showed `value 32.0`, `classification valid`,
+  `reported_at_utc 2026-08-27T02:48:32.831433+00:00`.
+- Production behaviour agrees with the specification: freshness is
+  `reported_at_utc >= now - sensor_max_age`, sourced from `last_reported`. No
+  specification review is required.
+
+### Global water safety precheck
+
+- All commandable Holman irrigation valves proven terminal CLOSED with
+  `is_closed: true`: the Zone 6 outlet, one sibling single-outlet timer, and the four outlets of a
+  four-zone timer (entity IDs redacted). A superseded Tuya-cloud valve entity is
+  registry-disabled by the user and not commandable.
+- Holman device idle evidence (tap-timer diagnostic entity IDs redacted): zone
+  status `idle`, water-flow total `0`, time-remaining `unknown`, alarm status
+  `0`, watering-delay `cancel`, and the next-watering payload decoding to
+  all-zero bytes, so no schedule is armed on the tap timer itself. A sibling
+  timer reporting water flow `1` was checked and is a cumulative litre total
+  (unit `L`), not a flow rate.
+- MoistureLoop before the change: `zones {}`, slot owner `None`, queue empty,
+  blockers empty, no possible-flow owner, no open accounting, reconciliation
+  clean at generation 2/2, Store schema 2, 0 Repairs.
+- Out of scope and excluded by the user: an Orbit BHyve `HT25-0000` hose-timer
+  valve is `unavailable` on a separate offline hub. It is not commandable, is
+  not part of this validation, and was never referenced by MoistureLoop.
+
+### Temporary Zone 6 validation zone, and the creation-order hazard avoided
+
+- A hazard in the literal Step 7-then-Step 9 order was identified and avoided. A
+  newly created zone is born `enabled=True` in `IDLE` (`runtime.py:1564`), and
+  the intended Checkpoint B `start_threshold` of 34% is **above** the live 32%
+  reading, so creating the zone directly with the test thresholds would have
+  produced an enabled, eligible zone with a fresh VALID reading and a healthy
+  CLOSED actuator, which MoistureLoop could have correctly served by opening the
+  valve.
+- Executed order instead: (1) create the subentry with a deliberately
+  non-triggering `start_threshold` 2% and `target_threshold` 3%, far below the
+  live 32%, so AUTO demand existed at no instant; (2) immediately set the zone
+  `enabled` switch off, reaching `DISABLED`; (3) apply the real Checkpoint B
+  thresholds by reconfigure **while DISABLED**. `enabled` is Store-persisted in
+  `ZoneHistory.zone_runtime` rather than subentry data, so reconfiguration does
+  not re-enable the zone (`runtime.py:1360-1367`); this was confirmed
+  empirically, the switch remaining `off` and the status `disabled` across the
+  reconfigure.
+- Zone created through the supported config-subentry flow
+  (`POST /api/config/config_entries/subentries/flow`, handler
+  `[entry_id, "zone"]`, then `SOURCE_RECONFIGURE` with `subentry_id`): name
+  `MoistureLoop Real Sensor Validation - Zone 6`, zone and subentry id
+  `01M10HW8RQ0PK04W25XMF8CQRY`.
+- Verified final state: `controller_state disabled`, `enabled false`,
+  `controller_lifecycle active`, `blockers []`, `possible_flow_owner null`,
+  `actuator_fault null`, `identity_incident null`,
+  `acknowledgement_required false`, `open_accounting false`, actuator
+  `identity_status registry_confirmed` with `off_service valve.close_valve` and
+  `confirm_timeout_s 30`. SafetyRecord `0771fcd0-...` created with lineage
+  `40469f08-...`; Store schema 2 at revision 18; `retained_tombstones {}`;
+  reconciliation clean 2/2; 0 Repairs; every valve above still CLOSED.
+  `runtime_eligible` is `true`, confirming the avoided hazard was real and that
+  the zone is held safe purely by being DISABLED.
+
+### Checkpoint B parameters staged on the zone
+
+- `start_threshold` 34.0 %, `target_threshold` 40.0 % (live moisture 32 %),
+  `pulse_duration_s` 30, `soak_duration_s` 180, `max_cycles` 2,
+  `max_session_runtime_s` 120, `max_daily_runtime_s` 300,
+  `min_session_interval_s` 900, `sensor_max_age_s` 7200 (production default
+  retained; the proven 60 s cadence gives roughly 120 times margin),
+  `actuator_confirm_timeout_s` 30 (production default), `manual_max_duration_s`
+  1800 (unchanged). `SHUTDOWN_OFF_BUDGET_S` remains 8.0 and no production
+  default, Store schema, runtime code, state machine, or normative specification
+  was altered.
+- Expectation recorded for Checkpoint B: a 30 s pulse across 2 cycles is about
+  60 s of water, which is unlikely to raise the bed from 32% to the 40% target,
+  so the session will most likely terminate on cycle exhaustion with target
+  unmet. That still exercises admission, actuator confirmation, the pulse and
+  soak loop, and clean termination.
+
+### Status and remaining work
+
+- Checkpoint A is `[x] PASS`. NO WATER WAS COMMANDED; no valve service, no
+  `start_manual_watering`, and no `evaluate_zone` call was issued at any point.
+  AUTO is not enabled and the zone is left DISABLED.
+- Checkpoint B physical AUTO validation requires explicit physical-water
+  authorization and is not authorized by this record. The temporary validation
+  zone is pre-release scaffolding and should be removed after Slice 14; note
+  that native subentry deletion may retain Store tombstones.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
+  Brands NOT SUBMITTED. Authorization returns to `None`.
