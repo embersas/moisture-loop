@@ -5089,3 +5089,349 @@ Timeline, Home Assistant UTC:
 - Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT
   SUBMITTED; Brands NOT SUBMITTED. No release or submission is authorized.
   Authorization returns to NONE.
+## Session Log — 2026-08-27 (Pre-release new-zone safe-default correction)
+
+### Authorization, reason, and scope
+
+- The user authorized one explicit pre-release BEHAVIOURAL change: newly
+  created MoistureLoop zones must start DISABLED, applying to newly created
+  zones only, with existing configured zones preserving their existing
+  enabled/disabled state. NO physical watering, and no `0.1.0` tag, GitHub
+  Release, HACS-default submission, or Brands submission was authorized.
+- Baseline verified: `main` clean at candidate
+  `bb5a97b3663a2ccd3669a008ec71773f61380ee1` = origin/main = github/main; no
+  tag; no GitHub Release; version `0.1.0`; specification `0.1.0-spec.5`. That
+  candidate is superseded for release purposes by this change.
+- Permanent live Zone 6 is a REAL USER ZONE and had to be preserved exactly.
+
+### Live user observation that forced the decision
+
+- Zone 6, the user's first permanent zone, was created while the real Ecowitt
+  moisture sensor already read below its start threshold, the real Holman
+  actuator was healthy and closed, and every MoistureLoop safety gate passed.
+  Because a fresh zone runtime started `enabled=true` in IDLE, AUTO irrigation
+  began immediately after the Add zone flow completed. That is logically
+  consistent with the controller, but it is not an acceptable default for a
+  first release that commands physical water. The preceding presentation audit
+  had already recorded this as a recommendation deferred to a separate
+  behavioural decision; this session executes that decision.
+
+### Decision
+
+- A newly configured zone starts DISABLED: `zone_runtime.enabled = false`,
+  controller state `DISABLED`, Enabled switch off, no automatic or manual
+  watering possible, no actuator ON. The user reviews the zone and then
+  explicitly turns Enabled on. Enabling an already dry, fresh, otherwise
+  eligible zone may then begin AUTO watering immediately; that is the intended
+  meaning of the explicit action and is documented in both directions.
+- Existing zones are untouched. Enabled/disabled is durable runtime state and
+  survives restart, reload, reconfiguration, same-actuator delete/re-add, and
+  schema migration. The new default is deliberately NOT a migration that
+  disables existing users.
+
+### Specification treatment: `0.1.0-spec.5` -> `0.1.0-spec.6`
+
+- This changes the initial operational state of a newly created zone, so it was
+  treated as a behavioural specification correction and the version was
+  advanced. It was deliberately NOT hidden under the earlier version-neutral
+  nomenclature/metadata/presentation precedent, which covers only
+  non-behavioural edits.
+- §24.4 **Add** gains six normative creation rules: (1) the first
+  `zone_runtime` minted for a genuinely new zone is `enabled=false` in
+  DISABLED, and that is the single authoritative fresh-zone default; (2) it is
+  part of the same serialized, read-back-verified safety transaction as the new
+  record/identity/shadow/history, durable before any controller, listener,
+  entity, or slot admission exists, and never implemented as
+  enable-then-disable or post-creation cleanup; (3) while `enabled` is false no
+  AUTO or MANUAL admission is possible even with a VALID+FRESH sensor strictly
+  below the start threshold, an available proven-OFF actuator, no blocker, and
+  both budgets permitting — and no dry or newly arriving report implicitly
+  enables the zone; (4) DISABLED follows from the existing `enabled`-first
+  derivation, so it is reconciliation output rather than a new transition row
+  and adds no sixth state; (5) only the explicit §28.3 enable switch lifts it,
+  through the existing `T46`/`T47` outcomes, with no armed state and no second
+  confirmation entity; (6) the rule applies to fresh creation only and every
+  adoption path preserves an existing zone's persisted `enabled`.
+- Also updated: §8 (creation is disabled, and the flow says so), §9 (the
+  enabled flag starts false for a new zone), the §14 post-table note (creation
+  is explicitly not a transition), I20 (extended to own the fresh-zone default
+  and the preservation rule), and the §39.3 I20-I23 evidence row.
+
+### Traceability: honest count change 134 -> 135
+
+- Existing IDs were revised in place wherever an existing requirement already
+  owned the behaviour: I20 already owned enabled/disabled ownership and
+  preservation, so it was extended rather than duplicated, and I1-I37 stays at
+  37. T1-T59 is unchanged in IDs, topology, guards, actions, destinations, and
+  reasons: creation derives DISABLED through the existing §24.4 derivation, and
+  the zone's first transition is the ordinary `T46`/`T47` response to an
+  explicit enable.
+- No existing normative behavioural ID owned the fresh-zone default. LC1-LC13
+  cover actions, device resolution, reconfigure, shutdown, run rebase, and
+  table parity; RC8 covers add/update/delete burst ordering; nothing asserted
+  the initial operational state of a new zone. Rather than falsify the totals,
+  one new ID was added: **LC14**. The inventory is therefore exactly **135**
+  normative behavioural IDs (LC group 13 -> 14), I1-I37, T1-T59, and every
+  place that states the count was updated: SPECIFICATION.md header revision
+  note and §45 conclusion, `tests/test_traceability.py` (`EXPECTED_GROUPS` and
+  the inventory assertion), `CLAUDE.md`, and `DEVELOPMENT.md`.
+- `scripts/check_traceability.py` no longer prints hand-edited literals: its
+  expected/discovered/unique/mapped totals are derived from
+  `tests/traceability_manifest.py`, so a future count change cannot go stale.
+
+### Implementation (commit "Create new MoistureLoop zones disabled")
+
+- Authoritative initialization location: `runtime.py`
+  `EntryRuntime._new_zone_history`, the single place a brand-new logical zone's
+  first `ZoneRuntime` is minted. It now produces `enabled=False` and
+  `state=ControllerState.DISABLED`.
+- Why no creation-time race exists: reconciliation builds the whole canonical
+  transaction in `_plan_reconciled_store`, and `store.async_reconcile(...)`
+  saves and read-back verifies it BEFORE `_synchronize_live_controllers` runs.
+  Only then are `_create_controller` and `async_attach()` called, and
+  `async_attach()` adopts the persisted `zone_runtime`. The disabled value is
+  therefore durable before the controller object exists, before its listeners
+  and session task exist, before entity publication, and before admission can
+  offer a slot. There is no enable-then-disable, no frontend toggling, no
+  active-then-stop, no post-creation cleanup, and no config-flow hack.
+- Reconciliation already skips operational-state re-evaluation for a genuinely
+  new zone (`reevaluate_operational_state` excludes `created_new and prior is
+  None`), and its derivation branch is `DISABLED if not enabled`, so both paths
+  agree on DISABLED for a fresh zone.
+- Defence in depth: `zone_controller.py` pre-adoption defaults changed from
+  IDLE/`enabled=True` to DISABLED/`enabled=False`. `async_attach()` still
+  overwrites both from the canonical authority; the change means a constructed
+  but unadopted controller can never be watering-eligible.
+- Related correctness fix found while auditing the new default:
+  `_maybe_clear_configuration_fault` unconditionally set `state=IDLE` when a
+  `CONFIGURATION_INVALID` fault cleared. A disabled zone can hold that fault
+  via `T45`, so it now derives `IDLE if enabled else DISABLED`, matching the
+  §24.4 derivation order. Safety never depended on this (`G-EN` and the
+  controller's `enabled` guard both still refused water), but the presented
+  state could have contradicted the switch.
+
+### Existing-zone preservation semantics
+
+- Every adoption path avoids `_new_zone_history` entirely and keeps the
+  persisted `zone_runtime`: same-subentry continuity across restart/reload,
+  non-actuator reconfiguration, exact durable-identity delete/re-add (§25.5
+  deliberately treats it as the same retained zone lineage), schema-1
+  migration, and A -> B replacement (§24.4.8). Durable runtime state is
+  authoritative wherever it exists; no existing zone's `enabled` is re-derived
+  from a configuration default.
+
+### User-facing setup text
+
+- Add zone flow, safety-limits step (the final step before creation): "New
+  zones are created disabled: review the zone settings, then turn Enabled on
+  when you are ready for automatic watering." The reconfigure flow's
+  equivalent step deliberately does not carry it: reconfigure creates
+  nothing.
+- README: a numbered step 4 in Configure zones, and a new "New zones start
+  disabled" section stating the default, that creation issues no actuator ON
+  even when the reading is already below the start threshold, the opposite-
+  direction warning that enabling a dry eligible zone can water immediately,
+  and that existing zones keep their durable state.
+
+### Automated tests
+
+- 8 new pure tests, `tests/test_state_machine.py::TestNewZoneSafeDefault`: the
+  fresh default admits no AUTO for `AutoEvaluate`/`MoistureReport`/`SlotGranted`
+  when every other gate passes (no session, no `TurnOn`, no `RequestSlot`); two
+  further qualifying reports stay inert; MANUAL is refused with `G-EN`; explicit
+  enable uses the existing `T47` (IDLE + `ScheduleEvaluation`) and `T46` (FAULT)
+  rows; `ControllerState` is still exactly the five values.
+- 9 new HA tests, `tests/test_config_flow.py::TestNewZoneSafeDefault`: a fresh
+  zone created through the real subentry flow is `enabled=False`/DISABLED with
+  VALID+FRESH moisture strictly below the start threshold and an available
+  proven-OFF actuator, and has no session, no slot owner/queue entry, no
+  blocker, no possible-flow owner, no open accounting and no actuator ON; two
+  further reports do not arm it; MANUAL is refused through the normal disabled
+  guard; explicit enable is the normal activation path and legitimately starts
+  AUTO; the Enabled switch entity and status sensor reflect the runtime state;
+  persisted enabled and persisted disabled zones both survive reload AND a full
+  unload/setup restart; and reconfigure preserves either state. Actuator
+  commands are observed two ways (registered service handlers plus an
+  `EVENT_CALL_SERVICE` bus listener), so an ON attempt is provable even if no
+  handler ran.
+- Existing suites: helpers whose subject is an operational zone now perform the
+  one explicit enable a user would perform (`test_entities.setup_with_zone`,
+  shared by repairs/rename/services; `test_stage4_on_gate.command_env`;
+  `test_reconciliation.runtime_env`;
+  `test_config_flow.make_loaded_watering_valve`;
+  `test_lifecycle.start_runtime`, which enables only zones that are actually
+  DISABLED so seeded restart/crash snapshots keep their own state). Three A -> B
+  reconfigure tests enable zone A first because their subject is the handoff
+  derivation. `test_first_install_transaction` now asserts the NEW contract: the
+  first-ever zone of a first-ever install is DISABLED with `enabled=False`, no
+  session, and grants still armed. No test was weakened, skipped, or xfailed.
+
+### Gates on the implementation SHA `5867181a75b72a3e37eae02ea001459de9cff578`
+
+- Ruff lint clean; `ruff format --check` clean (48 files); `git diff --check`
+  clean.
+- Pure (`.venv`, `homeassistant` proven absent): 451 passed;
+  `state_machine.py` 100.00% branch (526 stmts / 316 branches, 0 missing).
+- HA 2025.9.0 (`.venv-ha`, Python 3.13.12): exact contract PASS; 918 passed +
+  1 deliberate pure-boundary skip; coverage 92.54% (>= 90); `state_machine.py`
+  100% branch.
+- HA 2026.8.3 (`.venv-ha-current`, Python 3.14.6): exact contract PASS; 918
+  passed + 1 skip; coverage 92.36%.
+- Traceability (executed evidence): **135/135 normative IDs, I1-I37 (37/37),
+  T1-T59 (59/59)**; pure skips `[]`; HA skip exactly the documented boundary
+  node. No new skip, no xfail.
+- Metadata: all JSON/YAML parse; manifest `0.1.0`, `hub`, `calculated`,
+  `single_config_entry`, empty requirements; HACS minimum `2025.9.0`; service /
+  icon / entity / translation key and field parity; no `strings.json` shipped;
+  tracked release contents free of virtual environments, caches, JUnit,
+  diagnostics, secrets, and migration artifacts.
+- Audits: privacy scan, local-only audit, and Recorder-independence audit clean
+  across all 18 component modules (no credential material, no telemetry, no
+  cloud component, no outbound network, no subprocess/eval, no direct
+  `.storage` manipulation).
+- The local hassfest Docker preflight could not run this session (Docker
+  Desktop engine not available on the workstation). The required GitHub-hosted
+  hassfest job ran on the exact SHA and is GREEN, which is the authoritative
+  gate.
+- Pushed fast-forward: local = origin/main = github/main =
+  `5867181a75b72a3e37eae02ea001459de9cff578`. All six hosted jobs GREEN on that
+  exact SHA: lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, HACS.
+
+### Safe live deployment precheck (read-only)
+
+- Zone 6 was already DISABLED, so the authorized safe branch applied and the
+  user's enable state was never altered. Diagnostics showed
+  `zone_runtime.enabled=false`, `state=disabled`, `current_session=null`,
+  `blockers=[]`, `possible_flow_owner=null`, `actuator_fault=null`,
+  `open_accounting=false`, `may_be_flowing=false`, `external_actuator_on=false`,
+  `off_operation=null`, `last_on_authorization=null`; SlotManager
+  `owner=null`, `queue=[]`, `blockers=[]`, admission open; reconciliation not
+  dirty/reconciling/failed; no retained tombstones; 0 Repairs.
+- Physical `valve.zone6_manual` terminal CLOSED, as were `valve.zone5_manual`
+  and `valve.zone1_4_zone_1..4`. The only non-closed valve remained the
+  offline, non-commandable, non-MoistureLoop smart-hose-timer entity.
+- Fresh sensor evidence had to be read through the template engine: the
+  `/api/states` `last_reported` is cached and looked ~40 minutes stale, while
+  the template engine showed `sensor.soil_moisture_zone6` reporting every 60 s.
+  M = 31 with start threshold 30, so Zone 6 was not AUTO-eligible even
+  ignoring its disabled state.
+
+### Exact-SHA live deployment and Zone 6 preservation (NO WATER)
+
+- Supported HACS `hacs/repository/refresh` then `hacs/repository/download`
+  installed exactly full commit
+  `5867181a75b72a3e37eae02ea001459de9cff578` (`installed_version` verified);
+  one supported `homeassistant.restart` with every valve confirmed CLOSED
+  first; Core 2026.7.2 healthy in 75 s.
+- Preservation proven by comparing full before/after snapshots: identical
+  single Zone 6 subentry, identical 11 entity registry rows (same registry
+  entry ids, unique IDs, subentry prefix, entity ids, translation keys),
+  identical single device, identical thresholds/timings, sensor and actuator
+  identity, identical daily accounting (908.4795330 s) and last-session
+  summary, `enabled=false`/`disabled` unchanged. Store: same generation
+  `aa78d13c`, schema 2, revision 33 -> 39 (normal new-run writes),
+  `previous_run_was_clean=true` from the clean shutdown, safety history
+  retained, no unexplained reset. 0 Repairs; all valves CLOSED.
+
+### Live nonphysical new-zone validation fixture
+
+- A search of every live `switch`/`valve` entity found no suitable existing
+  nonphysical actuator: candidates were real hardware (Tuya, Meross, MQTT
+  GPOs, camera features, an energy plant, device LEDs), HACS pre-release
+  toggles with real configuration side effects, or unavailable. No physical
+  Holman/Tuya irrigation valve was considered.
+- An ephemeral NONPHYSICAL MQTT switch fixture was created with the same
+  supported methodology used in earlier prototype validation, mapping to no
+  hardware at all: entity `switch.moistureloop_new_zone_default_fixture`,
+  unique id `ml_nzd_fixture_2026_08_27`, available, initial OFF, command topic
+  monitored. Retained fixture topics recorded for cleanup:
+  `homeassistant/switch/ml_nzd_fixture/config`,
+  `ml/nzd/ml_nzd_fixture/state`, `ml/nzd/ml_nzd_fixture/availability`; the
+  command topic `ml/nzd/ml_nzd_fixture/command` is not retained. The real
+  `sensor.soil_moisture_zone6` was used as the moisture input — permitted
+  because a sensor has no actuation side effect — and the flow's own shared-
+  sensor warning was presented and recorded.
+
+### Live new-zone default validation (Step 15/16) — PASS, NO WATER
+
+- Observed real moisture M = 31 (VALID, fresh). The temporary zone was
+  configured to be AUTO-eligible if it were enabled: start threshold
+  33 (M+2), target 35 (M+4), with short nonphysical validation timings (pulse
+  30 s, soak 60 s, 1 cycle, session 300 s, daily 600 s, interval 900 s, sensor
+  max age 300 s, confirm 30 s, manual max 60 s). `sensor_max_age` 300 s
+  comfortably exceeds the 60 s report cadence, so the sensor stayed FRESH.
+- Created through the normal supported config-subentry flow (the same
+  `/api/config/config_entries/subentries/flow` route the UI uses) as
+  "MoistureLoop New-Zone Default Validation". Observers were armed BEFORE the
+  final creation step: the synthetic actuator's MQTT command topic, all
+  `call_service` events, `moisture_loop_session_started`/`_finished`/
+  `_fault_set`/`_fault_cleared`, and state changes for the fixture, Zone 6, and
+  the new zone.
+- Immediately after creation, with the sensor VALID and FRESH at 31 < 33, the
+  actuator available and proven OFF, no blocker, and both budgets permitting:
+  `enabled=false`, status DISABLED, Enabled entity off, no AUTO session, no
+  MANUAL session, no slot request or grant (`owner=null`, `queue=[]`), no
+  possible-flow owner, no open accounting (`daily runtime 0.0`), no synthetic
+  actuator ON, no fault, 0 Repairs. `needs_water` read `on`, so the integration
+  itself agreed the moisture condition would justify watering — and still
+  watered nothing.
+- Two GENUINE new Ecowitt reports were then observed (09:52:31.785Z and
+  09:53:31.782Z, both VALID at 31 with sub-millisecond observation age). After
+  each, the zone remained DISABLED with `enabled=false`, no session, no slot
+  owner/queue, no blocker, no possible-flow owner, no open accounting, daily
+  runtime still 0.0, no fault, and the synthetic actuator still `off`. Neither
+  creation nor subsequent sensor reports silently arm a zone.
+- Over the whole 481 s observer window: **0** MQTT commands on the synthetic
+  actuator's command topic, **0** `switch`/`valve`/`moisture_loop` service
+  calls (the only five service calls captured were an unrelated household
+  hallway-light automation), and **0** MoistureLoop session or fault events.
+  The only state changes were the one reconciler-scheduled reload that
+  constructs the new zone's entities — Zone 6's entities went briefly
+  unavailable and returned with byte-identical values — plus the new zone's
+  entities appearing as status `disabled`, Enabled `off`, watering `off`,
+  problem `off`, needs water `on`.
+- Enabled was NOT pressed and AUTO was NOT exercised live; the explicit-enable
+  path is covered by the automated tests and by prior physical validation.
+
+### Cleanup and permanent Zone 6 regression check
+
+- Only the temporary subentry was deleted, through the supported native
+  `config_entries/subentries/delete` path. Normal reconciliation left exactly
+  one active zone (Zone 6) and one expected RETIRED safety tombstone for the
+  synthetic actuator lineage with no blockers, no possible-flow owner, no open
+  accounting, and no fault. All temporary zone entities disappeared.
+- The synthetic MQTT fixture was fully removed by clearing all three retained
+  topics; its state and Entity Registry row are gone with no residual or
+  duplicate fixture entity. No `.storage` file was ever touched.
+- Zone 6 after cleanup versus before deployment: identical subentry, identical
+  11 entity registry rows, identical device registry, identical
+  `safety_record_id`, `safety_lineage_id`, `zone_history_id`,
+  `active_subentry_id`, `previous_subentry_ids`,
+  `historical_zone_history_ids`, lifecycle, blockers, possible-flow owner,
+  actuator fault, acknowledgement flag, and open-accounting flag; identical
+  `config_fingerprint`, `normalized_settings` (all thresholds and timings),
+  sensor identity, and actuator identity; identical daily accounting,
+  last-session summary, and `last_session_end_utc`; `enabled=false` and state
+  `disabled` unchanged. The single difference is the entry-wide
+  `applied_generation` 2 -> 3, which is the expected reconciliation-generation
+  counter after a subentry was added and removed. Store generation `aa78d13c`
+  and schema 2 unchanged; revision advanced 33 -> 46. No watering occurred, no
+  duplicate entities, no migration side effect.
+- Final live state: permanent Zone 6 only; temporary validation zone absent;
+  synthetic actuator absent; `valve.zone6_manual`, `valve.zone5_manual`, and
+  `valve.zone1_4_zone_1..4` all CLOSED (the only non-closed valve is still the
+  offline, non-commandable, non-MoistureLoop smart-hose-timer entity); no
+  active session; no slot owner or queue; no possible-flow owner; no open
+  accounting; no unexpected blocker or fault; 0 Repairs. **NO WATER.**
+
+### Closeout
+
+- This documentation-only closeout commit is the new final release candidate
+  and must carry its own six-job hosted GREEN on its exact SHA (recorded in the
+  final handoff). It does not change the deployed integration component tree,
+  so the live instance keeps running the verified implementation SHA
+  `5867181a75b72a3e37eae02ea001459de9cff578`.
+- Superseded candidate: `bb5a97b3663a2ccd3669a008ec71773f61380ee1`.
+- Version `0.1.0`; specification `0.1.0-spec.6`; tag NONE; GitHub Release NONE;
+  HACS default NOT SUBMITTED; Brands NOT SUBMITTED. No release or submission is
+  authorized. Authorization returns to NONE.
