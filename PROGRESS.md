@@ -4824,3 +4824,127 @@ Timeline, Home Assistant UTC:
 - Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
   Brands NOT SUBMITTED. Release authorization remains NONE; authorization
   returns to `None`.
+
+## Session Log — 2026-08-27 (Pre-release UI classification correction)
+
+### Defect, research, and narrow correction
+
+- Live user validation found that MoistureLoop was incorrectly shown under
+  Settings -> Devices & services -> Helpers and absent from the normal
+  Integrations list. Selecting that Helpers item made the frontend start a
+  helper options flow, which MoistureLoop intentionally does not implement,
+  and rendered `Config flow could not be loaded: Invalid handler specified`.
+- Current authoritative Home Assistant manifest documentation and the exact
+  2025.9.0/2026.8.3 Core loader/frontend contracts were re-verified. `helper`
+  is for integrations whose main purpose is providing an entity that helps
+  users with automations. `hub` is the supported type for one integration or
+  config entry that manages multiple devices or services. MoistureLoop has one
+  controller entry managing multiple logical zone subentries/devices and
+  orchestrating their selected sensor and actuator services, so `hub` is the
+  correct classification. Core routes `helper` descriptions to the Helpers
+  subscription; the frontend's Integrations page subscribes to hub/device/
+  service/hardware descriptions.
+- `custom_components/moisture_loop/manifest.json` changed only
+  `integration_type: helper` -> `integration_type: hub`. The diagnostics
+  metadata mirror and the focused metadata/diagnostics tests were updated;
+  the release regression now asserts both `integration_type == "hub"` and
+  that it is not `helper`. No domain, config-flow topology, Store, controller,
+  state-machine, config-entry migration, safety logic, or watering behaviour
+  changed. Version remains `0.1.0`.
+- `SPECIFICATION.md` remains `0.1.0-spec.5`. A concise 2026-08-27 corrective
+  metadata/UI revision note records the pre-release classification correction
+  under the existing version-neutral precedent for non-behavioural metadata
+  and nomenclature corrections. The five states, T1-T59, I1-I37, all 134
+  normative behavioural IDs, Store schema 2, safety, and watering semantics
+  remain unchanged. Historical dated helper-classification evidence was left
+  intact; unrelated Python/helper API usages were not changed.
+- The duplicate-controller abort remains owned by Home Assistant Core:
+  `single_config_entry: true` intercepts the flow before MoistureLoop's user
+  step and returns `single_instance_allowed` with translation domain
+  `homeassistant`. MoistureLoop's own translation is correct but is bypassed
+  on that path. The previously observed raw key is therefore a frontend/Core
+  translation-loading context/version symptom, not a reason to weaken
+  `single_config_entry`. The post-correction live frontend rendered the
+  supported human-readable Core message, so no integration-side workaround
+  was added.
+
+### Automated gates and candidate publication
+
+- Changed-tree local gates all PASS: Ruff lint, Ruff format check,
+  `git diff --check`, JSON/YAML parsing, manifest/translations validation,
+  service/icon/entity parity, privacy scan, local-only audit,
+  Recorder-independence audit, package audit, official hassfest container
+  (one integration, zero invalid), and official HACS Action (all 9 checks).
+- Pure/no-Home-Assistant suite: **443 passed**, zero skips;
+  `state_machine.py` **100.00% branch**.
+- Mandatory Home Assistant 2025.9.0: exact contract **15/15**; full suite
+  **895 passed**, one documented pure-boundary skip; overall branch coverage
+  **92.54%**; `state_machine.py` **100.00% branch**.
+- Supported-current Home Assistant 2026.8.3: exact contract **15/15**; full
+  suite **895 passed**, the same one documented pure-boundary skip; overall
+  branch coverage **92.36%**; `state_machine.py` **100.00% branch**.
+- Executed traceability remains **134/134 normative IDs**, **I1-I37 37/37**,
+  and **T1-T59 59/59**. No new skip or xfail.
+- Forward commit `113285157c8cbfd7a0502e7d580836a1bf7bc48a`
+  (`Classify MoistureLoop as a hub integration`), authored and committed as
+  `embersas <30363137+embersas@users.noreply.github.com>`, fast-forwarded to
+  both `origin/main` and `github/main`. GitHub Actions run `33044110155`
+  passed all six jobs on that exact SHA: lint/format, pure, HA 2025.9.0,
+  HA 2026.8.3, hassfest, and HACS. Previous candidate
+  `5875e55a29a556713d3a6d8cfcc496906ca97d58` is superseded.
+
+### Exact-SHA live deployment and identity preservation (NO WATER)
+
+- Immediately before deployment, read-only live evidence again proved zero
+  configured zone subentries, no session/owner/blocker/possible-flow/open
+  accounting, 0 Repairs, and all six commandable irrigation valves terminal
+  CLOSED. No valve or watering action was called.
+- Supported HACS custom-repository download installed exactly full commit
+  `113285157c8cbfd7a0502e7d580836a1bf7bc48a` at
+  `/config/custom_components/moisture_loop`; HACS reported the exact installed
+  version and pending restart. One supported `homeassistant.restart` activated
+  it with all water OFF; Core 2026.7.2 returned healthy in 16 seconds. One
+  supported no-water config-entry reload then re-observed the retained
+  actuator after entity startup and returned its lifecycle to `retired`.
+- The same private controller `entry_id` survived (only its non-sensitive
+  prefix was used during operator comparison), remained `loaded`, title and
+  domain unchanged, version/minor version 1/1, and still had zero subentries.
+  The same Store generation survived (compared privately without publishing
+  the identifier), schema remained 2, final revision was 44, and the single
+  RETIRED Slice 14 tombstone retained its measured 64.133031 s safety history.
+  No second controller was created.
+- Final runtime state: reconciliation clean/admission open; no slot owner,
+  queue, blockers, possible-flow owner, fault, or open accounting; 0 Repairs;
+  all six commandable irrigation valves CLOSED. NO WATER occurred.
+
+### Live Home Assistant frontend acceptance
+
+- Integrations page: searching `MoistureLoop` visibly returned one configured
+  integration card (`1 entry`). Opening it succeeded and displayed the
+  controller under **Hubs**. No `Invalid handler specified` error appeared.
+- Helpers page: searching `MoistureLoop` visibly returned
+  `No rows matching current filters`; MoistureLoop was absent.
+- Controller page: **Add zone** was visible. Opening it launched the first
+  page **Zone identity** with `Zone name`, `Soil-moisture sensor`, and
+  `Irrigation actuator (switch or valve)`. The dialog was cancelled with no
+  submission and no zone creation.
+- Second-instance check: Add integration -> MoistureLoop remained prevented
+  and rendered the exact human-readable dialog title
+  `This integration allows only one configuration` with body
+  `MoistureLoop supports only one configuration. Adding additional ones is
+  not needed.` No raw `single_instance_allowed` key remained in this live
+  retest.
+- After all UI checks, backend evidence re-proved exactly one controller, zero
+  subentries, same Store generation/schema/history, 0 Repairs, and all valves
+  CLOSED. NO WATER.
+
+### Closeout
+
+- This required tracking-only closeout commit records the completed live
+  operations. Per project precedent, its exact SHA and its second six-job
+  hosted result are carried in the final handoff; that later documentation
+  commit is the final release candidate and does not change the exact deployed
+  integration component tree.
+- Version `0.1.0`; tag NONE; GitHub Release NONE; HACS default NOT SUBMITTED;
+  Brands NOT SUBMITTED. No release or submission is authorized. Authorization
+  returns to NONE.
