@@ -327,8 +327,8 @@ the above, including the one failed attempt that is retained unchanged as
 historical evidence. Validation on this deployment is not a guarantee for other
 hardware, and the centralized brand submission remains deliberately unmade.
 
-Centralized brand submission, HACS default-store submission, and public release
-publication are not implied by the local icon or this repository metadata.
+Centralized brand submission and HACS default-store submission are not implied
+by the local icon or this repository metadata; neither submission has been made.
 
 ## License
 
