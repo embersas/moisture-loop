@@ -250,15 +250,25 @@ async def enable_zone_a(env) -> None:
         await env.hass.async_block_till_done()
 
 
-async def run_fix_flow(env, *, data=None, user_input=None):
+async def open_fix_flow(env, *, data=None):
+    """Open the Repair exactly as Home Assistant does.
+
+    Core seeds a repair flow with ``data={"issue_id": ...}`` and hands that
+    dict to ``async_step_init`` as ``user_input``, so opening the Repair must
+    not be mistaken for the operator's submission.
+    """
     issue = tombstone_issue(env)
-    flow = await async_create_fix_flow(
-        env.hass,
-        record_issue_id(env.entry.entry_id, TOMBSTONE_RECORD, ISSUE_TOMBSTONE_ACTUATOR_MISSING),
-        data if data is not None else issue.data,
+    issue_id = record_issue_id(
+        env.entry.entry_id, TOMBSTONE_RECORD, ISSUE_TOMBSTONE_ACTUATOR_MISSING
     )
+    flow = await async_create_fix_flow(env.hass, issue_id, data if data is not None else issue.data)
     flow.hass = env.hass
-    form = await flow.async_step_init()
+    form = await flow.async_step_init({"issue_id": issue_id})
+    return flow, form
+
+
+async def run_fix_flow(env, *, data=None, user_input=None):
+    flow, form = await open_fix_flow(env, data=data)
     result = await flow.async_step_confirm(
         {"actuator_removed_off": True} if user_input is None else user_input
     )
@@ -527,6 +537,22 @@ class TestNegativeSafetyMatrix:
         assert result["errors"]["base"] == "record_removal_not_confirmed"
         assert tombstone_issue(env) is not None
         assert not env.runtime.slots.blockers_empty()
+
+    async def test_opening_the_repair_is_not_an_acknowledgement(self, harness) -> None:
+        """Merely opening the Repair must never count as the safety assertion."""
+        env = harness
+        await seed_removed_tombstone(env)
+        await reload_entry(env)
+
+        _flow, form = await open_fix_flow(env)
+        assert form["type"] is FlowResultType.FORM
+        assert form["step_id"] == "confirm"
+        # No premature error, and above all no acknowledgement.
+        assert not form.get("errors")
+        assert form["data_schema"]({})["actuator_removed_off"] is False
+        assert env.runtime.store.data.safety_records[TOMBSTONE_RECORD].removed_actuator_ack is None
+        assert not env.runtime.slots.blockers_empty()
+        assert tombstone_issue(env) is not None
 
     async def test_unchecked_confirmation_is_refused(self, harness) -> None:
         """The operator must actively assert it; the box is never pre-checked."""

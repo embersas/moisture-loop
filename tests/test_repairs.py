@@ -142,7 +142,12 @@ class TestRepairs:
         assert "device_id" not in finished[0].data
         flow = await async_create_fix_flow(env.hass, issue_id, created.data)
         flow.hass = env.hass
-        assert (await flow.async_step_init())["type"].value == "form"
+        # Core seeds the flow with data={"issue_id": ...} and passes it to
+        # async_step_init as user_input. Opening this CRITICAL Repair must
+        # show the confirmation form, never acknowledge on the operator's
+        # behalf, so the issue must still stand after the first step.
+        assert (await flow.async_step_init({"issue_id": issue_id}))["type"].value == "form"
+        assert issue(env.hass, issue_id) is not None
         assert (await flow.async_step_confirm({}))["type"].value == "create_entry"
         assert issue(env.hass, issue_id) is None
 

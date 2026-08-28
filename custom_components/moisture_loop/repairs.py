@@ -214,7 +214,11 @@ class ExactRecordFaultFixFlow(RepairsFlow):
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
     ) -> data_entry_flow.FlowResult:
-        return await self.async_step_confirm(user_input)
+        # Home Assistant seeds the flow with data={"issue_id": ...} and passes
+        # that dict here as user_input. Forwarding it would make merely OPENING
+        # this Repair count as the operator's acknowledgement, so the confirm
+        # step is always entered unsubmitted (matching Core's ConfirmRepairFlow).
+        return await self.async_step_confirm()
 
     async def async_step_confirm(
         self, user_input: dict[str, str] | None = None
@@ -291,7 +295,9 @@ class RemovedActuatorFixFlow(RepairsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> data_entry_flow.FlowResult:
-        return await self.async_step_confirm(user_input)
+        # See ExactRecordFaultFixFlow: the seeding dict must never be mistaken
+        # for the operator's safety assertion.
+        return await self.async_step_confirm()
 
     async def async_step_confirm(
         self, user_input: dict[str, Any] | None = None
@@ -308,12 +314,12 @@ class RemovedActuatorFixFlow(RepairsFlow):
         if runtime is not None:
             context = runtime.removed_actuator_recovery_context(self._record_id, self._lineage_id)
 
-        if user_input is not None:
+        if user_input is not None and CONF_ACTUATOR_REMOVED_OFF in user_input:
             if runtime is None:
                 errors["base"] = "record_entry_not_loaded"
             elif context is None:
                 errors["base"] = "record_removal_not_confirmed"
-            elif not user_input.get(CONF_ACTUATOR_REMOVED_OFF):
+            elif not user_input[CONF_ACTUATOR_REMOVED_OFF]:
                 errors["base"] = "record_confirmation_required"
             else:
                 try:

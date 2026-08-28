@@ -710,6 +710,10 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             HA,
         ),
         Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_opening_the_repair_is_not_an_acknowledgement",
+            HA,
+        ),
+        Evidence(
             "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_record_and_lineage_mismatch_refuse_visibly",
             HA,
         ),
