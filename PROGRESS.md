@@ -5861,3 +5861,193 @@ work.
   `458455ca7672419b5875cbaae55b9ba072ea4fc3` are untouched.
 - No `0.1.1` tag and no `0.1.1` release created.
 - HACS default: NOT SUBMITTED. Home Assistant Brands: NOT SUBMITTED.
+
+## Session Log — 2026-08-28 (0.1.1 tombstone recovery and global-blocker annunciation)
+
+### Investigation correction — the enable/AUTO path was never at fault
+
+- A newly created real zone (Zone 1) was enabled at 08:36:50 Brisbane with
+  moisture 15.0% against a 30.0% start threshold, VALID+FRESH, actuator
+  available and proven OFF, no zone fault, no zone blocker, budget available,
+  no minimum-interval restriction, no session — and stayed `Idle` for over 20
+  minutes. Read-only live capture proved the enable path executed **completely
+  and correctly**: `switch.zone_1_enabled` -> `async_set_enabled(True)` ->
+  `EnableRequested` -> **T47** (recorded at 22:36:50.948638Z) -> IDLE +
+  `ScheduleEvaluation` -> `async_evaluate()` -> `AutoEvaluate` -> every zone
+  AUTO guard passed -> `RequestSlot` -> queued. The slot-wait branch is
+  deliberately `transition_id=None` (§14 note), which is why no second
+  transition was logged and why the zone looked inert. **Pressing Check now
+  would not have helped.**
+- Execution stopped at `slot_manager.py` `_try_grant_locked`, `if
+  self._blockers: return`. The global set held exactly one key:
+  `(64958e85…, actuator_not_proven_off)` — the retained tombstone of the
+  2026-08-27 **synthetic** new-zone-default validation zone, whose MQTT
+  fixture `switch.moistureloop_new_zone_default_fixture` had been deliberately
+  deleted during cleanup. Its registry row `0b00c9c4…` was gone from all 2705
+  registry rows, so `_reconcile_retained_record` got `assessment=None` on every
+  pass, re-raised the blocker, and `safe_to_retire` could never become true.
+- Because I19 makes retained/tombstoned actuator uncertainty a **global** water
+  resource fence, that one record permanently prevented **every** zone from
+  being granted the slot. The `tombstone_actuator_missing` Repair was
+  `is_fixable=false` and its only stated remedy ("restore the original entity
+  identity") is unachievable once Home Assistant removes the registry row.
+  Fail-safe, but unrecoverable.
+- **Correction to the 0.1.0 install-verification entry**, which recorded
+  "global admission remains OPEN with grants enabled". That was true of
+  `admission_open` — which covers only `grants_enabled` plus reconciliation and
+  **excludes the blocker set** — but materially misleading: watering was
+  already bricked integration-wide at that moment.
+
+### Specification 0.1.0-spec.6 -> 0.1.0-spec.7
+
+- New **§26.4 Removed-actuator operator recovery**. I19 is **not** relaxed:
+  absence is still never treated as proof of OFF. An operator may instead
+  supply the OFF evidence no observation can ever produce again, for one exact
+  safety lineage, and only when the durable identity is definitively **ABSENT**
+  from the entity registry. Unavailable, unknown, offline, and conflicting
+  identities keep failing closed and never expose the flow (TB3 extended).
+- Ten preconditions, all revalidated inside the same serialized Store
+  transaction that persists the proof, so a change between rendering and
+  confirming fails closed.
+- §28.2 `problem` additionally reports an entry-wide water-resource block;
+  ordinary queueing behind a legitimately watering zone stays excluded.
+- §34 gains `tombstone_actuator_removed` (fixable). §42 records that 0.1.1
+  carries the presentation-only setup pass **and** this behavioural change,
+  documented separately.
+- Traceability **135 -> 141** normative IDs: new **TB13, TB14, TB15, TB16,
+  TB17, PI28**; I1-I37 unchanged at 37; T1-T59 unchanged at 59. T4/T45 gained a
+  `ReleaseSlot` action (a resource operation, not a new transition), fixing a
+  queued slot request that previously survived Disable.
+
+### Durable acknowledgement contract
+
+- `SafetyRecord.removed_actuator_ack` — instant of acknowledgement, the exact
+  `registry_entry_id` proven absent, and the last-known entity ID. It is
+  durable human evidence, deliberately **not** a recomputed status: reusing
+  `identity_status` would have let reconciliation clobber the operator's
+  assertion. A model invariant forbids it on an ACTIVE record, and `covers()`
+  is re-checked at every decision site so a mismatch fails closed rather than
+  raising inside reconciliation.
+- Runtime Store schema **2 -> 3**, purely additive (PI28), through one verified
+  transaction. Schema 2 is read via a version-matched read-only Store, exactly
+  as schema 1 is, because Home Assistant's own Store migration would rewrite
+  the payload with a new version header and unchanged inner data.
+
+### Second defect found while validating live: opening a Repair acknowledged it
+
+- Home Assistant seeds a fix flow with `data={"issue_id": ...}` and delivers
+  that seed to the flow's first step as `user_input`. Both acknowledgement
+  flows forwarded it to their confirm step, so **opening** a Repair counted as
+  a submission. Observed live: the new flow rendered
+  `record_confirmation_required` on first open (nothing was acknowledged — the
+  unchecked box refused — but a red error invites an operator to tick the box
+  to clear it). Worse, the pre-existing §26.3 `actuator_off_unconfirmed` flow
+  takes no confirmation field, so opening that CRITICAL "water may still be
+  flowing" Repair ran its acknowledgement immediately, skipping the human step;
+  its record preconditions still gated the outcome, so no unsafe record could
+  be acknowledged, but the operator was never asked. Both flows now enter
+  confirm unsubmitted, matching Core's `ConfirmRepairFlow`. §26.4/TB15 state
+  the rule and tests pin it for both flows.
+
+### Automated evidence
+
+- Ruff lint and format clean; `git diff --check` clean.
+- Pure (no HA): 451 passed; `state_machine.py` 100% branch.
+- HA 2025.9.0: 948 passed, 1 skipped (the documented pure-boundary node),
+  coverage 91.98%, state machine 100% branch.
+- HA 2026.8.3: 948 passed, 1 skipped, coverage 91.83%.
+- Traceability: 141/141 normative IDs, 37/37 invariants, 59/59 transitions.
+- New `tests/test_tombstone_recovery.py` (16 tests) reproduces the exact live
+  sequence through the real Add-zone flow and the real Enabled switch entity,
+  including the queued-request recovery, restart durability, the full refusal
+  matrix, and the additive schema upgrade. Run against tag `0.1.0`, 14 of its
+  15 then-existing tests fail; the headline one fails at
+  `assert 'off' == 'on'` for Problem while globally fenced. The single test
+  that passes on 0.1.0 is the manual-watering fence, which is a preservation
+  test.
+- Hosted CI: all six jobs GREEN on `cd31197…` and on `bb8fa28…`.
+
+### Live deployment and validation — NO WATER
+
+- Precheck: both real zones DISABLED, all commandable irrigation valves CLOSED,
+  no session, no slot owner, no possible-flow owner, no open accounting. One
+  stale queued request from the 0.1.0 build was present; it is gone after
+  restart on the new build.
+- Deployed `bb8fa28…` via the supported HACS exact-commit path (repo id
+  1343557518) and restarted normally. Live schema 2 -> 3 migration preserved
+  every safety fact byte-identical for both real zones: stable
+  record/lineage/history IDs, normalized settings, `config_fingerprint`,
+  actuator and sensor durable identities, `enabled`, daily accounting, and
+  `last_session_end_utc`.
+- **Annunciation, with no zone enabled:** before recovery
+  `binary_sensor.zone_1_problem` and `binary_sensor.zone_6_problem` were both
+  `on` with `water_resource_blocked: true` and
+  `water_resource_blocker_reasons: ["actuator_not_proven_off"]` and no internal
+  UUIDs; under 0.1.0 both reported `off`. After recovery both returned to
+  `off` with an empty reason list.
+- **Historical synthetic tombstone recovered.** The Repair became fixable and
+  mapped to the expected record: zone "MoistureLoop New-Zone Default
+  Validation", record `64958e85`, lineage `f7bc6da6`, registry `0b00c9c4`,
+  entity `switch.moistureloop_new_zone_default_fixture`, lifecycle
+  `delete_pending`, fault none, accounting "closed or not owned", registry row
+  proven absent, all real valves closed, and no physical hardware was ever
+  mapped to that synthetic MQTT fixture. Acknowledgement text used verbatim:
+  title "Removed irrigation actuator"; body "Home Assistant can no longer find
+  the actuator previously used by this removed zone
+  (switch.moistureloop_new_zone_default_fixture). MoistureLoop is blocking all
+  automatic and manual watering because it cannot prove that actuator is off. /
+  Only confirm this after checking the irrigation hardware. MoistureLoop will
+  then release this retired safety record so other zones can water. / This does
+  not start watering, and it does not change any zone settings or enabled
+  state."; confirmation "I confirm that this removed actuator is physically off
+  and can no longer deliver water"; help "Check the hardware first. This is a
+  safety confirmation, not a way to dismiss the message."
+- Result: durable proof stored (`acknowledged_at_utc`
+  2026-08-28T01:15:12.545244Z, `registry_entry_id`
+  `0b00c9c45b28691683ada5537e7cec9f`, matching the record identity), lifecycle
+  `delete_pending` -> `retired`, blocker cleared, identity incident cleared,
+  Repair cleared, global blocker set empty, no possible-flow owner, no open
+  accounting, no actuator command. **Durability proven by restart**: still
+  retired, still unblocked, 0 Repairs.
+
+### Nonphysical service-restoration test — NO REAL WATER
+
+- Built a synthetic MQTT switch fixture whose `command_topic` equals its
+  `state_topic`, so the broker echoes the command back as state and the fixture
+  self-confirms ON/OFF with no optimistic assumption and no hardware; plus a
+  synthetic MQTT moisture sensor at 10%.
+- Created a temporary zone through the real Add zone flow (start 30, pulse 30 s,
+  soak 60 s, max cycles 1). It was created **DISABLED**, confirming LC14 live.
+- Enabled ONLY the synthetic zone: it went straight to WATERING, the slot was
+  granted, the synthetic actuator received ON, ran the 30 s pulse, confirmed
+  OFF, recorded 30.0 s, and entered SOAKING. **Every real irrigation valve
+  stayed CLOSED throughout**, and both real zones stayed disabled.
+- Cleanup, deliberately not repeating the earlier mistake: disabled the zone,
+  proved OFF, then deleted the subentry **while the fixture still existed** —
+  its tombstone retired cleanly with `identity_status=registry_confirmed` and
+  no blocker. Only then were the MQTT fixtures removed. The next restart
+  re-raised `actuator_not_proven_off` for that record exactly as the contract
+  requires, but this time the Repair was **fixable**, and the new flow retired
+  it with durable proof. A final restart confirmed both tombstones remain
+  RETIRED with an empty global blocker set. **No new permanent deadlock.**
+
+### Final live state
+
+- All real zones DISABLED and untouched (Zone 6 and Zone 1); stable IDs,
+  settings, durable actuator/sensor identities, `enabled`, `last_session_end`,
+  and daily accounting all identical to the pre-deployment baseline. Daily
+  runtime today 0.0 s for both. **NO WATER** at any point.
+- No session, no slot owner, empty queue, no possible-flow owner, no open
+  accounting, empty global blocker set, 0 Repairs.
+- Real zones are NOT re-enabled; the user will do that manually.
+
+### Versioning and submissions
+
+- Public `0.1.0`, its tag, annotated tag object, GitHub Release, notes, and
+  target `458455ca7672419b5875cbaae55b9ba072ea4fc3` are UNTOUCHED and
+  immutable.
+- Development version is `0.1.1`; specification `0.1.0-spec.7`.
+- **No `0.1.1` tag and no `0.1.1` release created.** The setup-flow UX polish
+  (`3e730c1`) is already on `main`; this behavioural fix is documented
+  separately from it, and 0.1.1 is finalized only after that work is complete.
+- HACS default: NOT SUBMITTED. Home Assistant Brands: NOT SUBMITTED.
