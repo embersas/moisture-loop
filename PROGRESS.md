@@ -6051,3 +6051,180 @@ work.
   (`3e730c1`) is already on `main`; this behavioural fix is documented
   separately from it, and 0.1.1 is finalized only after that work is complete.
 - HACS default: NOT SUBMITTED. Home Assistant Brands: NOT SUBMITTED.
+
+## Session Log — 2026-08-28 (0.1.1 final integrated acceptance and release)
+
+**POST-RELEASE DOCUMENTATION ONLY.** This entry is written after tag `0.1.1`
+and its GitHub Release were published. It records evidence; it changes no
+behaviour and does not move the tag.
+
+### Starting state and integration
+
+- Ran entirely from `main`. `bugfix/enabled-zone-no-auto-water` (`3e730c1`) and
+  `fix/tombstone-recovery` (`9ad456b`) were confirmed ancestors of `main` with
+  zero commits ahead; neither was ever pushed to a remote, and neither was used
+  as a release source.
+- `git branch -a --no-merged main` and `git log --all --not main` were both
+  empty: no unmerged work existed anywhere.
+- Two unreachable SoilSync-era stash commits (`5223cec`, `156734c`, dated
+  2026-08-25, parented on the pre-rewrite `a81f1dc`, touching the removed
+  `custom_components/soilsync/` path) were inspected and left untouched — not
+  recovered, deleted, garbage-collected, or included. Their content is already
+  integrated: the same-UUID rename-follow work is present on `main`.
+
+### Documentation reconciliation — `b4d0509`
+
+Historical per-changeset records were left unchanged and truthful. Only stale
+current-state claims were corrected:
+
+- `SPECIFICATION.md` readiness verdict still reported the spec.6 figure as the
+  "current inventory". That figure is retained as spec.6 history, and the
+  current spec.7 inventory of **141** IDs, I1-I37, T1-T59 is now stated with
+  the §26.4 recovery, the additive Store schema 2 -> 3 migration, and the §28.2
+  entry-wide water-resource Problem report.
+- `SPECIFICATION.md` §42 now states that released `0.1.1` ships both changesets
+  together, so its authoritative release scope is `0.1.0-spec.7`, Store
+  schema 3, and 141 behavioural IDs, I1-I37, T1-T59.
+- `README.md` no longer implies public release publication is unmade; that
+  statement is now scoped to the centralized brand and HACS default-store
+  submissions, which remain unmade.
+
+### Final candidate
+
+- `FINAL_CANDIDATE_SHA = b4d05091473d4849e56d3f33428d3eea0087155d` on `main`,
+  clean worktree, `local = origin = github`.
+- The candidate's `custom_components/` tree (`42db1c7d`) is byte-identical to
+  the already-deployed `bb8fa28`, so **no redeployment or restart was needed
+  for pre-release validation**; only documentation differed.
+
+### Live pre-release validation — NO WATER
+
+- Both real zones (Zone 1, Zone 6) were `enabled=false` in DISABLED throughout.
+  Their enable state was never touched by this task.
+- All six commandable irrigation valves (`valve.zone1_4_zone_1..4`,
+  `valve.zone5_manual`, `valve.zone6_manual`) were CLOSED at every checkpoint.
+- No session, slot owner `null`, empty queue, no possible-flow owner, no open
+  accounting, **empty global blocker set**, 0 Repairs instance-wide.
+- Live rendered `config_subentries` translations matched the candidate exactly:
+  81/81 keys, zero mismatches, so UX acceptance was authoritative.
+- Add zone was opened and walked through all three steps (identity, thresholds
+  and timing, safety limits) and then **aborted without creating a zone**;
+  subentry count stayed 2 and entity count stayed 22. The
+  `{shared_sensor_warning}` placeholder resolved correctly — empty normally,
+  and to real warning text when a sensor already used by another zone was
+  selected.
+- Reconfigure was opened on Zone 6, every value prefilled exactly to the
+  persisted integer-seconds baseline, and the flow was **cancelled**. Store
+  revision stayed at 118, proving nothing was written.
+- Add-zone safety-limits copy states that new zones start disabled; the
+  reconfigure step instead states the zone keeps its current enabled state.
+  Verified programmatically: "start disabled" appears in the Add copy and not
+  in the reconfigure copy.
+- Durations remain integer seconds through unchanged `NumberSelector` bounds
+  with `%`, `s`, and `cycles` unit suffixes; no label repeats "(seconds)".
+- Repair wording and the confirmation contract were reviewed without
+  manufacturing a live Repair. The confirmation defaults to unchecked
+  (`vol.Required(..., default=False)`), and both acknowledgement flows enter
+  their confirm step unsubmitted.
+- Problem semantics confirmed in code and tests: ON for a keyed global
+  water-resource blocker, and never for ordinary slot ownership or queueing.
+  Live Problem was OK for both zones with an empty blocker set.
+
+### Final automated gates — all green on `b4d0509`
+
+- Ruff lint, `ruff format --check` (49 files), `git diff --check`: clean.
+- Pure suite: **451 passed, 0 skipped**, `homeassistant` absent.
+- `state_machine.py` **100.00% branch** in both the pure and HA environments.
+- HA 2025.9.0: **948 passed, 1 skipped**, overall branch coverage **91.98%**.
+- HA 2026.8.3: **948 passed, 1 skipped** (33m50s).
+- The only skip in each HA report is the documented boundary node
+  `TestPureBoundary::test_importing_models_does_not_import_homeassistant`,
+  which passes in the pure report. No new skip, no xfail, no failure, no error.
+- Executed traceability against both HA reports: **141/141 normative IDs,
+  37/37 invariants, 59/59 transitions**.
+- Store schema migration verified empirically: schema 1 -> 3 and schema 2 -> 3
+  both serialize to version 3.
+- Metadata, parity and privacy audits: every tracked JSON/YAML parses; manifest
+  `0.1.1`/`hub`/empty requirements; `hacs.json` minimum `2025.9.0`; no
+  `strings.json`; services/icons/translations key and field parity; every
+  entity translation key referenced in source; no virtualenv, cache, JUnit,
+  `.env`, `.storage`, token, or private LAN data in the tracked tree.
+- Local hassfest container preflight was **not** run: the Docker daemon was not
+  running. The required GitHub-hosted `hassfest` and `hacs` jobs were used as
+  the authoritative gate, as `DEVELOPMENT.md` specifies.
+- All six required hosted CI jobs passed on the exact final SHA in run
+  `33142606314` (`conclusion: success`, `head_sha b4d05091…`): lint, pure,
+  HA 2025.9.0, HA 2026.8.3, hassfest, HACS validation.
+
+### Remote parity note
+
+- The `origin` (Gitea) push initially failed: the bare-host stored credential
+  is the work identity `gbp-lukestanbury`, which this project must never use
+  and which did not authenticate. The push was completed with the repository
+  owner identity `luke` matching the remote path; the work account was never
+  used. `github` uses the `embersas` credential. Both remotes ended at
+  `b4d0509`.
+
+### Tag and release — PUBLISHED
+
+- Annotated tag `0.1.1` ("MoistureLoop 0.1.1"), tag object
+  `13f8f3a00696bd395cfb03c103b305cf80f52c3c`, verified locally to dereference
+  to `b4d05091…` **before** pushing. Pushed without force to both remotes;
+  both `ls-remote` results show the identical tag object and target.
+- GitHub Release created through the REST API authenticated as `embersas`
+  (the `gh` CLI is intentionally not used on this project). HTTP 201, release
+  id `378265374`, title "MoistureLoop 0.1.1", `draft=false`,
+  `prerelease=false`, author `embersas`, 0 uploaded assets (HACS consumes the
+  source archives at the tag). Public URL:
+  https://github.com/embersas/moisture-loop/releases/tag/0.1.1
+- Independent public verification: `releases/latest` is `0.1.1`; exactly two
+  releases exist; `git/ref/tags/0.1.1` -> annotated tag -> `b4d05091…`; the
+  tagged `manifest.json` reports `0.1.1`/`hub`/empty requirements; tagged
+  `hacs.json` is valid with minimum `2025.9.0`; tagged `SPECIFICATION.md` is
+  `0.1.0-spec.7`; tagged `const.py` has `STORE_SCHEMA_VERSION = 3`; zipball and
+  tarball both HTTP 200.
+- `0.1.0` reverified immutable: release id, title, draft/prerelease flags,
+  timestamps, target, and body hash all unchanged, and its tag object still
+  `5663b033…` -> `458455ca…`.
+
+### Published-release install verification — NO WATER
+
+- HACS custom repository `1343557518` refreshed: `available_version` moved from
+  `0.1.0` to `0.1.1` with no parsing, metadata, or missing-artifact error.
+- 0.1.1 was installed through the **normal published HACS release path**, not
+  an exact-commit development download, replacing the previously installed
+  development build `bb8fa28…`. Home Assistant was restarted and returned to
+  RUNNING in 35 s.
+- HACS then reported `installed_version 0.1.1`, `available_version 0.1.1`,
+  `pending_upgrade false`, status `installed`.
+- Post-install regression against the pre-install baseline: identical zone ids,
+  subentry ids, normalized settings, config fingerprints, actuator and sensor
+  durable identities, zone-history ids, safety-record and lineage ids,
+  `last_session_end`, and daily accounting. Both zones remain `enabled=false`
+  in DISABLED. The entity and device registry rows are byte-identical: 22
+  entities, 2 devices, every `unique_id` unchanged.
+- Store schema **3**, `initialized_ok`, stable generation id, previous run
+  clean, both retained tombstones preserved with their durable
+  `removed_actuator_ack` intact. No data loss. Store revision advanced 118 ->
+  126 through ordinary restart safety transactions.
+- Presentation after upgrade: all five Status states render, Needs water is
+  Yes/No, Check now, Stop watering, Minimum interval ends, Problem OK, and all
+  81 setup translation keys are unchanged from the pre-upgrade capture.
+- Final live safety: all six valves CLOSED, no session, slot owner `null`,
+  empty queue, no possible-flow owner, no open accounting, empty global blocker
+  set, 0 Repairs. Daily runtime 0.0 s for both zones. **NO WATER at any point.**
+- Zone 1 correctly reports `needs_water=on` (14% moisture, below its start
+  threshold) while remaining DISABLED and dry — the intended fail-safe result.
+  Real zones were NOT re-enabled; that remains the user's decision.
+
+### Status
+
+- Released `0.1.1`; tag and GitHub Release published and publicly verified;
+  specification `0.1.0-spec.7`; Store schema 3; traceability 141/141, I1-I37,
+  T1-T59.
+- Tag `0.1.1` is immutable at `b4d05091473d4849e56d3f33428d3eea0087155d`. This
+  closeout entry is a normal forward commit and does not move it.
+- `0.1.0`, its tag, annotated tag object, GitHub Release, notes, and target
+  `458455ca7672419b5875cbaae55b9ba072ea4fc3` remain UNTOUCHED and immutable.
+- HACS default: **NOT SUBMITTED** — readiness verified, submission is a
+  separate authorized task. Home Assistant Brands: **NOT SUBMITTED**.
