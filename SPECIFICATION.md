@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | Status | Draft for review - implementation source of truth |
-| Spec version | `0.1.0-spec.6` |
+| Spec version | `0.1.0-spec.7` |
 | Date | 2026-08-27 |
 | Integration name | MoistureLoop |
 | Domain | `moisture_loop` |
@@ -17,6 +17,8 @@
 > **Revision note (nomenclature only, 2026-08-27):** before the first 0.1.0 release the SoilSync product identity was abandoned because a materially overlapping agricultural/software business already uses that name. The canonical identity returned to **MoistureLoop**, domain `moisture_loop`, integration directory `custom_components/moisture_loop/`, public repository `embersas/moisture-loop`. Current identifiers in this document (actions `moisture_loop.*`, events `moisture_loop_*`, Store key prefix `moisture_loop.<entry_id>`, Repairs/translation domain, brand path) follow that identity. Controller behaviour, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, the spec.5 Stage-1 shutdown lifecycle rules, `SHUTDOWN_OFF_BUDGET_S`, and the B1/B2 physical evidence recorded under the then-current SoilSync name are unchanged; the spec version stays `0.1.0-spec.5`, following the precedent that nomenclature-only edits do not increment it.
 >
 > **Corrective revision note (metadata/UI only, 2026-08-27):** before the first 0.1.0 release, live Home Assistant UI validation showed that `integration_type: helper` incorrectly placed the one-controller/multi-zone integration under **Helpers**, where selecting its controller attempted an unsupported helper options flow. The manifest classification is corrected to `hub`: one controller config entry manages multiple logical zone subentries/devices and orchestrates their selected sensor and actuator services. This changes only Home Assistant metadata/UI placement. Controller semantics, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, safety and watering behaviour are unchanged, so the version remains `0.1.0-spec.5` under the existing non-behavioural correction precedent.
+>
+> **Revision note (spec.7, removed-actuator recovery, 2026-08-28):** spec.7 is a normative revision that closes a genuine safety-architecture gap found in live operation of the published 0.1.0. It does **not** relax I19. A retained/tombstoned record whose durable actuator entity-registry row has been **deleted** can never again produce an actuator assessment, so `_reconcile_retained_record` re-raised `actuator_not_proven_off` on every reconciliation and `safe_to_retire` could never become true. Because that keyed blocker is the entry-wide water-resource fence, one unresolvable retained record permanently prevented **every** configured zone from being granted the watering slot, while §34's `tombstone_actuator_missing` Repair was `is_fixable = false` and offered only "restore the original entity identity" — unachievable once Home Assistant has removed the registry row. The result was a fail-safe but unrecoverable integration-wide no-water state. spec.7 therefore adds an explicit operator escape hatch (§26.4, TB13-TB17, PI28, I19 extended): the system still MUST NOT infer that an absent registry row means the actuator is off; instead a human may supply that missing OFF proof for one exact safety lineage, and only when the durable identity is definitively **ABSENT** — never merely unavailable, unknown, offline, or conflicting, all of which continue to fail closed. The proof is durable, is bound to the exact `registry_entry_id` it was given for, survives restart/reload/reconciliation, and is revoked automatically if that identity ever returns or is replaced. Runtime Store schema advances 2 -> 3 by a purely additive, verified migration (PI28). §28.2 Problem additionally reports an entry-wide water-resource block, because a healthy zone that can never be granted the slot previously reported `OK`; ordinary slot queueing behind a legitimately watering zone remains excluded. The five controller states and T1-T59 are unchanged; the two DISABLED transitions T4/T45 additionally release the zone's own queued slot request, which is a resource operation, not a new transition.
 >
 > **Revision note (setup presentation only, 2026-08-28):** the published 0.1.0 Add zone and Reconfigure zone screens were technically correct but exposed controller-oriented terminology and raw seconds, so a normal Home Assistant user had to read the specification to configure a zone. Release 0.1.1 is a presentation-only setup-experience pass. It adds native Home Assistant `data_description` field help to every zone subentry step, rewrites the step descriptions in plain language, renames user-visible labels only (`Maximum session runtime (seconds)` -> `Maximum watering per session`, `Maximum daily runtime (seconds)` -> `Maximum watering per day`, `Sensor report maximum age (seconds)` -> `Maximum sensor age`, `Actuator confirmation timeout (seconds)` -> `Valve confirmation timeout`, `Manual watering maximum duration (seconds)` -> `Maximum manual watering duration`, `Minimum automatic session interval (seconds)` -> `Minimum time between automatic sessions`, `Irrigation actuator (switch or valve)` -> `Watering switch or valve`), drops unit text already rendered by the selector suffix, and states each duration's allowed range in both seconds and human units. The `LC14` new-zone disabled guidance is stated on the **Add zone** safety-limits step only; the reconfigure step instead states that the zone keeps its current enabled state. `selector.DurationSelector` was evaluated on both supported harnesses and deliberately **not** adopted: it returns an unnormalized structured duration dict rather than seconds, rejects an integer default, supports no `min`/`max`, and its configuration schema differs across the supported floor and current pins (`enable_second` is rejected on 2025.9.0; `allow_negative` defaults differ), so adopting it would replace field-attributed range errors with an unattributed backend refusal. Durations remain integer seconds through unchanged `NumberSelector` bounds. No persisted key, default, bound, comparison, guard, or transition changes; the five controller states, T1-T59, I1-I37, LC1-LC14, the 135 normative behavioural IDs, and Store schema 2 are unchanged, so the spec version remains `0.1.0-spec.6` under the existing non-behavioural presentation-correction precedent.
 >
@@ -1628,6 +1630,31 @@ The fix flow must display the tombstone's stored name, durable actuator registry
 
 For `ACTUATOR_OFF_TIMEOUT`, the flow cannot acknowledge until terminal OFF has been observed for the exact durable actuator identity after the fault. OFF proof releases only the matching blocker and closes matching open accounting; acknowledgement then clears only that same `safety_record_id`'s fault/Repair and never another record. Missing/conflicting identity, an unresolved blocker, or open accounting keeps the flow blocked and explains the required repair. If the same actuator was deleted/re-added, the flow re-resolves the unchanged record ID whether its lifecycle is now ACTIVE, DELETE_PENDING, or RETIRED. If actuator A was replaced by B, A's Repair still targets A and B's zone device/action cannot clear or acknowledge it.
 
+### 26.4 Removed-actuator operator recovery
+
+A retained record whose durable actuator entity-registry row still exists but is unavailable, unknown, offline, or conflicting keeps failing closed exactly as in §26.3: no acknowledgement path is offered, and its keyed blockers stand.
+
+A retained record whose durable actuator entity-registry row is **definitively absent** is different in kind: no future observation can ever resolve it, so the conservative fence would stand forever and, being the entry-wide water-resource fence of I19, would permanently prevent every configured zone from watering. For exactly that condition, and only that condition, MoistureLoop offers one supported operator certification.
+
+Absence is proved by resolving the record's own durable `registry_entry_id` against the entity registry and finding no row. A missing state object, an `unavailable`/`unknown` state, a disabled or offline device, or a failed lookup is **not** absence and MUST NOT expose this flow.
+
+The certification is offered only when **all** of the following hold, and every one is revalidated inside the same serialized Store transaction that persists it, so a change between rendering and confirming fails closed:
+
+1. the exact `safety_record_id` still exists and its `safety_lineage_id` still matches;
+2. the record's lifecycle is retained (`DELETE_PENDING` or `RETIRED`), never `ACTIVE`;
+3. the record's durable actuator registry identity is absent as defined above, and its `identity_status` is `MISSING`;
+4. no other `ACTIVE` record holds the same durable actuator identity;
+5. `possible_flow_owner` is null;
+6. no open accounting and no session references the record's zone history;
+7. the record carries no unresolved actuator fault and requires no §26.3 acknowledgement;
+8. no OFF operation for the record is still pending.
+
+The flow presents the removed actuator's last-known entity ID and the consequence in plain language, and requires an explicit, **unchecked-by-default** confirmation control asserting that the removed actuator is physically off and can no longer deliver water. It is a safety assertion, not a dismissal, and MUST NOT be presented as "dismiss" or "ignore".
+
+On success the certification is persisted as durable evidence on that one record: the instant of acknowledgement, and the exact `registry_entry_id` proven absent. It is written and read-back verified before any resource admission changes, then normal reconciliation — not the Repair frontend — recomputes blockers and lifecycle. The record's retained history and lineage are preserved; only its active safety fence is released. The result is that the record reaches `RETIRED`, its `actuator_not_proven_off` clears, its identity incident and Repair clear, and the global slot becomes grantable again if no other blocker exists. An already-queued eligible zone resumes from the ordinary blocker-removal grant retry without a new moisture report, a forced evaluation, or a disable/enable cycle.
+
+The certification applies only while it still covers the record's current durable identity. If that identity later reappears or is replaced, the stored proof no longer covers it, the conservative blocker returns, and the record fails closed again. Acknowledgement never commands an actuator, never starts watering, never clears another record's key, and never changes any zone's settings or enabled state.
+
 ---
 
 ## 27. Safety Invariants
@@ -1652,7 +1679,7 @@ Each invariant is formal and testable.
 - **I16 — One OFF:** every integration-owned WATERING exit attempts exactly one idempotent OFF sequence; cooperative termination is the normal control path.
 - **I17 — OFF proof:** unavailable, unknown, transitional, and nonzero-position actuator states are never accepted as OFF.
 - **I18 — Slot safety:** no new slot grant occurs while any integration-owned OFF is unconfirmed or startup/configuration reconciliation is incomplete, dirty, superseded, or failed.
-- **I19 — Physical-flow serialization:** MoistureLoop never commands a configured zone ON while any other configured or tombstoned actuator is observed or conservatively believed to be flowing, regardless of who initiated that flow; blockers remain keyed to their one owning `safety_record_id`, survive same-record reactivation or A -> B replacement without re-keying, and cannot clear one another.
+- **I19 — Physical-flow serialization:** MoistureLoop never commands a configured zone ON while any other configured or tombstoned actuator is observed or conservatively believed to be flowing, regardless of who initiated that flow; blockers remain keyed to their one owning `safety_record_id`, survive same-record reactivation or A -> B replacement without re-keying, and cannot clear one another. The single exception is the §26.4 operator certification: for a retained record whose durable actuator registry identity is definitively ABSENT, an explicit human assertion that the removed actuator is physically off and incapable of flow supplies the OFF evidence that no observation can ever produce again. It is never inferred from absence, never offered for an unavailable/unknown/conflicting identity, resolves only the keys a proven-OFF observation would have resolved for that one lineage, and lapses automatically if the exact identity reappears or is replaced.
 - **I20 — Disabled:** DISABLED never starts integration watering, and Disable terminates an active session. The enabled/disabled operational state is owned by the logical zone's `zone_runtime`, survives delete/re-add and A -> B replacement unchanged for a continuing zone, and is never overridden by a retained record's historical `enabled` value. A genuinely new logical zone is created with `enabled = false` in DISABLED as part of its verified creation transaction, so it is never watering-eligible before an explicit user enable and no creation-time eligible interval exists; every existing zone's persisted `enabled` value is preserved rather than replaced by that fresh-zone default (§24.4 **Add**).
 - **I21 — Serialization:** at most one zone is integration-commanded ON at a time.
 - **I22 — Single session/reason:** at most one session task exists per zone and each created session records exactly one final reason.
@@ -1692,8 +1719,10 @@ All entities for an `ACTIVE` configured zone use stable `{subentry_id}_{key}` un
 | Key | Semantics |
 |---|---|
 | `watering` | ON while integration believes this configured actuator may be flowing, including integration WATERING, respected external ON, and OFF-unconfirmed accounting |
-| `problem` | ON whenever active or retained fault metadata exists, including MANUAL WATERING from a sensor fault |
+| `problem` | ON whenever active or retained fault metadata exists, including MANUAL WATERING from a sensor fault, **or** while any keyed water-resource blocker withholds the shared watering slot from every configured zone (I19). Ordinary serialization is excluded: waiting behind another legitimately watering zone is normal operation and never raises it |
 | `needs_water` | ON only when latest observation is VALID+fresh and `< start_threshold`; entity unavailable when invalid, unavailable, stale, or absent |
+
+`problem` reports the entry-wide fence because a zone can be entirely healthy — enabled or not, dry, fresh, proven-off, unblocked in its own record — and still be permanently unable to obtain watering authority because of a hazard owned by a different record. Reporting `OK` in that state hides an integration-wide safety condition from the only screen a normal user looks at. Its attributes expose the distinct blocker reasons, never internal record identifiers.
 
 `needs_water` is informational. During SOAKING, a pre-deadline report may update it but cannot authorize continuation. During MANUAL with a bad sensor it is unavailable, not falsely OFF. If the sensor recovers during manual, it may show the current informational value while the retained fault remains until terminal processing.
 
@@ -1802,7 +1831,8 @@ Diagnostics explicitly identify measured versus estimated runtime. Recorder avai
 |---|---|---|
 | `zone_sensor_missing` | `IssueSeverity.ERROR` | configured sensor missing; zone currently broken |
 | `zone_actuator_missing` | `IssueSeverity.ERROR` | configured actuator missing |
-| `tombstone_actuator_missing` | `IssueSeverity.ERROR` | a retained tombstone actuator cannot be resolved by its durable identity; exact record shown |
+| `tombstone_actuator_missing` | `IssueSeverity.ERROR` | a retained tombstone actuator cannot be resolved by its durable identity; exact record shown; not fixable |
+| `tombstone_actuator_removed` | `IssueSeverity.ERROR` | the same exact record where the durable registry identity is definitively ABSENT and every §26.4 precondition holds; fixable, and its fix flow is the §26.4 operator certification |
 | `actuator_identity_conflict` | `IssueSeverity.ERROR` | registry UUID/entity-ID/current/retained/same-record reactivation/A -> B candidates conflict; exact records shown and no automatic merge/clear/ON |
 | `configuration_reconciliation_failed` | `IssueSeverity.ERROR` | listener/worker/supersession/reload application failed and entry admission remains closed |
 | `actuator_off_unconfirmed` | `IssueSeverity.CRITICAL` | configured or tombstoned integration-owned possible uncontrolled water flow; true panic; fix flow follows §26.3 |
@@ -2254,6 +2284,7 @@ Store initialization, crash, and persistence tests:
 - **PI25:** last-known entity-ID reuse by a different registry UUID raises identity conflict; the new entity's OFF does not prove the tombstone OFF and neither record is erased/merged.
 - **PI26:** delete/re-add under a new subentry with the exact durable actuator UUID reuses the same `safety_record_id`, `safety_lineage_id`, zone-history reference, blockers, unacknowledged faults, open accounting, runtime, interval, and history; only subentry audit/current fields and verified applied shadow change before ACTIVE eligibility.
 - **PI27:** RETIRED tombstones remain durable across repeated saves/reloads/restarts; no v0.1 timer or compaction path purges them.
+- **PI28:** a verified schema-2 payload upgrades to schema 3 additively inside one complete verified transaction: every safety record gains `removed_actuator_ack` as `null` and no other history, identity, blocker, fault, accounting, or run value is altered or reinterpreted; schema 2 is read through a version-matched read-only Store and a future schema still fails closed.
 
 Manual/fault tests:
 
@@ -2323,7 +2354,7 @@ Tombstone/blocker/identity tests:
 
 - **TB1:** deleting `ACTUATOR_OFF_TIMEOUT` preserves identity, fault, CRITICAL Repair, `integration_off_unconfirmed`, and open accounting; later exact-identity OFF clears only the blocker/accounting, not acknowledgement.
 - **TB2:** deleting external flow retains `external_flow` and its listener without counter-commanding solely because of deletion.
-- **TB3:** deleting with an unavailable/unknown actuator retains `actuator_not_proven_off` or stronger integration evidence and fails closed.
+- **TB3:** deleting with an unavailable/unknown actuator retains `actuator_not_proven_off` or stronger integration evidence and fails closed. An unavailable or unknown actuator whose registry row still exists is explicitly NOT the §26.4 absent-identity condition and never exposes the operator certification.
 - **TB4:** multiple tombstones and multiple reasons remain independently keyed; one OFF/ack cannot clear another key, and exact delete/re-add keeps its original keys on the same record without transfer or re-key.
 - **TB5:** crash after Core mapping mutation but before explicit tombstone persistence reconstructs the Store-only implicit tombstone and forbids grants.
 - **TB6:** startup union includes current-config-only, matching config+Store, and Store-only records and does not enable grants until every member is reconciled.
@@ -2333,6 +2364,11 @@ Tombstone/blocker/identity tests:
 - **TB10:** delete/re-add same-record reactivation follows PI26, including unchanged record/lineage IDs, append-only previous subentry metadata, unchanged blocker keys, same-day budgets/minimum interval, and unresolved fault/accounting refusal.
 - **TB11:** RETIRED retention follows PI27; future purge prerequisites are diagnosable but no automatic retention period exists.
 - **TB12:** the entry-level Repair flow targets the exact safety record without a zone device, refuses stale/cross-record acknowledgement, and refuses `ACTUATOR_OFF_TIMEOUT` until exact-identity OFF proof.
+- **TB13:** a retained record whose durable actuator registry row is definitively absent, with every §26.4 precondition satisfied, raises a fixable `tombstone_actuator_removed` Repair; an unavailable, unknown, conflicting, reappeared, or `ACTIVE`-held identity, an open flow owner, open accounting, a referencing session, a pending OFF operation, or an unresolved actuator fault each keep it unfixable and fail closed.
+- **TB14:** a completed §26.4 certification persists durable operator-off evidence bound to the exact absent `registry_entry_id`; it survives reload and restart without re-raising `actuator_not_proven_off` or the Repair while the identity stays absent, and it lapses automatically — restoring the conservative blocker — if that exact identity reappears or is replaced.
+- **TB15:** certification requires an explicit confirmation control that is never checked by default, refuses record/lineage mismatch and stale preconditions visibly at submit time, commands no actuator, starts no watering, changes no zone's settings or enabled state, releases only the certified lineage's keys, and leaves every other blocker effective.
+- **TB16:** when the final water-resource blocker clears, an already-queued eligible zone is reconsidered and granted through the ordinary SlotManager retry without a forced evaluation, a new moisture report, or a disable/enable cycle; a zone disabled while queued withdraws its own request and is never handed the slot.
+- **TB17:** while any keyed water-resource blocker withholds the shared slot from every configured zone, each zone's `problem` binary sensor is ON and exposes the distinct blocker reasons without internal record identifiers; ordinary slot ownership or queueing behind a legitimately watering zone never raises it.
 
 Actuator-replacement tests:
 
@@ -2383,9 +2419,9 @@ Minimum-platform tests:
 | I7-I8 | MF1-MF5, PI9-PI10 |
 | I9-I12 | whole-fit arithmetic, MF2, PI12-PI17, ND11-ND12 |
 | I13-I15 | PI11-PI20, LC3-LC4, ND8-ND12, write-order fault injection |
-| I16-I19 | AC1-AC4, ER1-ER12, ND3-ND17, TB1-TB4, AR1-AR4, AR9-AR10, RC1-RC8, SR11 |
+| I16-I19 | AC1-AC4, ER1-ER12, ND3-ND17, TB1-TB4, TB13-TB17, AR1-AR4, AR9-AR10, RC1-RC8, SR11 |
 | I20-I23 | AC1-AC4, ER1-ER8, ER12, LC14, ND3-ND7, ND17, TB10, AR7-AR8, AR11-AR12, disable/slot/session/interval table tests |
-| I24, I29 | PI1-PI11, PI21-PI23, TB7 |
+| I24, I29 | PI1-PI11, PI21-PI23, PI28, TB7 |
 | I25-I26 | LC1-LC4, LC13, AR1-AR6, AR11-AR16, ND1-ND2, RC5-RC8, HA1 |
 | I27 | entity/state-machine isolation tests |
 | I28 | dependency/network audit |
@@ -2395,7 +2431,7 @@ Minimum-platform tests:
 | I34 | TB5-TB7, RC5-RC6, PI21-PI23 |
 | I35 | PI24-PI26, TB8-TB10, TB12, AR1-AR17 |
 | I36 | ND14-ND15, RC7-RC12 |
-| I37 | PI21-PI27, TB1, TB4, TB11-TB12, AR1-AR5, RC9-RC12 |
+| I37 | PI21-PI28, TB1, TB4, TB11-TB14, AR1-AR5, RC9-RC12 |
 
 All **37 invariants** map to at least one named test group. The pure five-state `state_machine.py` target remains 100% branch coverage; overall target remains at least 90%. All automated time is deterministic and no normative test uses real sleeps.
 
@@ -2456,7 +2492,8 @@ HACS packaging is orthogonal to state-machine safety.
 ## 42. Versioning and Migration
 
 - First integration release: `0.1.0`; custom manifest version matches release.
-- `0.1.1` is a presentation-only patch release: setup-flow labels, field help, and step copy only. No persisted key, default, bound, guard, transition, or Store schema changed, so the specification stays `0.1.0-spec.6`.
+- `0.1.1` combines two independent changes. The setup-flow pass is presentation only: labels, field help, and step copy, with no persisted key, default, bound, guard, or transition change. The removed-actuator recovery of §26.4 is behavioural and advances the specification to `0.1.0-spec.7`; it is documented and reviewed separately from the presentation work.
+- Runtime Store schema 3 adds `safety_records[*].removed_actuator_ack` and nothing else. A verified schema-2 payload upgrades additively with that field set to `null`, so no existing history, identity, blocker, fault, or accounting value is reinterpreted (PI28). Schema 2 is read through a version-matched read-only Store and rewritten only by one complete verified MoistureLoop transaction, exactly as schema 1 is.
 - Config entry schema begins at version 1/minor 1 and uses `async_migrate_entry` for later changes.
 - Config entry schema 1 includes immutable runtime Store generation identity and the initialized flag from first creation.
 - Runtime Store schema 1 is the implemented spec.3 source format. Spec.4 schema 2 adds durable actuator/sensor identity, immutable applied shadows, runtime lifecycle/tombstones, one canonical mutable record per durable actuator lineage, append-only subentry audit metadata, exact blocker/evidence ownership, independent zone-history contribution continuity, and a `zone_runtime` logical-zone operational authority inside `zone_histories` (safety records keep only actuator-scoped safety state) while preserving all schema-1 runtime/fault/accounting/session history under its §23.2 owning authority.

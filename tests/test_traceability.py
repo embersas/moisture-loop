@@ -21,13 +21,13 @@ MANIFEST = Path(__file__).with_name("traceability_manifest.py")
 
 EXPECTED_GROUPS = {
     "SR": 13,
-    "PI": 27,
+    "PI": 28,
     "MF": 5,
     "AC": 4,
     "ER": 12,
     "LC": 14,
     "ND": 17,
-    "TB": 12,
+    "TB": 17,
     "AR": 17,
     "RC": 12,
     "HA": 2,
@@ -98,11 +98,11 @@ def node_exists(node: str) -> bool:
 
 
 class TestNormativeInventory:
-    def test_spec_has_exactly_135_unique_well_formed_ids(self) -> None:
+    def test_spec_has_exactly_141_unique_well_formed_ids(self) -> None:
         items = normative_spec_items()
         ids = [item[0] for item in items]
-        assert len(ids) == 135
-        assert len(set(ids)) == 135
+        assert len(ids) == 141
+        assert len(set(ids)) == 141
         expected = {
             f"{prefix}{number}"
             for prefix, end in EXPECTED_GROUPS.items()

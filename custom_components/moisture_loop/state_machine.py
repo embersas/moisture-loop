@@ -250,10 +250,13 @@ def _decide_idle(inp: TransitionInput) -> Decision:
     if isinstance(event, ManualStartRequested):
         return _manual_start(inp, event, row="T3")
     if isinstance(event, DisableRequested):
+        # Withdraw any queued/held watering slot: a disabled zone must not
+        # keep a live claim on the entry-wide resource, and a later grant
+        # offered to it would otherwise be pure churn (§21, I20).
         return Decision(  # T4
             transition_id="T4",
             new_state=ControllerState.DISABLED,
-            actions=(PersistState("disabled"),),
+            actions=(PersistState("disabled"), ReleaseSlot()),
         )
     if isinstance(event, ConfigurationInvalid):
         return _configuration_invalid(inp, "T5")
@@ -1343,7 +1346,7 @@ def _decide_fault(inp: TransitionInput) -> Decision:
         return Decision(  # T45: retain fault metadata
             transition_id="T45",
             new_state=ControllerState.DISABLED,
-            actions=(PersistState("disabled"),),
+            actions=(PersistState("disabled"), ReleaseSlot()),
         )
     if isinstance(event, ConfigurationInvalid):
         if fault is FaultCode.CONFIGURATION_INVALID:

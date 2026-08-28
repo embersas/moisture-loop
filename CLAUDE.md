@@ -5,8 +5,8 @@ This file provides repository guidance to Claude Code and other coding agents.
 ## Project state
 
 MoistureLoop v0.1 is implemented under `custom_components/moisture_loop/`.
-`SPECIFICATION.md` version `0.1.0-spec.6` is the authoritative behavioural and
-safety contract. Preserve the Stage 7 traceability evidence: 135 normative
+`SPECIFICATION.md` version `0.1.0-spec.7` is the authoritative behavioural and
+safety contract. Preserve the Stage 7 traceability evidence: 141 normative
 behavioural IDs, invariants I1-I37, and transitions T1-T59.
 
 Home Assistant 2025.9.0 or later is supported. The mandatory minimum and the
@@ -22,8 +22,12 @@ lint, hassfest, and HACS commands.
 - Configuration reconciliation owns add/reconfigure/delete runtime safety.
   Native deletion takes effect immediately and may retain Store tombstones.
 - Every commanded ON remains subject to the final live authorization fence.
-- Runtime safety uses schema 2. Schema 1 exists only as verified migration
-  input and is not current runtime authority.
+- Runtime safety uses schema 3. Schemas 1 and 2 exist only as verified
+  migration input and are not current runtime authority.
+- A retained record whose durable actuator registry row is definitively ABSENT
+  may be released only by the §26.4 operator certification, which is durable,
+  bound to that exact registry ID, and never inferred. Unavailable, unknown,
+  or conflicting identities keep failing closed.
 - The integration is local-only and must not depend on Recorder, cloud
   services, telemetry, API keys, outbound HTTP, or direct `.storage` file
   manipulation.

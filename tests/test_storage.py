@@ -10,6 +10,9 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from custom_components.moisture_loop.const import (
+    STORE_SCHEMA_VERSION,
+)
 from custom_components.moisture_loop.models import (
     AccountingContribution,
     ActuatorIdentity,
@@ -209,9 +212,9 @@ def seed_schema1(hass_storage: dict, data: Schema1StoreData) -> None:
     }
 
 
-def seed_schema2(hass_storage: dict, data: StoreData) -> None:
+def seed_current_schema(hass_storage: dict, data: StoreData) -> None:
     hass_storage[KEY] = {
-        "version": 2,
+        "version": STORE_SCHEMA_VERSION,
         "minor_version": 1,
         "key": KEY,
         "data": store_data_to_dict(data),
@@ -255,19 +258,19 @@ class TestInitializationAndLoad:
         classification, data = await store.async_classify_setup(False)
         assert (classification, data) == (SetupClassification.FIRST_INSTALL, None)
         created = await store.async_first_initialize()
-        assert created.version == 2
+        assert created.version == STORE_SCHEMA_VERSION
         assert created.store_revision == 1
         assert created.generation_id == GENERATION
         assert created.run == RunIds(None, None)
         assert created.safety_records == {}
         assert created.zone_histories == {}
-        assert hass_storage[KEY]["version"] == 2
+        assert hass_storage[KEY]["version"] == STORE_SCHEMA_VERSION
 
     async def test_valid_schema2_load_is_idempotent_not_remigrated(
         self, hass, hass_storage
     ) -> None:
         expected = schema2_snapshot(revision=12)
-        seed_schema2(hass_storage, expected)
+        seed_current_schema(hass_storage, expected)
         for initialized in (False, True):
             store = make_store(hass)
             classification, loaded = await store.async_classify_setup(initialized)
@@ -299,21 +302,31 @@ class TestInitializationAndLoad:
         assert (classification, data) == (SetupClassification.INTEGRITY_LOSS, None)
 
     async def test_generation_mismatch_is_never_first_install(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot(generation="different"))
+        seed_current_schema(hass_storage, schema2_snapshot(generation="different"))
         for initialized in (False, True):
             classification, _ = await make_store(hass).async_classify_setup(initialized)
             assert classification is SetupClassification.INTEGRITY_LOSS
 
     async def test_future_and_malformed_schema2_fail_closed(self, hass, hass_storage) -> None:
         payload = store_data_to_dict(schema2_snapshot())
-        payload["version"] = 3
-        hass_storage[KEY] = {"version": 2, "minor_version": 1, "key": KEY, "data": payload}
+        payload["version"] = STORE_SCHEMA_VERSION + 1
+        hass_storage[KEY] = {
+            "version": STORE_SCHEMA_VERSION,
+            "minor_version": 1,
+            "key": KEY,
+            "data": payload,
+        }
         classification, _ = await make_store(hass).async_classify_setup(True)
         assert classification is SetupClassification.INTEGRITY_LOSS
 
         payload = store_data_to_dict(schema2_snapshot())
         payload["safety_records"]["zone-a"].pop("zone_history_id")
-        hass_storage[KEY] = {"version": 2, "minor_version": 1, "key": KEY, "data": payload}
+        hass_storage[KEY] = {
+            "version": STORE_SCHEMA_VERSION,
+            "minor_version": 1,
+            "key": KEY,
+            "data": payload,
+        }
         classification, _ = await make_store(hass).async_classify_setup(True)
         assert classification is SetupClassification.INTEGRITY_LOSS
 
@@ -327,7 +340,7 @@ class TestVerifiedMigration:
             True, {"zone-a": context("zone-a")}
         )
         assert classification is SetupClassification.INITIALIZED_OK
-        assert migrated.version == 2
+        assert migrated.version == STORE_SCHEMA_VERSION
         assert migrated.store_revision == legacy.store_revision + 1
         record = migrated.safety_records["zone-a"]
         history = migrated.zone_histories[record.zone_history_id]
@@ -335,7 +348,7 @@ class TestVerifiedMigration:
         assert history.zone_runtime.session.owner_safety_record_id == "zone-a"
         assert history.zone_runtime.session.context == legacy.zones["zone-a"].session
         assert history.daily.runtime_s == legacy.zones["zone-a"].daily.runtime_s
-        assert hass_storage[KEY]["version"] == 2
+        assert hass_storage[KEY]["version"] == STORE_SCHEMA_VERSION
 
         fresh = make_store(hass)
         _, reloaded = await fresh.async_classify_setup(True)
@@ -415,7 +428,7 @@ class TestVerifiedMigration:
         async def tamper(payload) -> None:
             payload = {**payload, "store_revision": 999}
             hass_storage[KEY] = {
-                "version": 2,
+                "version": STORE_SCHEMA_VERSION,
                 "minor_version": 1,
                 "key": KEY,
                 "data": payload,
@@ -459,7 +472,7 @@ class TestVerifiedWritesAndRuns:
 
     async def test_pi11_failed_write_keeps_previous_revision(self, hass, hass_storage) -> None:
         previous = schema2_snapshot(revision=9)
-        seed_schema2(hass_storage, previous)
+        seed_current_schema(hass_storage, previous)
         store = make_store(hass)
         await store.async_classify_setup(True)
         store._store.async_save = async_raise(OSError("interrupted"))  # type: ignore[method-assign]
@@ -477,10 +490,10 @@ class TestVerifiedWritesAndRuns:
 
         async def garble(_payload) -> None:
             hass_storage[KEY] = {
-                "version": 2,
+                "version": STORE_SCHEMA_VERSION,
                 "minor_version": 1,
                 "key": KEY,
-                "data": {"version": 2, "nonsense": True},
+                "data": {"version": STORE_SCHEMA_VERSION, "nonsense": True},
             }
 
         store._store.async_save = garble  # type: ignore[method-assign]
@@ -492,7 +505,7 @@ class TestVerifiedWritesAndRuns:
         async def wrong_generation(payload) -> None:
             tampered = {**payload, "generation_id": "someone-else"}
             hass_storage[KEY] = {
-                "version": 2,
+                "version": STORE_SCHEMA_VERSION,
                 "minor_version": 1,
                 "key": KEY,
                 "data": tampered,
@@ -504,7 +517,7 @@ class TestVerifiedWritesAndRuns:
 
     async def test_readback_payload_mismatch_prevents_adoption(self, hass, hass_storage) -> None:
         previous = schema2_snapshot(revision=9)
-        seed_schema2(hass_storage, previous)
+        seed_current_schema(hass_storage, previous)
         store = make_store(hass)
         await store.async_classify_setup(True)
 
@@ -513,7 +526,7 @@ class TestVerifiedWritesAndRuns:
             history_id = altered["safety_records"]["zone-a"]["zone_history_id"]
             altered["zone_histories"][history_id]["zone_runtime"]["enabled"] = False
             hass_storage[KEY] = {
-                "version": 2,
+                "version": STORE_SCHEMA_VERSION,
                 "minor_version": 1,
                 "key": KEY,
                 "data": altered,
@@ -527,7 +540,7 @@ class TestVerifiedWritesAndRuns:
         assert store.data == previous
 
     async def test_revisions_increase_monotonically(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot(revision=9))
+        seed_current_schema(hass_storage, schema2_snapshot(revision=9))
         store = make_store(hass)
         await store.async_classify_setup(True)
         for expected in (10, 11, 12):
@@ -535,7 +548,7 @@ class TestVerifiedWritesAndRuns:
             assert store.data.store_revision == expected
 
     async def test_run_id_protocol_and_clean_marking(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot())
+        seed_current_schema(hass_storage, schema2_snapshot())
         store = make_store(hass)
         await store.async_classify_setup(True)
         previous = await store.async_begin_new_run("run-b")
@@ -545,7 +558,7 @@ class TestVerifiedWritesAndRuns:
         assert store.data.run == RunIds("run-b", "run-b")
 
     async def test_pi18_crashed_intermediate_run_is_unclean(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot())
+        seed_current_schema(hass_storage, schema2_snapshot())
         run_b = make_store(hass)
         await run_b.async_classify_setup(True)
         await run_b.async_begin_new_run("run-b")
@@ -556,7 +569,7 @@ class TestVerifiedWritesAndRuns:
         assert not previous.previous_run_was_clean
 
     async def test_pi19_unverified_run_id_fails_closed(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot())
+        seed_current_schema(hass_storage, schema2_snapshot())
         store = make_store(hass)
         await store.async_classify_setup(True)
         store._store.async_save = async_return(None)  # type: ignore[method-assign]
@@ -565,7 +578,7 @@ class TestVerifiedWritesAndRuns:
         assert store.data.run == RunIds("run-a", "run-a")
 
     async def test_pi20_canonical_writes_serialize_without_loss(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b", "zone-c")))
+        seed_current_schema(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b", "zone-c")))
         store = make_store(hass)
         await store.async_classify_setup(True)
 
@@ -615,7 +628,7 @@ class TestVerifiedWritesAndRuns:
         assert after == before.evolve(owner_run_id="run-b")
 
     async def test_rebase_without_session_rejects(self, hass, hass_storage) -> None:
-        seed_schema2(hass_storage, schema2_snapshot())
+        seed_current_schema(hass_storage, schema2_snapshot())
         store = make_store(hass)
         await store.async_classify_setup(True)
         with pytest.raises(StoreNotLoadedError):
@@ -640,7 +653,7 @@ class TestIntegrityAndRetention:
         )
         record = data.safety_records["zone-a"]
         history = data.zone_histories[record.zone_history_id]
-        assert data.version == 2
+        assert data.version == STORE_SCHEMA_VERSION
         assert record.actuator_fault is FaultCode.RESTORED_FROM_UNSAFE_STATE
         assert record.acknowledgement_required
         assert record.runtime_lifecycle is RuntimeLifecycle.DELETE_PENDING
@@ -665,7 +678,7 @@ class TestIntegrityAndRetention:
                 )
             },
         )
-        seed_schema2(hass_storage, data)
+        seed_current_schema(hass_storage, data)
         store = make_store(hass)
         await store.async_classify_setup(True)
         await store.async_begin_new_run("run-b")
@@ -679,7 +692,7 @@ class TestStage2ExactRecordPersistence:
     async def test_tb4_exact_record_blockers_persist_independently(
         self, hass, hass_storage
     ) -> None:
-        seed_schema2(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b")))
+        seed_current_schema(hass_storage, schema2_snapshot(zone_ids=("zone-a", "zone-b")))
         store = make_store(hass)
         await store.async_classify_setup(True)
         start_revision = store.data.store_revision
@@ -763,7 +776,7 @@ class TestStage2ExactRecordPersistence:
                 ),
             },
         )
-        seed_schema2(hass_storage, data)
+        seed_current_schema(hass_storage, data)
         store = make_store(hass)
         await store.async_classify_setup(True)
 
@@ -795,7 +808,7 @@ class TestStage2ExactRecordPersistence:
 
     async def test_history_handoff_rejects_active_record(self, hass, hass_storage) -> None:
         data = schema2_snapshot(zone_ids=("zone-a", "zone-b"))
-        seed_schema2(hass_storage, data)
+        seed_current_schema(hass_storage, data)
         store = make_store(hass)
         await store.async_classify_setup(True)
         history_a = data.safety_records["zone-a"].zone_history_id

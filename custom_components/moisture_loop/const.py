@@ -10,10 +10,13 @@ from __future__ import annotations
 DOMAIN = "moisture_loop"
 
 # --- Runtime store (SPECIFICATION.md §23.2) -------------------------------
-# The payload schema is authoritative. SafetyStore uses a schema-1 Store
-# reader only while performing the one verified schema-1 -> schema-2
-# transaction; every newly written payload and normal Store instance is 2.
-STORE_SCHEMA_VERSION = 2
+# The payload schema is authoritative. SafetyStore uses read-only Store
+# readers for older payloads only while performing the one verified upgrade
+# transaction into the current schema; every newly written payload and
+# normal Store instance is STORE_SCHEMA_VERSION. Schema 3 adds the durable
+# removed-actuator operator acknowledgement (§26.4).
+STORE_SCHEMA_VERSION = 3
+PRIOR_STORE_SCHEMA_VERSION = 2
 LEGACY_STORE_SCHEMA_VERSION = 1
 
 # --- Zone configuration keys (SPECIFICATION.md §9) -------------------------
@@ -101,3 +104,6 @@ GUARD_INTERVAL = "G-INT"
 GUARD_MANUAL_SENSOR = "G-MANUAL-SENSOR"
 GUARD_MANUAL_SAFE = "G-MANUAL-SAFE"
 GUARD_OFF = "G-OFF"
+
+# --- Repair flow fields (SPECIFICATION.md §26.4) ---------------------------
+CONF_ACTUATOR_REMOVED_OFF = "actuator_removed_off"

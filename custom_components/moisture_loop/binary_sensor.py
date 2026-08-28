@@ -56,7 +56,18 @@ class ZoneWateringBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
 
 
 class ZoneProblemBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
-    """ON whenever active or retained fault metadata exists (§28.2)."""
+    """ON for this zone's fault metadata or a global water-resource block (§28.2).
+
+    A keyed water-resource blocker anywhere in the entry withholds the single
+    watering slot from every configured zone (I19, §21), so a zone can be
+    perfectly healthy and still be unable to ever water. Reporting OK in that
+    state hides an integration-wide safety condition, so the blocker set is
+    part of Problem.
+
+    Ordinary serialization is deliberately excluded: waiting behind another
+    legitimately watering zone is normal operation, not a problem, so slot
+    ownership and queue position never raise this sensor.
+    """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -77,7 +88,16 @@ class ZoneProblemBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):
             or record.identity_incident is not None
             or self._runtime.coordinator.failed
             or (session is not None and session.context.retained_sensor_fault is not None)
+            or self._runtime.water_resource_blocked
         )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        # Reasons only: a normal entity state never needs internal record UUIDs.
+        return {
+            "water_resource_blocked": self._runtime.water_resource_blocked,
+            "water_resource_blocker_reasons": self._runtime.water_resource_blocker_reasons,
+        }
 
 
 class ZoneNeedsWaterBinarySensor(MoistureLoopZoneEntity, BinarySensorEntity):

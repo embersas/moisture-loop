@@ -181,7 +181,10 @@ class EntryRuntime:
         self.entry = entry
         generation = entry.data[CONF_RUNTIME_STORE_GENERATION_ID]
         self.store = SafetyStore(hass, entry.entry_id, generation)
-        self.slots = SlotManager(self._persist_slot_blocker)
+        self.slots = SlotManager(
+            self._persist_slot_blocker,
+            self._on_water_resource_blockers_changed,
+        )
         self.controllers: dict[str, ZoneController] = {}
         self.bindings: dict[str, RuntimeControllerBinding] = {}
         self.retained_controllers: dict[str, ZoneController] = {}
@@ -275,6 +278,33 @@ class EntryRuntime:
     def control_entity_available(self, controller: ZoneController) -> bool:
         """Availability for controls/needs-water; direct calls still validate."""
         return self.action_refusal_key(controller) is None
+
+    @callback
+    def _on_water_resource_blockers_changed(self) -> None:
+        """Refresh every zone's presentation when the entry-wide fence moves.
+
+        A keyed blocker on one record changes what every other zone can do
+        (I19), and a zone entity only subscribes to its own controller, so
+        the change is fanned out here rather than being invisible until that
+        zone happens to update for an unrelated reason.
+        """
+        for controller in self._all_controllers():
+            controller.notify_listeners()
+
+    @property
+    def water_resource_blocked(self) -> bool:
+        """Whether a keyed hazard currently withholds the slot from every zone.
+
+        This is the entry-wide fence of I19/§21, not ordinary serialization:
+        it is true only while a conservative water-resource blocker exists,
+        never merely because another zone owns or is queued for the slot.
+        """
+        return not self.slots.blockers_empty()
+
+    @property
+    def water_resource_blocker_reasons(self) -> list[str]:
+        """Sorted distinct blocker reasons, without internal record identities."""
+        return sorted({reason.value for _record_id, reason in self.slots.blockers()})
 
     def controller_for_safety_record(self, safety_record_id: str) -> ZoneController | None:
         """Resolve a live ACTIVE or retained controller by exact record identity."""
@@ -891,16 +921,7 @@ class EntryRuntime:
             return
 
         # Restore every durable blocker before any controller/grant path.
-        persisted_blockers = {
-            (record.safety_record_id, reason)
-            for record in self.store.data.safety_records.values()
-            for reason in record.blocker_reasons
-        }
-        for record in self.store.data.safety_records.values():
-            for reason in record.blocker_reasons:
-                await self.slots.async_add_blocker(record.safety_record_id, reason)
-        for safety_record_id, reason in self.slots.blockers() - persisted_blockers:
-            await self.slots.async_remove_blocker(safety_record_id, reason)
+        await self._republish_record_blockers()
         if not is_current():
             return
         if conflicts:
@@ -951,6 +972,25 @@ class EntryRuntime:
                     binding.safety_record_id,
                     BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
                 )
+
+    async def _republish_record_blockers(self) -> None:
+        """Make the live SlotManager set exactly match durable record blockers.
+
+        The Store is the blocker authority (§21, §23.2). Removing the final
+        key here is what re-offers the watering slot: SlotManager re-runs its
+        grant decision inside ``async_remove_blocker``, so an already-queued
+        eligible zone resumes without a new report or a forced evaluation.
+        """
+        persisted_blockers = {
+            (record.safety_record_id, reason)
+            for record in self.store.data.safety_records.values()
+            for reason in record.blocker_reasons
+        }
+        for record in self.store.data.safety_records.values():
+            for reason in record.blocker_reasons:
+                await self.slots.async_add_blocker(record.safety_record_id, reason)
+        for safety_record_id, reason in self.slots.blockers() - persisted_blockers:
+            await self.slots.async_remove_blocker(safety_record_id, reason)
 
     def _log_record_lifecycle_changes(self, prior_records: dict[str, SafetyRecord]) -> None:
         """Log canonical tombstone/reactivation transitions at useful levels."""
@@ -1443,12 +1483,29 @@ class EntryRuntime:
         return tuple(item for item in blockers if item not in reasons)
 
     def _reconcile_active_record(
-        self, record: SafetyRecord, history: ZoneHistory, assessment
+        self,
+        record: SafetyRecord,
+        history: ZoneHistory,
+        assessment,
+        *,
+        operator_off_proof: bool = False,
     ) -> SafetyRecord:
         blockers = record.blocker_reasons
         owner = record.possible_flow_owner
         session = history.zone_runtime.session
-        if assessment is None:
+        if assessment is None and operator_off_proof:
+            # §26.4: the operator has certified this exact absent identity is
+            # physically OFF and incapable of flow. That certification is the
+            # missing OFF evidence, so it resolves precisely the hazards a
+            # proven-OFF observation would have resolved and nothing else.
+            blockers = self._without_blockers(
+                blockers,
+                BlockerReason.ACTUATOR_NOT_PROVEN_OFF,
+                BlockerReason.EXTERNAL_FLOW,
+            )
+            if session is None and BlockerReason.INTEGRATION_OFF_UNCONFIRMED not in blockers:
+                owner = None
+        elif assessment is None:
             blockers = self._with_blocker(blockers, BlockerReason.ACTUATOR_NOT_PROVEN_OFF)
         elif assessment.proven_off:
             blockers = self._without_blockers(
@@ -1469,23 +1526,41 @@ class EntryRuntime:
         self, record: SafetyRecord, history: ZoneHistory, assessment
     ) -> SafetyRecord:
         record = self._retained_identity_after_rename(record)
-        record = self._reconcile_active_record(record, history, assessment)
+        # §26.4: an acknowledgement only counts while it still covers the
+        # exact durable identity it was given for. A reappearing or replaced
+        # registry identity therefore falls back to fail-closed evidence.
+        operator_off_proof = (
+            assessment is None
+            and record.removed_actuator_ack is not None
+            and record.removed_actuator_ack.covers(record.actuator_identity)
+        )
+        record = self._reconcile_active_record(
+            record, history, assessment, operator_off_proof=operator_off_proof
+        )
         resolved = assessment is not None
         identity = record.actuator_identity
         if not resolved:
-            detail = f"retained actuator identity unresolved for {record.safety_record_id}"
             identity = replace(identity, identity_status=IdentityStatus.MISSING)
-            record = record.evolve(
-                actuator_identity=identity,
-                identity_incident=IdentityIncident(
-                    IdentityIncidentKind.IDENTITY_MISSING,
-                    detail,
-                ),
-            )
+            if operator_off_proof:
+                # The identity is still absent, but it is no longer an
+                # unresolved incident: it has an accepted operator
+                # resolution, so its exact-record Repair must not return.
+                record = record.evolve(
+                    actuator_identity=identity,
+                    identity_incident=None,
+                )
+            else:
+                detail = f"retained actuator identity unresolved for {record.safety_record_id}"
+                record = record.evolve(
+                    actuator_identity=identity,
+                    identity_incident=IdentityIncident(
+                        IdentityIncidentKind.IDENTITY_MISSING,
+                        detail,
+                    ),
+                )
         session = history.zone_runtime.session
         safe_to_retire = (
-            assessment is not None
-            and assessment.proven_off
+            ((assessment is not None and assessment.proven_off) or operator_off_proof)
             and not record.blocker_reasons
             and record.possible_flow_owner is None
             and session is None
@@ -2118,6 +2193,13 @@ class EntryRuntime:
                     record,
                     issue_type,
                     name,
+                    removal_recoverable=(
+                        issue_type == repairs.ISSUE_TOMBSTONE_ACTUATOR_MISSING
+                        and self.removed_actuator_recovery_context(
+                            record.safety_record_id, record.safety_lineage_id
+                        )
+                        is not None
+                    ),
                 )
                 identity_issue_id = repairs.record_issue_id(
                     self.entry.entry_id,
@@ -2169,6 +2251,100 @@ class EntryRuntime:
         else:
             repairs.async_delete_reconciliation_issue(self.hass, self.entry.entry_id)
             self._reconciliation_issue_active = False
+
+    def removed_actuator_recovery_context(
+        self, safety_record_id: str, safety_lineage_id: str
+    ) -> tuple[SafetyRecord, str] | None:
+        """Return (record, absent registry id) when §26.4 recovery is offerable.
+
+        Returns ``None`` unless EVERY precondition holds right now. The
+        decisive test is that the durable registry row is definitively
+        ABSENT: an unavailable, unknown, or merely offline actuator still
+        has its registry row and must keep failing closed under I19.
+        """
+        if not self.store.loaded:
+            return None
+        record = self.store.data.safety_records.get(safety_record_id)
+        if record is None or record.safety_lineage_id != safety_lineage_id:
+            return None
+        if record.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+            return None
+        identity = record.actuator_identity
+        registry_entry_id = identity.registry_entry_id
+        if registry_entry_id is None:
+            return None
+        if identity.identity_status is not IdentityStatus.MISSING:
+            return None
+        # ABSENT, not unavailable: no registry row resolves this durable id.
+        registry = er.async_get(self.hass)
+        if registry.async_get(registry_entry_id) is not None:
+            return None
+        # The same durable identity must not be live under an ACTIVE zone.
+        for other in self.store.data.safety_records.values():
+            if other.safety_record_id == safety_record_id:
+                continue
+            if (
+                other.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+                and other.actuator_identity.registry_entry_id == registry_entry_id
+            ):
+                return None
+        if record.possible_flow_owner is not None:
+            return None
+        if record.actuator_fault is not None or record.acknowledgement_required:
+            return None
+        history = self.store.data.zone_histories.get(record.zone_history_id)
+        if history is None or history.zone_runtime.session is not None:
+            return None
+        controller = self.controller_for_safety_record(safety_record_id)
+        if controller is not None and (
+            controller.session is not None
+            or controller.may_be_flowing
+            or (controller.off_operation is not None and not controller.off_operation.done())
+        ):
+            return None
+        return record, registry_entry_id
+
+    async def async_acknowledge_removed_actuator(
+        self,
+        safety_record_id: str,
+        safety_lineage_id: str,
+    ) -> None:
+        """Record operator proof that a removed actuator is OFF (§26.4).
+
+        Never commands an actuator, never starts watering, and never clears
+        a fault. It persists one durable acknowledgement, read-back verifies
+        it, then re-runs the normal reconciliation that owns blocker and
+        lifecycle authority.
+        """
+        context = self.removed_actuator_recovery_context(safety_record_id, safety_lineage_id)
+        if context is None:
+            raise SafetyRecordAcknowledgementError("record_removal_not_confirmed")
+        _record, registry_entry_id = context
+        try:
+            await self.store.async_acknowledge_removed_actuator(
+                safety_record_id,
+                safety_lineage_id,
+                registry_entry_id,
+                dt_util.utcnow(),
+            )
+        except StoreWriteVerificationError as err:
+            _LOGGER.error(
+                "Removed-actuator acknowledgement failed for %s: %s",
+                safety_record_id,
+                err,
+            )
+            raise SafetyRecordAcknowledgementError("record_acknowledgement_failed") from err
+        _LOGGER.warning(
+            "Operator certified removed actuator %s (registry %s) physically OFF for "
+            "safety record %s; its retained water-resource fence is released",
+            _record.actuator_identity.last_known_entity_id or "unavailable",
+            registry_entry_id[:8],
+            safety_record_id,
+        )
+        # Reconciliation, not this flow, owns blocker/lifecycle authority.
+        await self._refresh_tombstone_lifecycles()
+        await self._republish_record_blockers()
+        self._sync_repairs_from_authority()
 
     async def async_acknowledge_safety_record(
         self,

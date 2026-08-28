@@ -11,12 +11,13 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN
+from .const import CONF_ACTUATOR_REMOVED_OFF, DOMAIN
 from .models import SafetyRecord
 
 ISSUE_SENSOR_MISSING = "zone_sensor_missing"
 ISSUE_ACTUATOR_MISSING = "zone_actuator_missing"
 ISSUE_TOMBSTONE_ACTUATOR_MISSING = "tombstone_actuator_missing"
+ISSUE_TOMBSTONE_ACTUATOR_REMOVED = "tombstone_actuator_removed"
 ISSUE_IDENTITY_CONFLICT = "actuator_identity_conflict"
 ISSUE_RECONCILIATION_FAILED = "configuration_reconciliation_failed"
 ISSUE_OFF_UNCONFIRMED = "actuator_off_unconfirmed"
@@ -81,25 +82,39 @@ def async_create_identity_issue(
     record: SafetyRecord,
     issue_type: str,
     zone_name: str,
+    *,
+    removal_recoverable: bool = False,
 ) -> None:
-    """Expose an exact-record identity incident without unsafe adoption."""
+    """Expose an exact-record identity incident without unsafe adoption.
+
+    ``removal_recoverable`` is set only for the exact §26.4 condition: a
+    retained record whose durable actuator registry row is definitively
+    ABSENT and whose every other safety precondition is already clear. Only
+    that condition may offer the operator acknowledgement flow; an
+    unavailable, unknown, or conflicting identity stays unfixable.
+    """
     placeholders = _record_placeholders(record, zone_name)
     placeholders["detail"] = (
         record.identity_incident.detail if record.identity_incident else "identity unresolved"
+    )
+    translation_key = (
+        ISSUE_TOMBSTONE_ACTUATOR_REMOVED
+        if removal_recoverable and issue_type == ISSUE_TOMBSTONE_ACTUATOR_MISSING
+        else issue_type
     )
     ir.async_create_issue(
         hass,
         DOMAIN,
         record_issue_id(entry_id, record.safety_record_id, issue_type),
-        is_fixable=False,
+        is_fixable=removal_recoverable,
         severity=ir.IssueSeverity.ERROR,
-        translation_key=issue_type,
+        translation_key=translation_key,
         translation_placeholders=placeholders,
         data={
             "entry_id": entry_id,
             "safety_record_id": record.safety_record_id,
             "safety_lineage_id": record.safety_lineage_id,
-            "issue_type": issue_type,
+            "issue_type": (ISSUE_TOMBSTONE_ACTUATOR_REMOVED if removal_recoverable else issue_type),
         },
     )
 
@@ -258,16 +273,96 @@ class ExactRecordFaultFixFlow(RepairsFlow):
         )
 
 
+class RemovedActuatorFixFlow(RepairsFlow):
+    """Operator certification that a removed actuator is OFF (§26.4).
+
+    This is a safety assertion, not a dismissal. It is offered only for a
+    retained record whose durable registry identity is definitively ABSENT,
+    and every precondition is revalidated at submit time inside the Store
+    transaction, so a change between rendering and confirming fails closed.
+    """
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        super().__init__()
+        self._entry_id = cast(str, data["entry_id"])
+        self._record_id = cast(str, data["safety_record_id"])
+        self._lineage_id = cast(str, data["safety_lineage_id"])
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> data_entry_flow.FlowResult:
+        return await self.async_step_confirm(user_input)
+
+    async def async_step_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> data_entry_flow.FlowResult:
+        from .runtime import SafetyRecordAcknowledgementError
+
+        errors: dict[str, str] = {}
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        runtime = None
+        if entry is not None and entry.state is ConfigEntryState.LOADED:
+            runtime = getattr(entry, "runtime_data", None)
+
+        context = None
+        if runtime is not None:
+            context = runtime.removed_actuator_recovery_context(self._record_id, self._lineage_id)
+
+        if user_input is not None:
+            if runtime is None:
+                errors["base"] = "record_entry_not_loaded"
+            elif context is None:
+                errors["base"] = "record_removal_not_confirmed"
+            elif not user_input.get(CONF_ACTUATOR_REMOVED_OFF):
+                errors["base"] = "record_confirmation_required"
+            else:
+                try:
+                    await runtime.async_acknowledge_removed_actuator(
+                        self._record_id,
+                        self._lineage_id,
+                    )
+                except SafetyRecordAcknowledgementError as err:
+                    errors["base"] = err.translation_key
+                else:
+                    return self.async_create_entry(data={})
+
+        placeholders = {
+            "zone_name": "retained zone",
+            "safety_record_id": _short(self._record_id),
+            "safety_lineage_id": _short(self._lineage_id),
+            "registry_entry_id": "unavailable",
+            "entity_id": "unavailable",
+            "lifecycle": "unknown",
+            "fault": "unknown",
+            "blockers": "unknown",
+            "accounting": "unknown",
+        }
+        if context is not None:
+            record = context[0]
+            name = (
+                record.applied_config.normalized_settings.name
+                if record.applied_config is not None
+                else record.zone_id
+            )
+            placeholders = _record_placeholders(record, name)
+        return self.async_show_form(
+            step_id="confirm",
+            # Deliberately unchecked: the operator must actively assert it.
+            data_schema=vol.Schema({vol.Required(CONF_ACTUATOR_REMOVED_OFF, default=False): bool}),
+            description_placeholders=placeholders,
+            errors=errors,
+        )
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,
     issue_id: str,
     data: dict[str, Any] | None,
 ) -> RepairsFlow:
     """Create only the supported exact-record acknowledgement flow."""
-    if (
-        data
-        and data.get("issue_type") == ISSUE_OFF_UNCONFIRMED
-        and all(data.get(key) for key in ("entry_id", "safety_record_id", "safety_lineage_id"))
-    ):
-        return ExactRecordFaultFixFlow(data)
+    if data and all(data.get(key) for key in ("entry_id", "safety_record_id", "safety_lineage_id")):
+        if data.get("issue_type") == ISSUE_OFF_UNCONFIRMED:
+            return ExactRecordFaultFixFlow(data)
+        if data.get("issue_type") == ISSUE_TOMBSTONE_ACTUATOR_REMOVED:
+            return RemovedActuatorFixFlow(data)
     return ConfirmRepairFlow()

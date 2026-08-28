@@ -356,7 +356,7 @@ class TestDiagnostics:
         # The zone-add reload re-ran setup: the first pass was the first
         # install; this (second) run adopted the initialized store.
         assert diagnostics["store"]["setup_classification"] == "initialized_ok"
-        assert diagnostics["store"]["schema_version"] == 2
+        assert diagnostics["store"]["schema_version"] == 3
         assert diagnostics["store"]["store_revision"] >= 1
         assert diagnostics["store"]["previous_run_was_clean"] is False
         assert len(diagnostics["store"]["current_run_id_short"]) == 8

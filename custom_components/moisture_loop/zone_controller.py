@@ -1098,6 +1098,10 @@ class ZoneController:
 
         return _remove
 
+    def notify_listeners(self) -> None:
+        """Public entity-refresh trigger for entry-wide presentation changes."""
+        self._notify_listeners()
+
     def _notify_listeners(self) -> None:
         for listener in list(self._listeners):
             listener()

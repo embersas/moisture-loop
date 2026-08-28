@@ -303,7 +303,30 @@
     },
     "tombstone_actuator_missing": {
       "title": "Retained actuator identity is unresolved for {zone_name}",
-      "description": "Safety record {safety_record_id} ({lifecycle}) cannot resolve its durable actuator identity ({entity_id}, Registry ID {registry_entry_id}). Reconfigure or restore the original entity identity; this issue cannot safely adopt a different entity. Details: {detail}"
+      "description": "Safety record {safety_record_id} ({lifecycle}) cannot resolve its durable actuator identity ({entity_id}, Registry ID {registry_entry_id}). All watering stays blocked until this is resolved. Restore the original entity identity, or reconfigure the zone; this issue cannot safely adopt a different entity. If the actuator was permanently removed, MoistureLoop offers a confirmation step once the removal is definitive rather than merely unavailable. Details: {detail}"
+    },
+    "tombstone_actuator_removed": {
+      "title": "Removed irrigation actuator for {zone_name}",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Removed irrigation actuator",
+            "description": "Home Assistant can no longer find the actuator previously used by this removed zone ({entity_id}). MoistureLoop is blocking all automatic and manual watering because it cannot prove that actuator is off.\n\nOnly confirm this after checking the irrigation hardware. MoistureLoop will then release this retired safety record so other zones can water.\n\nThis does not start watering, and it does not change any zone's settings or enabled state.",
+            "data": {
+              "actuator_removed_off": "I confirm that this removed actuator is physically off and can no longer deliver water"
+            },
+            "data_description": {
+              "actuator_removed_off": "Check the hardware first. This is a safety confirmation, not a way to dismiss the message."
+            }
+          }
+        },
+        "error": {
+          "record_entry_not_loaded": "The owning MoistureLoop entry is not loaded.",
+          "record_removal_not_confirmed": "This actuator is no longer definitively removed, or the retained record changed. MoistureLoop keeps blocking watering until it can prove the actuator is off.",
+          "record_confirmation_required": "Tick the confirmation to certify that the removed actuator is physically off.",
+          "record_acknowledgement_failed": "The confirmation could not be durably saved. The Repair remains open and watering stays blocked."
+        }
+      }
     },
     "actuator_identity_conflict": {
       "title": "Actuator identity conflict for {zone_name}",

@@ -76,7 +76,15 @@ class ReconciliationBarrier:
 class SlotManager:
     """FIFO watering-slot owner and keyed conservative blocker set."""
 
-    def __init__(self, persist_blocker: BlockerPersistence | None = None) -> None:
+    def __init__(
+        self,
+        persist_blocker: BlockerPersistence | None = None,
+        blocker_listener: Callable[[], None] | None = None,
+    ) -> None:
+        # The blocker set is an entry-wide fence, so a change to any key
+        # alters what EVERY zone can do. The listener lets presentation
+        # refresh zones that own no part of the changed key (§28.2).
+        self._blocker_listener = blocker_listener
         self._lock = asyncio.Lock()
         self._owner: str | None = None
         self._queue: deque[SlotRequest] = deque()
@@ -96,16 +104,20 @@ class SlotManager:
             raise ValueError("safety_record_id must be non-empty")
         async with self._lock:
             key = (safety_record_id, reason)
+            changed = False
             if key in self._blockers and key not in self._unpersisted_blockers:
                 return
             # Make the live resource fail closed before awaiting the durable
             # write. If persistence fails, retain the blocker in memory and
             # propagate the failure; no grant can slip through.
             self._blockers.add(key)
+            changed = True
             if self._persist_blocker is not None:
                 self._unpersisted_blockers.add(key)
                 await self._persist_blocker(safety_record_id, reason, True)
                 self._unpersisted_blockers.discard(key)
+        if changed:
+            self._notify_blocker_listener()
 
     async def async_remove_blocker(self, safety_record_id: str, reason: BlockerReason) -> None:
         """Remove exactly one keyed blocker on proven terminal OFF evidence.
@@ -125,6 +137,12 @@ class SlotManager:
             self._blockers.remove(key)
             self._unpersisted_blockers.discard(key)
             self._try_grant_locked()
+        self._notify_blocker_listener()
+
+    def _notify_blocker_listener(self) -> None:
+        """Announce a blocker-set change; never inside the grant decision."""
+        if self._blocker_listener is not None:
+            self._blocker_listener()
 
     def blockers(self) -> frozenset[BlockerKey]:
         """Current keyed blocker set (immutable copy)."""

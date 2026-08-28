@@ -244,7 +244,7 @@ class TestSchemaRoundTrip:
 
     def test_store_dict_shape_matches_spec(self) -> None:
         payload = store_data_to_dict(full_store())
-        assert payload["version"] == 2
+        assert payload["version"] == 3
         assert payload["generation_id"] == "gen-1"
         assert payload["store_revision"] == 43
         assert payload["run"] == {
@@ -271,7 +271,7 @@ class TestSchemaRoundTrip:
 class TestSchemaStrictness:
     def test_future_version_raises_distinct_error(self) -> None:
         payload = store_data_to_dict(full_store())
-        payload["version"] = 3
+        payload["version"] = 4
         with pytest.raises(FutureStoreVersion):
             store_data_from_dict(payload)
 

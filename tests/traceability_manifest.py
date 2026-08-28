@@ -1,4 +1,4 @@
-"""Mechanical spec.6 Stage-7 traceability data.
+"""Mechanical spec.7 Stage-7 traceability data.
 
 The specification remains the inventory authority. This module connects each
 normative ID to substantive pytest evidence; ``test_traceability.py`` checks
@@ -282,6 +282,9 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             "tests/test_rename_tracking.py::TestActuatorRenameTracking::test_r5_restart_after_rename_resolves_by_registry_uuid",
             HA,
         ),
+    ),
+    "PI28": ha(
+        "tests/test_tombstone_recovery.py::TestSchemaUpgrade::test_schema2_payload_upgrades_without_losing_state"
     ),
     "PI27": ha(
         "tests/test_storage.py::TestIntegrityAndRetention::test_pi27_tb11_retired_tombstone_never_auto_purged"
@@ -673,6 +676,72 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
             HA,
         ),
     ),
+    "TB13": both(
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_unavailable_and_unknown_actuators_are_never_recoverable",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_reappearing_identity_is_not_recoverable",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_unresolved_flow_or_fault_refuses",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_active_record_can_never_be_acknowledged",
+            HA,
+        ),
+    ),
+    "TB14": both(
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestRestartDurability::test_acknowledgement_survives_reload_and_does_not_reappear",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestRestartDurability::test_a_returning_registry_identity_revokes_the_proof",
+            HA,
+        ),
+    ),
+    "TB15": both(
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_unchecked_confirmation_is_refused",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_record_and_lineage_mismatch_refuse_visibly",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_acknowledgement_commands_no_actuator",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestNegativeSafetyMatrix::test_other_blockers_remain_effective",
+            HA,
+        ),
+    ),
+    "TB16": both(
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestExact010Reproduction::test_removed_tombstone_fences_a_healthy_zone_then_recovers",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestDisableReleasesTheSlot::test_disable_withdraws_a_queued_slot_request",
+            HA,
+        ),
+    ),
+    "TB17": both(
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestExact010Reproduction::test_removed_tombstone_fences_a_healthy_zone_then_recovers",
+            HA,
+        ),
+        Evidence(
+            "tests/test_tombstone_recovery.py::TestExact010Reproduction::test_manual_watering_is_fenced_by_the_same_global_blocker",
+            HA,
+        ),
+    ),
     # Actuator replacement.
     "AR1": ha(
         "tests/test_reconciliation.py::TestRuntimeReconciliation::test_a_to_b_retains_a_hazard_and_continuing_history"
@@ -891,7 +960,8 @@ INVARIANT_TRACEABILITY: dict[str, InvariantTrace] = {
     ),
     "I36": InvariantTrace(("generation coordinator", "global barrier"), ("ND15", "RC8", "RC12")),
     "I37": InvariantTrace(
-        ("tombstone persistence", "exact acknowledgement"), ("PI27", "TB4", "TB11", "TB12")
+        ("tombstone persistence", "exact acknowledgement"),
+        ("PI27", "PI28", "TB4", "TB11", "TB12", "TB13", "TB14"),
     ),
 }
 

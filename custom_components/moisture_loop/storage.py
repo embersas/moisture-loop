@@ -27,7 +27,12 @@ from typing import TYPE_CHECKING
 
 from homeassistant.helpers.storage import Store
 
-from .const import DOMAIN, LEGACY_STORE_SCHEMA_VERSION, STORE_SCHEMA_VERSION
+from .const import (
+    DOMAIN,
+    LEGACY_STORE_SCHEMA_VERSION,
+    PRIOR_STORE_SCHEMA_VERSION,
+    STORE_SCHEMA_VERSION,
+)
 from .models import (
     AccountingContribution,
     ActuatorIdentity,
@@ -39,9 +44,11 @@ from .models import (
     IdentityIncident,
     IdentityIncidentKind,
     IdentityStatus,
+    MalformedStoreData,
     MigrationRecordContext,
     PersistedSession,
     PossibleFlowOwner,
+    RemovedActuatorAcknowledgement,
     RunIds,
     RuntimeLifecycle,
     SafetyRecord,
@@ -55,6 +62,7 @@ from .models import (
     ZoneRuntime,
     merge_zone_history_continuity,
     migrate_schema1_to_schema2,
+    migrate_schema2_to_schema3,
     schema1_store_data_from_dict,
     store_data_from_dict,
     store_data_to_dict,
@@ -92,6 +100,17 @@ def _new_store(hass: HomeAssistant, key: str) -> Store:
 def _new_schema1_reader(hass: HomeAssistant, key: str) -> Store:
     """Construct the historical Store wrapper only for strict migration read."""
     return Store(hass, LEGACY_STORE_SCHEMA_VERSION, key, atomic_writes=True, read_only=True)
+
+
+def _new_prior_schema_reader(hass: HomeAssistant, key: str) -> Store:
+    """Read-only reader for the immediately previous schema (§23.2).
+
+    Home Assistant's own Store migration would rewrite the payload with a
+    new version header and unchanged inner data, so every older payload is
+    read through a version-matched read-only Store and upgraded solely by
+    SafetyStore's strict parser inside one verified transaction.
+    """
+    return Store(hass, PRIOR_STORE_SCHEMA_VERSION, key, atomic_writes=True, read_only=True)
 
 
 class SafetyStore:
@@ -170,6 +189,17 @@ class SafetyStore:
                     return SetupClassification.INTEGRITY_LOSS, None
                 await self._save_and_verify_locked(migrated)
                 parsed = migrated
+            elif version == PRIOR_STORE_SCHEMA_VERSION:
+                # Additive schema-2 -> schema-3 upgrade (§23.2, PI28): one
+                # verified transaction, exactly like the schema-1 path.
+                try:
+                    upgraded = migrate_schema2_to_schema3(raw)
+                except StoreDataError:
+                    return SetupClassification.INTEGRITY_LOSS, None
+                if upgraded.generation_id != self._generation_id:
+                    return SetupClassification.INTEGRITY_LOSS, None
+                await self._save_and_verify_locked(upgraded)
+                parsed = upgraded
             else:
                 try:
                     parsed = store_data_from_dict(raw)
@@ -454,6 +484,61 @@ class SafetyStore:
             await self._save_and_verify_locked(new_data)
             return new_data
 
+    async def async_acknowledge_removed_actuator(
+        self,
+        safety_record_id: str,
+        safety_lineage_id: str,
+        registry_entry_id: str,
+        acknowledged_at_utc: datetime,
+    ) -> StoreData:
+        """Persist operator proof that a deleted actuator is OFF (§26.4).
+
+        The Store-owned half of the removed-actuator recovery flow. It
+        revalidates every precondition against the last verified snapshot
+        under the same lock that serializes every other safety write, so a
+        concurrent reconciliation cannot slip between the caller's checks
+        and this transaction (TOCTOU, ER12). It never clears a fault, never
+        touches accounting, and never commands an actuator.
+        """
+        async with self._lock:
+            record = self.data.safety_records.get(safety_record_id)
+            if record is None:
+                raise StoreWriteVerificationError(
+                    f"unknown canonical safety_record_id {safety_record_id}"
+                )
+            if record.safety_lineage_id != safety_lineage_id:
+                raise StoreWriteVerificationError("safety-record lineage mismatch")
+            if record.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
+                raise StoreWriteVerificationError(
+                    "removed-actuator acknowledgement requires a retained record"
+                )
+            identity = record.actuator_identity
+            if identity.identity_status is not IdentityStatus.MISSING:
+                raise StoreWriteVerificationError("actuator identity is not absent")
+            if identity.registry_entry_id != registry_entry_id:
+                raise StoreWriteVerificationError("actuator registry identity mismatch")
+            if record.possible_flow_owner is not None:
+                raise StoreWriteVerificationError("possible flow ownership is unresolved")
+            if self.data.zone_histories[record.zone_history_id].zone_runtime.session is not None:
+                raise StoreWriteVerificationError("an open session still references this record")
+            if record.actuator_fault is not None or record.acknowledgement_required:
+                raise StoreWriteVerificationError("an unresolved actuator fault remains")
+
+            records = dict(self.data.safety_records)
+            records[safety_record_id] = record.evolve(
+                removed_actuator_ack=RemovedActuatorAcknowledgement(
+                    acknowledged_at_utc=acknowledged_at_utc,
+                    registry_entry_id=registry_entry_id,
+                    last_known_entity_id=identity.last_known_entity_id,
+                ),
+            )
+            new_data = self.data.evolve(
+                store_revision=self.data.store_revision + 1,
+                safety_records=records,
+            )
+            await self._save_and_verify_locked(new_data)
+            return new_data
+
     async def async_reconcile(
         self,
         mutator: Callable[[StoreData], tuple[dict[str, SafetyRecord], dict[str, ZoneHistory]]],
@@ -621,11 +706,16 @@ class SafetyStore:
         automatic migration/save path; only SafetyStore's strict parser and
         verified complete schema-2 transaction may rewrite schema 1.
         """
-        try:
-            return await self._store.async_load()
-        except NotImplementedError:
-            legacy_reader = _new_schema1_reader(self._hass, self._key)
-            return await legacy_reader.async_load()
+        for reader in (
+            self._store,
+            _new_prior_schema_reader(self._hass, self._key),
+            _new_schema1_reader(self._hass, self._key),
+        ):
+            try:
+                return await reader.async_load()
+            except NotImplementedError:
+                continue
+        raise MalformedStoreData("no supported Store schema reader accepted the payload")
 
     # -- verified write core ----------------------------------------------
 

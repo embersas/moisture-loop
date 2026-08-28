@@ -592,7 +592,9 @@ class TestRemainingBranches:
 
 class TestSpec4CanonicalModels:
     def test_store_schema_and_lifecycle_are_exact(self) -> None:
-        assert const.STORE_SCHEMA_VERSION == 2
+        assert const.STORE_SCHEMA_VERSION == 3
+        assert const.PRIOR_STORE_SCHEMA_VERSION == 2
+        assert const.LEGACY_STORE_SCHEMA_VERSION == 1
         assert {value.value for value in RuntimeLifecycle} == {
             "active",
             "delete_pending",

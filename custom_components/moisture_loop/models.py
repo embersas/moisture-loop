@@ -35,6 +35,7 @@ from .const import (
     MOISTURE_MIN,
     NAME_MAX_LENGTH,
     NAME_MIN_LENGTH,
+    PRIOR_STORE_SCHEMA_VERSION,
     PULSE_DURATION_MAX_S,
     PULSE_DURATION_MIN_S,
     SENSOR_DOMAIN,
@@ -1005,6 +1006,13 @@ def _iso_to_dt(value: object, name: str) -> datetime | None:
     return parsed
 
 
+def _require_dt(value: datetime | None, name: str) -> datetime:
+    """Reject a null where a timezone-aware UTC instant is mandatory."""
+    if value is None:
+        raise MalformedStoreData(f"{name} must be an ISO datetime")
+    return value
+
+
 def _enum_or_none(enum_cls: type, value: object, name: str):
     if value is None:
         return None
@@ -1737,6 +1745,34 @@ class ZoneHistory:
 
 
 @dataclass(frozen=True, slots=True)
+class RemovedActuatorAcknowledgement:
+    """Operator proof that a deleted actuator identity is physically OFF (§26.4).
+
+    This is durable evidence supplied by a human, not a computed status. It
+    is bound to the exact durable ``registry_entry_id`` that was proven
+    ABSENT at acknowledgement time, so a later identity change or a
+    reappearing registry row cannot inherit the assertion (I19, TB13).
+    """
+
+    acknowledged_at_utc: datetime
+    registry_entry_id: str
+    last_known_entity_id: str | None
+
+    def __post_init__(self) -> None:
+        if not self.registry_entry_id:
+            raise ValueError("removed-actuator acknowledgement requires a registry_entry_id")
+        if self.acknowledged_at_utc.tzinfo is None:
+            raise ValueError("acknowledged_at_utc must be timezone aware")
+
+    def covers(self, identity: ActuatorIdentity) -> bool:
+        """Whether this proof applies to ``identity`` exactly (§26.4)."""
+        return (
+            identity.registry_entry_id is not None
+            and identity.registry_entry_id == self.registry_entry_id
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SafetyRecord:
     """One canonical mutable actuator-safety record per durable lineage."""
 
@@ -1755,6 +1791,7 @@ class SafetyRecord:
     identity_incident: IdentityIncident | None
     actuator_fault: FaultCode | None
     acknowledgement_required: bool
+    removed_actuator_ack: RemovedActuatorAcknowledgement | None = None
 
     def __post_init__(self) -> None:
         _validate_id_history(
@@ -1777,6 +1814,11 @@ class SafetyRecord:
             self.actuator_fault is None or not self.actuator_fault.requires_user_ack
         ):
             raise ValueError("acknowledgement requires an acknowledgement-capable actuator fault")
+        if (
+            self.removed_actuator_ack is not None
+            and self.runtime_lifecycle is RuntimeLifecycle.ACTIVE
+        ):
+            raise ValueError("an ACTIVE record cannot carry a removed-actuator acknowledgement")
         if self.runtime_lifecycle is RuntimeLifecycle.ACTIVE:
             if self.active_subentry_id is None or self.applied_config is None:
                 raise ValueError("ACTIVE record requires current subentry and applied shadow")
@@ -2224,6 +2266,17 @@ def _contribution_to_dict(contribution: AccountingContribution) -> dict:
     }
 
 
+def _removed_ack_to_dict(ack: RemovedActuatorAcknowledgement | None) -> dict | None:
+    """Serialize the §26.4 operator proof, or null when none was given."""
+    if ack is None:
+        return None
+    return {
+        "acknowledged_at_utc": ack.acknowledged_at_utc.isoformat(),
+        "registry_entry_id": ack.registry_entry_id,
+        "last_known_entity_id": ack.last_known_entity_id,
+    }
+
+
 def store_data_to_dict(data: StoreData) -> dict:
     """Deterministically serialize the canonical schema-2 Store."""
     validate_store_data(data)
@@ -2311,14 +2364,49 @@ def store_data_to_dict(data: StoreData) -> dict:
                 ),
                 "actuator_fault": record.actuator_fault.value if record.actuator_fault else None,
                 "acknowledgement_required": record.acknowledgement_required,
+                "removed_actuator_ack": _removed_ack_to_dict(record.removed_actuator_ack),
             }
             for record_id, record in sorted(data.safety_records.items())
         },
     }
 
 
+def migrate_schema2_to_schema3(raw: object) -> StoreData:
+    """Upgrade a verified schema-2 payload to schema 3 (§23.2, PI28).
+
+    Schema 3 is purely additive: every safety record gains the durable
+    ``removed_actuator_ack`` slot, which upgrades to ``None`` because no
+    operator has yet certified any removed actuator. Nothing else in the
+    payload is reinterpreted, so history, identity, blockers, faults, and
+    accounting migrate byte-for-byte through the same strict parser.
+    """
+    if not isinstance(raw, dict):
+        raise MalformedStoreData("store must be an object")
+    if raw.get("version") != PRIOR_STORE_SCHEMA_VERSION:
+        raise MalformedStoreData(
+            f"schema-{PRIOR_STORE_SCHEMA_VERSION} upgrade requires a schema-"
+            f"{PRIOR_STORE_SCHEMA_VERSION} payload"
+        )
+    records_raw = raw.get("safety_records")
+    if not isinstance(records_raw, dict):
+        raise MalformedStoreData("store.safety_records must be an object")
+    upgraded_records: dict[str, object] = {}
+    for record_id, record in records_raw.items():
+        if not isinstance(record, dict):
+            raise MalformedStoreData("safety_record must be an object")
+        if "removed_actuator_ack" in record:
+            raise MalformedStoreData("schema-2 record cannot declare removed_actuator_ack")
+        upgraded_records[record_id] = {**record, "removed_actuator_ack": None}
+    upgraded = {
+        **raw,
+        "version": STORE_SCHEMA_VERSION,
+        "safety_records": upgraded_records,
+    }
+    return store_data_from_dict(upgraded)
+
+
 def store_data_from_dict(raw: object) -> StoreData:
-    """Strictly parse schema 2; schema 1 requires the migration parser."""
+    """Strictly parse the current schema; older payloads need a migrator."""
     if not isinstance(raw, dict):
         raise MalformedStoreData("store must be an object")
     version = raw.get("version")
@@ -2631,9 +2719,35 @@ def _safety_record_from_dict(record_id: object, raw: object) -> SafetyRecord:
             "identity_incident",
             "actuator_fault",
             "acknowledgement_required",
+            "removed_actuator_ack",
         },
         "safety_record",
     )
+    ack_raw = raw["removed_actuator_ack"]
+    removed_ack = None
+    if ack_raw is not None:
+        ack_raw = _require_exact_keys(
+            ack_raw,
+            {"acknowledged_at_utc", "registry_entry_id", "last_known_entity_id"},
+            "removed_actuator_ack",
+        )
+        removed_ack = RemovedActuatorAcknowledgement(
+            acknowledged_at_utc=_require_dt(
+                _iso_to_dt(
+                    ack_raw["acknowledged_at_utc"],
+                    "removed_actuator_ack.acknowledged_at_utc",
+                ),
+                "removed_actuator_ack.acknowledged_at_utc",
+            ),
+            registry_entry_id=_strict_string(
+                ack_raw["registry_entry_id"], "removed_actuator_ack.registry_entry_id"
+            ),  # type: ignore[arg-type]
+            last_known_entity_id=_strict_string(
+                ack_raw["last_known_entity_id"],
+                "removed_actuator_ack.last_known_entity_id",
+                nullable=True,
+            ),
+        )
     incident_raw = raw["identity_incident"]
     incident = None
     if incident_raw is not None:
@@ -2673,6 +2787,7 @@ def _safety_record_from_dict(record_id: object, raw: object) -> SafetyRecord:
         acknowledgement_required=_strict_bool(
             raw["acknowledgement_required"], "acknowledgement_required"
         ),
+        removed_actuator_ack=removed_ack,
     )
 
 
