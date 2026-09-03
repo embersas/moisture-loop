@@ -42,15 +42,20 @@ CONF_RUNTIME_STORE_INITIALIZED = "runtime_store_initialized"
 # --- Defaults (SPECIFICATION.md §9; durations in integer seconds) ----------
 DEFAULT_START_THRESHOLD = 30.0
 DEFAULT_TARGET_THRESHOLD = 40.0
-DEFAULT_PULSE_DURATION_S = 5 * 60
+DEFAULT_PULSE_DURATION_S = 60 * 60
 DEFAULT_SOAK_DURATION_S = 20 * 60
-DEFAULT_MAX_CYCLES = 4
-DEFAULT_MAX_SESSION_RUNTIME_S = 30 * 60
-DEFAULT_MAX_DAILY_RUNTIME_S = 60 * 60
+DEFAULT_MAX_CYCLES = 2
+# Two whole default pulses must satisfy G-SESS, which fits the *next* pulse
+# against accrued runtime. Each pulse accrues slightly more than its nominal
+# duration (actuator confirm latency), so an exact 2 h would refuse cycle 2
+# and silently strand DEFAULT_MAX_CYCLES. The five-minute margin is that
+# headroom, not extra watering: the pulse count still bounds the session.
+DEFAULT_MAX_SESSION_RUNTIME_S = 2 * 60 * 60 + 5 * 60
+DEFAULT_MAX_DAILY_RUNTIME_S = 4 * 60 * 60
 DEFAULT_MIN_SESSION_INTERVAL_S = 6 * 60 * 60
 DEFAULT_SENSOR_MAX_AGE_S = 2 * 60 * 60
 DEFAULT_ACTUATOR_CONFIRM_TIMEOUT_S = 30
-DEFAULT_MANUAL_MAX_DURATION_S = 30 * 60
+DEFAULT_MANUAL_MAX_DURATION_S = 60 * 60
 
 # --- Bounds (SPECIFICATION.md §9; inclusive ranges) ------------------------
 NAME_MIN_LENGTH = 1
@@ -60,7 +65,7 @@ START_THRESHOLD_MAX = 99.0
 TARGET_THRESHOLD_MIN = 2.0
 TARGET_THRESHOLD_MAX = 100.0
 PULSE_DURATION_MIN_S = 30
-PULSE_DURATION_MAX_S = 30 * 60
+PULSE_DURATION_MAX_S = 60 * 60
 SOAK_DURATION_MIN_S = 60
 SOAK_DURATION_MAX_S = 4 * 60 * 60
 MAX_CYCLES_MIN = 1

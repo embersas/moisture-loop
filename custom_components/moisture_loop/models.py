@@ -363,7 +363,7 @@ class ZoneConfig:
         if not self.start_threshold < self.target_threshold:
             errors.append("start_threshold must be strictly less than target_threshold")
         if not (PULSE_DURATION_MIN_S <= self.pulse_duration_s <= PULSE_DURATION_MAX_S):
-            errors.append("pulse_duration must be within 30 s-30 min")
+            errors.append("pulse_duration must be within 30 s-60 min")
         if not (SOAK_DURATION_MIN_S <= self.soak_duration_s <= SOAK_DURATION_MAX_S):
             errors.append("soak_duration must be within 1 min-4 h")
         if not (MAX_CYCLES_MIN <= self.max_cycles <= MAX_CYCLES_MAX):

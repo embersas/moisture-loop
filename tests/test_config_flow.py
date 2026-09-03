@@ -1658,7 +1658,7 @@ class TestSetupPresentation:
     NUMBER_BOUNDS: ClassVar[dict[str, tuple[int, int, str]]] = {
         "start_threshold": (1, 99, "%"),
         "target_threshold": (2, 100, "%"),
-        "pulse_duration": (30, 1800, "s"),
+        "pulse_duration": (30, 3600, "s"),
         "soak_duration": (60, 14400, "s"),
         "max_cycles": (1, 20, "cycles"),
         "max_session_runtime": (30, 14400, "s"),
@@ -1831,19 +1831,28 @@ class TestSetupPresentation:
             for validator in self._schema_for(step_id).schema.values():
                 assert not isinstance(validator, selector.DurationSelector), step_id
 
-    def test_schema_defaults_are_the_unchanged_0_1_0_second_values(self) -> None:
+    def test_schema_defaults_are_the_spec_8_second_values(self) -> None:
+        """The offered defaults are exactly the §9 table, still in seconds.
+
+        spec.8 raised the pulse ceiling and restated the defaults around a
+        60-minute pulse, so these values are sourced from ``const`` rather
+        than retyped: the point of the test is that the flow offers the §9
+        defaults verbatim and as integer seconds, not what they happen to be.
+        """
+        from custom_components.moisture_loop import const
+
         expected = {
-            "start_threshold": 30.0,
-            "target_threshold": 40.0,
-            "pulse_duration": 300,
-            "soak_duration": 1200,
-            "max_cycles": 4,
-            "max_session_runtime": 1800,
-            "max_daily_runtime": 3600,
-            "min_session_interval": 21600,
-            "sensor_max_age": 7200,
-            "actuator_confirm_timeout": 30,
-            "manual_max_duration": 1800,
+            "start_threshold": const.DEFAULT_START_THRESHOLD,
+            "target_threshold": const.DEFAULT_TARGET_THRESHOLD,
+            "pulse_duration": const.DEFAULT_PULSE_DURATION_S,
+            "soak_duration": const.DEFAULT_SOAK_DURATION_S,
+            "max_cycles": const.DEFAULT_MAX_CYCLES,
+            "max_session_runtime": const.DEFAULT_MAX_SESSION_RUNTIME_S,
+            "max_daily_runtime": const.DEFAULT_MAX_DAILY_RUNTIME_S,
+            "min_session_interval": const.DEFAULT_MIN_SESSION_INTERVAL_S,
+            "sensor_max_age": const.DEFAULT_SENSOR_MAX_AGE_S,
+            "actuator_confirm_timeout": const.DEFAULT_ACTUATOR_CONFIRM_TIMEOUT_S,
+            "manual_max_duration": const.DEFAULT_MANUAL_MAX_DURATION_S,
         }
         resolved: dict[str, object] = {}
         for step_id in ("thresholds", "limits"):
@@ -1853,6 +1862,44 @@ class TestSetupPresentation:
         # Seconds, not a structured duration object.
         for key in ("pulse_duration", "min_session_interval", "sensor_max_age"):
             assert isinstance(resolved[key], int)
+
+    def test_default_zone_configuration_is_self_consistent(self) -> None:
+        """The offered defaults must pass §9 validation as submitted.
+
+        A 60-minute default pulse only fits because the session and daily
+        defaults moved with it, and ``max_cycles`` whole pulses must actually
+        fit the session budget under G-SESS's next-whole-pulse rule -- so a
+        default that silently stranded a cycle would be a defect, not a taste.
+        """
+        from custom_components.moisture_loop import const
+        from custom_components.moisture_loop.models import ZoneConfig
+
+        config = ZoneConfig(
+            name="Defaults",
+            moisture_sensor="sensor.moisture_1",
+            actuator="switch.valve_1",
+            start_threshold=const.DEFAULT_START_THRESHOLD,
+            target_threshold=const.DEFAULT_TARGET_THRESHOLD,
+            pulse_duration_s=const.DEFAULT_PULSE_DURATION_S,
+            soak_duration_s=const.DEFAULT_SOAK_DURATION_S,
+            max_cycles=const.DEFAULT_MAX_CYCLES,
+            max_session_runtime_s=const.DEFAULT_MAX_SESSION_RUNTIME_S,
+            max_daily_runtime_s=const.DEFAULT_MAX_DAILY_RUNTIME_S,
+            min_session_interval_s=const.DEFAULT_MIN_SESSION_INTERVAL_S,
+            sensor_max_age_s=const.DEFAULT_SENSOR_MAX_AGE_S,
+            actuator_confirm_timeout_s=const.DEFAULT_ACTUATOR_CONFIRM_TIMEOUT_S,
+            manual_max_duration_s=const.DEFAULT_MANUAL_MAX_DURATION_S,
+        )
+        assert config.validation_errors() == []
+        # G-SESS fits the next whole pulse against accrued runtime, and each
+        # pulse accrues more than its nominal duration through confirm
+        # latency, so the default session budget needs strict headroom.
+        pulses = const.DEFAULT_MAX_CYCLES * const.DEFAULT_PULSE_DURATION_S
+        assert pulses < const.DEFAULT_MAX_SESSION_RUNTIME_S
+        # A default session must also fit inside the default day.
+        assert const.DEFAULT_MAX_DAILY_RUNTIME_S >= const.DEFAULT_MAX_SESSION_RUNTIME_S
+        # The default manual request must not be clamped by its own cap.
+        assert const.DEFAULT_MANUAL_MAX_DURATION_S >= const.DEFAULT_PULSE_DURATION_S
 
     # -- runtime resolution through Home Assistant --------------------------
 

@@ -111,6 +111,16 @@ def _raise_for_refusal(decision, action: str) -> None:
     raise _error("request_refused")
 
 
+def raise_for_manual_refusal(decision) -> None:
+    """Translate a manual-start refusal for the §28.3 fixed-duration buttons.
+
+    The buttons are a second entry point to exactly one backend path
+    (``async_manual_start``), so they must report the same §31 refusal
+    vocabulary as the action rather than inventing their own.
+    """
+    _raise_for_refusal(decision, SERVICE_START_MANUAL)
+
+
 def async_register_services(hass: HomeAssistant) -> None:
     """Register all §31 actions once from async_setup (I25)."""
     if hass.services.has_service(DOMAIN, SERVICE_START_MANUAL):

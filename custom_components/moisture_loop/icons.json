@@ -32,7 +32,10 @@
     "button": {
       "stop": { "default": "mdi:stop-circle-outline" },
       "evaluate_now": { "default": "mdi:refresh" },
-      "clear_fault": { "default": "mdi:check-circle-outline" }
+      "clear_fault": { "default": "mdi:check-circle-outline" },
+      "manual_pulse_15": { "default": "mdi:watering-can" },
+      "manual_pulse_30": { "default": "mdi:watering-can" },
+      "manual_pulse_60": { "default": "mdi:watering-can" }
     }
   },
   "services": {

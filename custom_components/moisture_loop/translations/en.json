@@ -44,7 +44,7 @@
           "data_description": {
             "start_threshold": "Watering can start when soil moisture falls below this level. 1 to 99%.",
             "target_threshold": "Watering stops once a fresh moisture reading reaches or exceeds this level. Must be above the start threshold. 2 to 100%.",
-            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 1800 seconds (30 seconds to 30 minutes).",
+            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 3600 seconds (30 seconds to 60 minutes).",
             "soak_duration": "How long MoistureLoop waits after each pulse before using a new moisture reading. 60 to 14400 seconds (1 minute to 4 hours)."
           }
         },
@@ -96,7 +96,7 @@
           "data_description": {
             "start_threshold": "Watering can start when soil moisture falls below this level. 1 to 99%.",
             "target_threshold": "Watering stops once a fresh moisture reading reaches or exceeds this level. Must be above the start threshold. 2 to 100%.",
-            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 1800 seconds (30 seconds to 30 minutes).",
+            "pulse_duration": "How long the valve stays open for each watering pulse. 30 to 3600 seconds (30 seconds to 60 minutes).",
             "soak_duration": "How long MoistureLoop waits after each pulse before using a new moisture reading. 60 to 14400 seconds (1 minute to 4 hours)."
           }
         },
@@ -190,6 +190,15 @@
       },
       "clear_fault": {
         "name": "Clear fault"
+      },
+      "manual_pulse_15": {
+        "name": "Water 15 min"
+      },
+      "manual_pulse_30": {
+        "name": "Water 30 min"
+      },
+      "manual_pulse_60": {
+        "name": "Water 60 min"
       }
     }
   },

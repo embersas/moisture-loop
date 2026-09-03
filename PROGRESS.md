@@ -6,9 +6,9 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `None`. Slice 14 is `[x] Complete`: Checkpoint A (NON-WATER preflight) and Checkpoint B (physical AUTO) both `[x] PASS` on 2026-08-27. Checkpoint B ran one bounded real AUTO session on the real Ecowitt sensor and the real Holman Zone 6 `WX1` outlet: two 31.3 s pulses, two full 180 s soaks, both continuation decisions driven strictly by real post-soak `state_reported` reports, finishing `max_cycles` with measured runtime 64.133031 s, terminal actuator CLOSED, 0 Repairs, and the validation zone returned to DISABLED. Physical-water authorization is consumed; no further physical watering is authorized. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
+- Current authorized work: `spec.8 / 0.1.2 personal-system deployment`. Authorized by the user on 2026-09-03: raise the pulse ceiling to 60 min with restated §9 defaults, add three fixed-duration manual buttons per zone, apply the new values to all six live zones, and deploy to the user's own instance. The user stated their personal system is the priority and that the pending hacs/default submission must not gate it. No tag and no GitHub Release are authorized: deployment is by HACS exact-commit install, so published `available_version` stays `0.1.1` and the immutable `0.1.0`/`0.1.1` tags are untouched. Slice 14 is `[x] Complete`: Checkpoint A (NON-WATER preflight) and Checkpoint B (physical AUTO) both `[x] PASS` on 2026-08-27. Checkpoint B ran one bounded real AUTO session on the real Ecowitt sensor and the real Holman Zone 6 `WX1` outlet: two 31.3 s pulses, two full 180 s soaks, both continuation decisions driven strictly by real post-soak `state_reported` reports, finishing `max_cycles` with measured runtime 64.133031 s, terminal actuator CLOSED, 0 Repairs, and the validation zone returned to DISABLED. Physical-water authorization is consumed; no further physical watering is authorized. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
-- Specification version: `0.1.0-spec.5` (unchanged by the 2026-08-27 nomenclature-only revision note)
+- Specification version: `0.1.0-spec.8` (spec.6 fresh-zone default, spec.7 removed-actuator recovery, spec.8 pulse ceiling and manual buttons; the 2026-08-27 nomenclature-only revision note changed no version)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
 - Current spec.5 conformance: `Spec.4 Remediation Stages 1-8, the spec.5 Stage-1 shutdown remediation (implementation c81f598969ff544abd64915fe92e8f5ae13d4086), and the nomenclature-only MoistureLoop canonical rename (ad2ca863b1efcc76645d39133c7f7d0c73a48794) are complete. Exact Home Assistant 2025.9.0 and supported-current 2026.8.3 each pass 895 tests with the one deliberate pure-boundary skip; pure passes 443/443. Executed traceability remains 134/134 normative IDs, I1-I37, and T1-T59; state_machine.py remains 100% branch; overall mandatory coverage 92.54%.`
 - Slice 9 specification status: `Resolved by approved spec.4 and completed Stages 5 and 7. Core's native add/reconfigure/delete mutations feed the existing entry listener/reconciler; actual HA 2025.9 websocket deletion is proven for IDLE, AUTO WATERING, MANUAL WATERING, SOAKING, and rapid multi-zone deletion; registry cleanup preserves canonical safety evidence; delete-only reconciliation performs zero reloads.`
@@ -6228,3 +6228,129 @@ current-state claims were corrected:
   `458455ca7672419b5875cbaae55b9ba072ea4fc3` remain UNTOUCHED and immutable.
 - HACS default: **NOT SUBMITTED** — readiness verified, submission is a
   separate authorized task. Home Assistant Brands: **NOT SUBMITTED**.
+
+---
+
+## Session Log — 2026-09-03 (spec.8 pulse ceiling, manual buttons, and WX4 diagnosis)
+
+Authorized by the user in this session: raise the starting/default pulse to one
+hour, add three fixed-duration manual pulse buttons per zone, and investigate a
+manual pulse that stopped early on the four-outlet WX4. The user chose, in
+response to explicit questions, to apply the new pulse to the six live zones as
+well as the code defaults, and to size the budgets for two cycles per session
+and four hours per day.
+
+### WX4 early stop — diagnosed, NOT a MoistureLoop defect, no code change
+
+The user's report was that a manual pulse "got stopped automatically by another
+valve on the WX4 automatically starting". Live evidence from the running
+instance (`01M10YAXHYHPZEKYZDRW5ES3ZR`, HA 2026.7.2, `moisture_loop` 0.1.1,
+store schema 3) contradicts the competing-valve hypothesis and identifies a
+different, already-known cause.
+
+- Zone 4, 2026-09-03T03:20:30Z: `mode: manual`, `requested_duration_s: 3600.0`,
+  `effective_duration_s: 1800.0`, `clamp_reasons: [manual_max_duration,
+  max_session_runtime]`, `runtime_s: 16.131009`, ended
+  `external_actuator_state_change` at 03:20:46Z.
+- Zone 1, 2026-09-03T03:47:27Z: `mode: auto`, `runtime_s: 16.082219`, ended
+  `external_actuator_state_change` at 03:47:43Z.
+- Recorder valve history for the whole window shows `valve.zone1_4_zone_4` open
+  03:20:31→03:20:46 with **no other WX4 outlet open**, and
+  `valve.zone1_4_zone_1` open 03:47:28→03:47:43 with **no other WX4 outlet
+  open**. `valve.zone1_4_zone_3` ran a normal 600 s pulse at 04:25:31→04:35:32,
+  well clear of both.
+- Slot manager at inspection: `owner` Zone 6, `queue: []`, `blockers: []`,
+  `admission_open: true`, reconciliation clean.
+
+Conclusion: nothing else started. The WX4 self-closed each outlet after ~16 s.
+This is the 2026-08-29 "WX4 reclaimed the valve" fault recurring, not a new one:
+all four `time.zone1_4_zone_*_manual_timer` entities currently read `unknown`,
+so DP 172 is unset and the device applies its own near-zero duration to any run,
+including one MoistureLoop started. §21/I19/I21 already forbid a second
+integration-commanded flow entry-wide and already blocked nothing here because
+nothing needed blocking; `external_actuator_state_change` is the controller
+correctly reporting a takeover it cannot prevent. **No integration change was
+made for this item.** Operator remedy is device-side: restore the per-outlet DP
+172 duration and keep it at or above the zone's `pulse_duration`.
+
+### Specification — `0.1.0-spec.7` -> `0.1.0-spec.8`
+
+Behavioural revision note added, dated 2026-09-03, covering both changes.
+
+- §9: `pulse_duration` range `30 s-30 min` -> `30 s-60 min`; defaults restated
+  as `pulse_duration` 5 min -> 60 min, `max_cycles` 4 -> 2,
+  `max_session_runtime` 30 min -> 2 h 5 min, `max_daily_runtime` 60 min -> 4 h,
+  `manual_max_duration` 30 min -> 60 min. No bound relaxed below an existing
+  floor, no cap raised beyond its existing maximum, and the dynamic
+  `pulse <= session <= 4 h` / `pulse <= daily <= 12 h` relations are unchanged,
+  so every previously valid configuration stays valid and nothing is migrated.
+- The session default deliberately carries five minutes above two nominal
+  pulses: `G-SESS` fits the next *whole* pulse against accrued runtime, and a
+  pulse accrues more than nominal through confirm latency, so an exact 2 h would
+  refuse cycle 2 and strand the `max_cycles` default. This is the same class of
+  defect the 2026-08-31 live diagnosis found in the user's 600/4/2400 config.
+- §28.3: the blanket "no manual-start button" prohibition is replaced by three
+  fixed-duration buttons (`manual_pulse_15`, `manual_pulse_30`,
+  `manual_pulse_60`). The original rationale is preserved and made precise: a
+  button cannot safely supply an open-ended or operator-typed duration, but it
+  can supply one fixed in the control's own identity. Open-ended manual start
+  remains action-only per §31.
+- §39.2 gains exactly one normative behavioural ID, **MF6**. Inventory
+  **141 -> 142**. No controller state, transition row, invariant, or Store
+  schema changed: five states, T1-T59, I1-I37, and schema 3 are untouched.
+
+### Implementation
+
+- `const.py`: the five defaults plus `PULSE_DURATION_MAX_S` 1800 -> 3600, with
+  the session-headroom rationale recorded in a comment.
+- `config_flow.py`: pulse `NumberSelector` upper bound 1800 -> 3600.
+- `models.py`: `validation_errors()` pulse message text only; every bound
+  comparison already read from `const`.
+- `button.py`: new `ZoneManualPulseButton`, `MANUAL_PULSE_MINUTES = (15, 30,
+  60)`, and a rewritten module docstring. Each button calls the existing
+  `async_manual_start` and adds no admission authority.
+- `services.py`: `raise_for_manual_refusal` exposes the existing §31 refusal
+  translation so the buttons report the same reasons as the action instead of
+  inventing their own. `_raise_for_refusal` is unchanged.
+- `icons.json`, `translations/en.json`: three button names/icons, and the two
+  `pulse_duration` field-help strings restate the 60-minute ceiling.
+- `manifest.json`: `0.1.1` -> `0.1.2`.
+
+### Tests actually run
+
+- Pure (`.venv`, `homeassistant` absent, confirmed by `pip show`):
+  **451 passed**, 0 skipped.
+- Mandatory HA 2025.9.0 (`.venv-ha`): **953 passed, 1 skipped** (the one
+  documented pure-boundary skip). Overall branch coverage **92.00%** against the
+  90% gate; `state_machine.py` **100.00%** branch; `button.py` and `services.py`
+  100.00%.
+- Executed-evidence traceability: `expected=142 discovered=142 unique=142
+  mapped=142 passing=142`, invariants 37/37, transitions 59/59, skip boundary
+  exactly as documented.
+- `ruff check .` and `ruff format --check .`: clean over 49 files.
+- Five new tests: four MF6 tests in `tests/test_entities.py::TestControls`
+  (bounded request, clamp-not-refuse, refusal parity with the action, and
+  refusal while disabled) and one
+  `test_default_zone_configuration_is_self_consistent` guarding that the offered
+  defaults validate and that `max_cycles` whole pulses genuinely fit the session
+  budget.
+- Two pre-existing tests were updated because their premise changed, not their
+  intent: the `max_session_runtime_s`/`max_daily_runtime_s` boundary rows in
+  `tests/test_models.py` now express their *dynamic* lower bound against
+  `DEFAULT_PULSE_DURATION_S` instead of the literal 300, and
+  `test_schema_defaults_are_the_unchanged_0_1_0_second_values` became
+  `test_schema_defaults_are_the_spec_8_second_values`, sourcing the expected
+  values from `const` so it asserts "the flow offers §9 verbatim, in integer
+  seconds" rather than a retyped table.
+
+### Remaining work
+
+- `[ ]` Reconfigure the six live zones to the new pulse/budget values. NOT DONE
+  in this session: Zone 6 was mid-AUTO-session (slot owner, valve open from
+  06:52:28Z) and §24.4 terminates an active session through `CONFIG_CHANGED`
+  reconciliation, so applying configuration then would have cut a live pulse.
+- `[ ]` Device-side WX4 remedy: restore `time.zone1_4_zone_*_manual_timer` and
+  keep each at or above the zone's `pulse_duration`. Without this, a 60-minute
+  pulse on Zones 1-4 will keep ending `external_actuator_state_change`.
+- `[ ]` Hosted CI on the resulting SHA. No release, tag, or submission is
+  authorized by this session.

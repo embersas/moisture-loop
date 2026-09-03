@@ -260,11 +260,21 @@ class TestZoneConfigBounds:
             ("name", ["a", "x" * 64], ["", "x" * 65]),
             ("start_threshold", [1.0, 30.0], [0.0, 0.9, 100.0]),
             ("target_threshold", [40.0, 100.0], [1.9, 101.0]),
-            ("pulse_duration_s", [30, 1800], [29, 1801]),
+            ("pulse_duration_s", [30, 3600], [29, 3601]),
             ("soak_duration_s", [60, 14400], [59, 14401]),
             ("max_cycles", [1, 20], [0, 21]),
-            ("max_session_runtime_s", [300, 14400], [299, 14401]),
-            ("max_daily_runtime_s", [300, 43200], [299, 43201]),
+            # Both lower bounds are dynamic (= pulse duration), so they are
+            # expressed against the default pulse rather than a literal.
+            (
+                "max_session_runtime_s",
+                [const.DEFAULT_PULSE_DURATION_S, 14400],
+                [const.DEFAULT_PULSE_DURATION_S - 1, 14401],
+            ),
+            (
+                "max_daily_runtime_s",
+                [const.DEFAULT_PULSE_DURATION_S, 43200],
+                [const.DEFAULT_PULSE_DURATION_S - 1, 43201],
+            ),
             ("min_session_interval_s", [900, 604800], [899, 604801]),
             ("sensor_max_age_s", [300, 86400], [299, 86401]),
             ("actuator_confirm_timeout_s", [5, 300], [4, 301]),

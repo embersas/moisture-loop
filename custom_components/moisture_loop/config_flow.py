@@ -135,7 +135,7 @@ def _thresholds_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 CONF_PULSE_DURATION,
                 default=defaults.get(CONF_PULSE_DURATION, DEFAULT_PULSE_DURATION_S),
-            ): _number(30, 1800, "s"),
+            ): _number(30, 3600, "s"),
             vol.Required(
                 CONF_SOAK_DURATION,
                 default=defaults.get(CONF_SOAK_DURATION, DEFAULT_SOAK_DURATION_S),

@@ -145,15 +145,15 @@ field's allowed range in seconds and in human units.
 |---|---|---:|---:|
 | Start threshold | `start_threshold` | 30% | 1–99; strictly below target |
 | Target threshold | `target_threshold` | 40% | 2–100; strictly above start |
-| Pulse duration | `pulse_duration` | 5 min (300 s) | 30 s–30 min |
+| Pulse duration | `pulse_duration` | 60 min (3600 s) | 30 s–60 min |
 | Soak duration | `soak_duration` | 20 min (1200 s) | 1 min–4 h |
-| Maximum cycles per session | `max_cycles` | 4 | 1–20 |
-| Maximum watering per session | `max_session_runtime` | 30 min (1800 s) | pulse duration–4 h |
-| Maximum watering per day | `max_daily_runtime` | 60 min (3600 s) | pulse duration–12 h |
+| Maximum cycles per session | `max_cycles` | 2 | 1–20 |
+| Maximum watering per session | `max_session_runtime` | 2 h 5 min (7500 s) | pulse duration–4 h |
+| Maximum watering per day | `max_daily_runtime` | 4 h (14400 s) | pulse duration–12 h |
 | Minimum time between automatic sessions | `min_session_interval` | 6 h (21600 s) | 15 min–7 d |
 | Maximum sensor age | `sensor_max_age` | 2 h (7200 s) | 5 min–24 h |
 | Valve confirmation timeout | `actuator_confirm_timeout` | 30 s | 5 s–5 min |
-| Maximum manual watering duration | `manual_max_duration` | 30 min (1800 s) | 1 min–2 h |
+| Maximum manual watering duration | `manual_max_duration` | 60 min (3600 s) | 1 min–2 h |
 
 Defaults are conservative starting points, not agronomic advice. Calibrate for
 the soil, emitters, probe placement, and sensor cadence in the deployment.
@@ -211,10 +211,19 @@ internally as a retained tombstone. This is deliberate:
 
 Each active zone exposes status, current-day watering runtime, last-session and
 minimum-interval sensors; watering, problem, and needs-water binary sensors; an
-enabled switch; and Stop watering, Check now, and Clear fault buttons (entity
-keys `stop`, `evaluate_now`, `clear_fault` are unchanged). `needs_water`
-is informational and never bypasses an AUTO guard. There is no manual-start
-button because a safe manual request requires an explicit duration.
+enabled switch; Stop watering, Check now, and Clear fault buttons (entity
+keys `stop`, `evaluate_now`, `clear_fault` are unchanged); and Water 15 min,
+Water 30 min, and Water 60 min buttons (entity keys `manual_pulse_15`,
+`manual_pulse_30`, `manual_pulse_60`). `needs_water` is informational and never
+bypasses an AUTO guard.
+
+Each manual button requests exactly its own fixed duration through the same
+validated path as `moisture_loop.start_manual_watering`, so every guard, the
+clamp against the configured manual, session, and remaining daily limits, and
+the one-zone-at-a-time water resource all still apply. A button whose duration
+exceeds a configured limit is clamped, not refused, and the clamp is reported in
+the last-session attributes. Only the action can carry a caller-supplied
+duration, so an open-ended manual request remains action-only.
 
 ## Actions
 
@@ -279,6 +288,27 @@ For MQTT sensors, `force_update: true` is one possible integration-specific
 remedy, not a general requirement. A different Sensor Report Maximum Age remains
 available within the configured range when the sensor's legitimate observable
 cadence requires it.
+
+### Troubleshooting `external_actuator_state_change`
+
+This session reason means the actuator stopped flowing while MoistureLoop still
+held an authorized pulse open. MoistureLoop reports the takeover rather than
+concealing it; it is almost never a MoistureLoop fault.
+
+The common cause is a device that enforces its own run duration independently of
+Home Assistant. Multi-outlet tap timers in particular often carry a per-outlet
+duration that the device applies to any run, including one your switch or valve
+service started, and will close the outlet when that duration elapses regardless
+of what opened it. If a zone consistently stops after the same short interval,
+check the device-side duration for that outlet before changing anything in
+MoistureLoop, and raise it to at least the zone's `pulse_duration` whenever you
+lengthen a pulse. A longer `pulse_duration` cannot extend a duration the
+actuator enforces outside Home Assistant.
+
+Other causes are a physical or app-initiated stop, another controller sharing
+the outlet, and loss of power or connectivity to the device. Because a genuine
+takeover is indistinguishable from a lost command, MoistureLoop treats the
+actuator as unproven until terminal OFF is observed for that exact identity.
 
 The integration also emits `moisture_loop_session_started`,
 `moisture_loop_session_finished`, `moisture_loop_fault_set`, and

@@ -303,6 +303,24 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     "MF5": ha(
         "tests/test_zone_controller.py::TestManual::test_mf5_actuator_fault_supersedes_mid_manual"
     ),
+    "MF6": both(
+        Evidence(
+            "tests/test_entities.py::TestControls::test_mf6_manual_pulse_buttons_request_their_own_bounded_duration",
+            HA,
+        ),
+        Evidence(
+            "tests/test_entities.py::TestControls::test_mf6_manual_pulse_button_above_a_cap_is_clamped_not_refused",
+            HA,
+        ),
+        Evidence(
+            "tests/test_entities.py::TestControls::test_mf6_manual_pulse_button_refusal_matches_the_action",
+            HA,
+        ),
+        Evidence(
+            "tests/test_entities.py::TestControls::test_mf6_manual_pulse_buttons_refuse_while_disabled",
+            HA,
+        ),
+    ),
     # Actuator/concurrency and external-resource.
     "AC1": ha(
         "tests/test_zone_controller.py::TestTerminationRaces::test_ac1_stop_during_pulse_single_off"

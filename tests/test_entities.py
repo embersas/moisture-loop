@@ -159,7 +159,14 @@ class TestEntityCreationAndAttribution:
             "sensor": ["status", "watering_runtime_today", "last_session", "next_eligible"],
             "binary_sensor": ["watering", "problem", "needs_water"],
             "switch": ["enabled"],
-            "button": ["stop", "evaluate_now", "clear_fault"],
+            "button": [
+                "stop",
+                "evaluate_now",
+                "clear_fault",
+                "manual_pulse_15",
+                "manual_pulse_30",
+                "manual_pulse_60",
+            ],
         }
         for platform, keys in expected.items():
             for key in keys:
@@ -354,7 +361,14 @@ class TestPresentationMetadata:
             "sensor": {"status", "watering_runtime_today", "last_session", "next_eligible"},
             "binary_sensor": {"watering", "problem", "needs_water"},
             "switch": {"enabled"},
-            "button": {"stop", "evaluate_now", "clear_fault"},
+            "button": {
+                "stop",
+                "evaluate_now",
+                "clear_fault",
+                "manual_pulse_15",
+                "manual_pulse_30",
+                "manual_pulse_60",
+            },
         }
         for platform, keys in expected_entities.items():
             assert set(strings["entity"][platform]) == keys, platform
@@ -379,7 +393,14 @@ class TestPresentationMetadata:
             "sensor": ["status", "watering_runtime_today", "last_session", "next_eligible"],
             "binary_sensor": ["watering", "problem", "needs_water"],
             "switch": ["enabled"],
-            "button": ["stop", "evaluate_now", "clear_fault"],
+            "button": [
+                "stop",
+                "evaluate_now",
+                "clear_fault",
+                "manual_pulse_15",
+                "manual_pulse_30",
+                "manual_pulse_60",
+            ],
         }.items():
             for key in keys:
                 eid = entity_id(env.hass, platform, f"{env.subentry_id}_{key}")
@@ -457,3 +478,86 @@ class TestControls:
         await env.hass.services.async_call(
             "button", "press", {"entity_id": clear_eid}, blocking=True
         )
+
+    async def test_mf6_manual_pulse_buttons_request_their_own_bounded_duration(self, env) -> None:
+        """MF6: a fixed-duration button requests exactly its own duration."""
+        status_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
+        last_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_last_session")
+        button_eid = entity_id(env.hass, "button", f"{env.subentry_id}_manual_pulse_15")
+
+        # 33% is above the start threshold, so AUTO would refuse: this run can
+        # only be the manual request the button carries.
+        await env.hass.services.async_call(
+            "button", "press", {"entity_id": button_eid}, blocking=True
+        )
+        await settle(env.hass)
+        assert env.hass.states.get(status_eid).state == "watering"
+        assert env.switch.on_calls == 1
+
+        await advance(env, 900)
+        assert env.hass.states.get(status_eid).state == "idle"
+        attributes = env.hass.states.get(last_eid).attributes
+        assert attributes["mode"] == "manual"
+        assert attributes["reason"] == "manual_complete"
+        # 15 min fits every configured cap, so it is used verbatim.
+        assert attributes["requested_duration_s"] == 900.0
+        assert attributes["effective_duration_s"] == 900.0
+        assert attributes["clamp_reasons"] == []
+
+    async def test_mf6_manual_pulse_button_above_a_cap_is_clamped_not_refused(self, env) -> None:
+        """MF6: §20 clamping applies to the button exactly as to the action."""
+        # The zone's manual_max_duration and max_session_runtime are both
+        # 1800 s, so the 60-minute button cannot deliver its nominal hour.
+        button_eid = entity_id(env.hass, "button", f"{env.subentry_id}_manual_pulse_60")
+        await env.hass.services.async_call(
+            "button", "press", {"entity_id": button_eid}, blocking=True
+        )
+        await settle(env.hass)
+        status_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
+        # Clamped, never refused: the session runs at the capped duration.
+        assert env.hass.states.get(status_eid).state == "watering"
+
+        await advance(env, 1800)
+        attributes = env.hass.states.get(
+            entity_id(env.hass, "sensor", f"{env.subentry_id}_last_session")
+        ).attributes
+        assert attributes["mode"] == "manual"
+        assert attributes["requested_duration_s"] == 3600.0
+        assert attributes["effective_duration_s"] == 1800.0
+        assert "manual_max_duration" in attributes["clamp_reasons"]
+        assert "max_session_runtime" in attributes["clamp_reasons"]
+
+    async def test_mf6_manual_pulse_button_refusal_matches_the_action(self, env) -> None:
+        """MF6: the button reports the §31 refusal vocabulary, not its own."""
+        from homeassistant.exceptions import HomeAssistantError
+
+        button_eid = entity_id(env.hass, "button", f"{env.subentry_id}_manual_pulse_15")
+        await env.hass.services.async_call(
+            "button", "press", {"entity_id": button_eid}, blocking=True
+        )
+        await settle(env.hass)
+        # A second press during the live session is refused, not queued.
+        with pytest.raises(HomeAssistantError) as excinfo:
+            await env.hass.services.async_call(
+                "button", "press", {"entity_id": button_eid}, blocking=True
+            )
+        assert excinfo.value.translation_key == "session_active"
+        assert env.switch.on_calls == 1
+
+    async def test_mf6_manual_pulse_buttons_refuse_while_disabled(self, env) -> None:
+        """MF6: G-EN is not bypassed by a control that carries its duration."""
+        from homeassistant.exceptions import HomeAssistantError
+
+        switch_eid = entity_id(env.hass, "switch", f"{env.subentry_id}_enabled")
+        await env.hass.services.async_call(
+            "switch", "turn_off", {"entity_id": switch_eid}, blocking=True
+        )
+        await settle(env.hass)
+        for minutes in (15, 30, 60):
+            eid = entity_id(env.hass, "button", f"{env.subentry_id}_manual_pulse_{minutes}")
+            with pytest.raises(HomeAssistantError) as excinfo:
+                await env.hass.services.async_call(
+                    "button", "press", {"entity_id": eid}, blocking=True
+                )
+            assert excinfo.value.translation_key == "zone_disabled"
+        assert env.switch.on_calls == 0
