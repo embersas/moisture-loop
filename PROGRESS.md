@@ -6,7 +6,7 @@ This document tracks implementation work against the approved `SPECIFICATION.md`
 
 ## Current Position
 
-- Current authorized work: `spec.8 / 0.1.2 personal-system deployment`. Authorized by the user on 2026-09-03: raise the pulse ceiling to 60 min with restated §9 defaults, add three fixed-duration manual buttons per zone, apply the new values to all six live zones, and deploy to the user's own instance. The user stated their personal system is the priority and that the pending hacs/default submission must not gate it. No tag and no GitHub Release are authorized: deployment is by HACS exact-commit install, so published `available_version` stays `0.1.1` and the immutable `0.1.0`/`0.1.1` tags are untouched. Slice 14 is `[x] Complete`: Checkpoint A (NON-WATER preflight) and Checkpoint B (physical AUTO) both `[x] PASS` on 2026-08-27. Checkpoint B ran one bounded real AUTO session on the real Ecowitt sensor and the real Holman Zone 6 `WX1` outlet: two 31.3 s pulses, two full 180 s soaks, both continuation decisions driven strictly by real post-soak `state_reported` reports, finishing `max_cycles` with measured runtime 64.133031 s, terminal actuator CLOSED, 0 Repairs, and the validation zone returned to DISABLED. Physical-water authorization is consumed; no further physical watering is authorized. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
+- Current authorized work: `None`. The 2026-09-03 spec.8 / 0.1.2 personal-system deployment is complete. Authorized by the user on 2026-09-03: raise the pulse ceiling to 60 min with restated §9 defaults, add three fixed-duration manual buttons per zone, apply the new values to all six live zones, and deploy to the user's own instance. The user stated their personal system is the priority and that the pending hacs/default submission must not gate it. No tag and no GitHub Release are authorized: deployment is by HACS exact-commit install, so published `available_version` stays `0.1.1` and the immutable `0.1.0`/`0.1.1` tags are untouched. Slice 14 is `[x] Complete`: Checkpoint A (NON-WATER preflight) and Checkpoint B (physical AUTO) both `[x] PASS` on 2026-08-27. Checkpoint B ran one bounded real AUTO session on the real Ecowitt sensor and the real Holman Zone 6 `WX1` outlet: two 31.3 s pulses, two full 180 s soaks, both continuation decisions driven strictly by real post-soak `state_reported` reports, finishing `max_cycles` with measured runtime 64.133031 s, terminal actuator CLOSED, 0 Repairs, and the validation zone returned to DISABLED. Physical-water authorization is consumed; no further physical watering is authorized. The 2026-08-27 canonical pre-release rename SoilSync -> MoistureLoop is complete, including both hosted-repository renames, remotes, and the HACS record; no hosted-infrastructure remainder is outstanding. Slice 13 is `[x] Complete`: B1 `[x] PASS` (2026-08-26) and B2 `[x] PASS` (2026-08-26 corrected trial on the deployed spec.5 Stage-1 shutdown implementation). No release, submission, or physical trial is currently authorized.
 - Canonical identity: `MoistureLoop`; Home Assistant domain `moisture_loop`; integration path `custom_components/moisture_loop/`; public repository `https://github.com/embersas/moisture-loop`. Renamed from SoilSync on 2026-08-27 before the first release; see the dated session below.
 - Specification version: `0.1.0-spec.8` (spec.6 fresh-zone default, spec.7 removed-actuator recovery, spec.8 pulse ceiling and manual buttons; the 2026-08-27 nomenclature-only revision note changed no version)
 - Historical implementation baseline: `Implementation and test records produced against spec.3 remain valid evidence of the work actually performed. Spec.4 Remediation Stages 1-8 and Slices 0-12 are complete; the historical records below remain preserved.`
@@ -6343,14 +6343,46 @@ Behavioural revision note added, dated 2026-09-03, covering both changes.
   values from `const` so it asserts "the flow offers §9 verbatim, in integer
   seconds" rather than a retyped table.
 
+### Deployment to the user's own instance — COMPLETE, NO WATER
+
+The user authorized deployment explicitly, stating their personal system is the
+priority and must not be gated by the pending hacs/default submission.
+
+- `[x]` Commit `3dd2face1a174b0139d1fa3af9a449307bc390b9` on `main`, pushed to
+  both remotes (`github main`; `origin` via the `luke@git.lukestanbury.com` URL).
+- `[x]` **All six hosted CI jobs GREEN** on that exact SHA (run
+  `33731541984`): lint/format, pure, HA 2025.9.0, HA 2026.8.3, hassfest, HACS
+  validation.
+- `[x]` HACS exact-SHA install, HA restarted, live integration reports `0.1.2`.
+  Six zones preserved: store schema 3, 2 retained tombstones, every zone
+  `registry_confirmed`, 0 faults, 0 blockers, reconciliation clean
+  (`observed == applied == 2`), slot idle. The 18 new
+  `button.zone_N_water_{15,30,60}_min` entities exist.
+- `[x]` All six zones reconfigured to pulse 3600 / soak 1200 / `max_cycles` 2 /
+  session 7500 / daily 14400 / `manual_max_duration` 3600; thresholds untouched
+  at 30/40. Each zone was verified idle first, driven through the real
+  `reconfigure` -> `reconfigure_thresholds` -> `reconfigure_limits` flow, each
+  ending `abort/reconfigure_successful`, with identity resubmitted unchanged so
+  no A -> B replacement was triggered. **NO WATER at any point**; all six zones
+  ended IDLE with every valve closed.
+- `[x]` Device-side WX4 remedy applied: all four
+  `time.zone1_4_zone_*_manual_timer` were found reverted to `unknown` and are
+  now `01:05:00`, verified past tuya_local's 5 s `_FAKE_IT_TIMEOUT`. This keeps
+  the device timer a backstop just above the 3600 s pulse rather than the
+  effective limit.
+
 ### Remaining work
 
-- `[ ]` Reconfigure the six live zones to the new pulse/budget values. NOT DONE
-  in this session: Zone 6 was mid-AUTO-session (slot owner, valve open from
-  06:52:28Z) and §24.4 terminates an active session through `CONFIG_CHANGED`
-  reconciliation, so applying configuration then would have cut a live pulse.
-- `[ ]` Device-side WX4 remedy: restore `time.zone1_4_zone_*_manual_timer` and
-  keep each at or above the zone's `pulse_duration`. Without this, a 60-minute
-  pulse on Zones 1-4 will keep ending `external_actuator_state_change`.
-- `[ ]` Hosted CI on the resulting SHA. No release, tag, or submission is
-  authorized by this session.
+- `[ ]` **No tag and no GitHub Release for 0.1.2**, deliberately. Published
+  `available_version` stays `0.1.1` so hacs/default PR #10399 keeps validating
+  the artifact that already passed its checks. Releasing 0.1.2 remains a
+  separate authorized decision.
+- `[!]` Note for whoever touches `main` while #10399 is pending: hacs/default's
+  `checks.yml` re-runs on `labeled`/`unlabeled`, and its Hassfest job
+  shallow-clones moisture-loop's **default branch**, not a release tag. `main`
+  must therefore stay hassfest-clean at all times.
+- `[ ]` Observe the first real 3600 s pulse. The 2026-08-31 physical finding
+  (water does not travel the ~15 cm to the deliberately worst-case probes, and
+  the soil is very free-draining) predicts a longer pulse will deep-percolate
+  rather than spread laterally, so the moisture response should be watched
+  before concluding the longer pulse helps.
