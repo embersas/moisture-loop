@@ -163,8 +163,8 @@ class ZoneRuntimeTodaySensor(MoistureLoopZoneEntity, SensorEntity):
     @property
     def native_value(self) -> float:
         authority = self._runtime.canonical_zone_authority(self._controller)
-        daily = authority[1].daily if authority is not None else None
-        return round(daily.runtime_s if daily else 0.0, 1)
+        history = authority[1] if authority is not None else None
+        return round(self._runtime.current_local_day_runtime_s(history), 1)
 
 
 class ZoneLastSessionSensor(MoistureLoopZoneEntity, SensorEntity):

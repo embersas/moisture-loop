@@ -7,6 +7,7 @@ import contextlib
 import logging
 import uuid
 from dataclasses import dataclass, replace
+from datetime import date
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
@@ -227,6 +228,22 @@ class EntryRuntime:
         if record is None or history is None or record.zone_history_id != history.zone_history_id:
             return None
         return record, history
+
+    def local_today(self) -> date:
+        """Return the local calendar day that owns daily runtime accounting."""
+        return dt_util.utcnow().astimezone(self._local_tz).date()
+
+    def current_local_day_runtime_s(self, history: ZoneHistory | None) -> float:
+        """Return conservative current local-day runtime (§28.1).
+
+        A bucket still carrying an earlier ``date_local`` has not been rolled
+        over by its owning controller yet, so it contributes nothing to today.
+        """
+        if history is None or history.daily is None:
+            return 0.0
+        if history.daily.date_local != self.local_today():
+            return 0.0
+        return history.daily.runtime_s
 
     def action_refusal_key(self, controller: ZoneController) -> str | None:
         """Return the translated reason normal zone control is unavailable."""
@@ -522,11 +539,7 @@ class EntryRuntime:
         if slot_snapshot.blockers:
             fail("keyed_blockers_clear")
 
-        daily_runtime_s = 0.0
-        if history is not None and history.daily is not None:
-            today = dt_util.utcnow().astimezone(self._local_tz).date()
-            if history.daily.date_local == today:
-                daily_runtime_s = history.daily.runtime_s
+        daily_runtime_s = self.current_local_day_runtime_s(history)
         guard_failures = controller.final_on_guard_failures(
             session_id,
             authoritative_daily_runtime_s=daily_runtime_s,

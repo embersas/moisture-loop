@@ -224,6 +224,38 @@ class TestSensorEntities:
         next_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_next_eligible")
         assert env.hass.states.get(next_eid).state != "unknown"
 
+    async def test_runtime_today_resets_on_local_day_rollover(self, env) -> None:
+        """§28.1: a stale daily bucket contributes nothing to the current local day.
+
+        The bucket is only rolled over by its owning controller when the next
+        session starts, so between local midnight and that session the persisted
+        ``date_local`` still names the previous day.
+        """
+        await set_moisture(env, "20")
+        await advance(env, 300)  # pulse ends -> SOAKING
+        await advance(env, 1200)
+        await set_moisture(env, "45")  # target reached, session complete
+        runtime_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_watering_runtime_today")
+        assert float(env.hass.states.get(runtime_eid).state) > 0.0
+
+        controller = env.runtime.controllers[env.subentry_id]
+        before = env.runtime.canonical_zone_authority(controller)[1]
+        charged_day = before.daily.date_local
+        charged_runtime = before.daily.runtime_s
+        assert charged_runtime > 0.0
+
+        # Cross local midnight with no new watering (45 is above the start threshold).
+        await advance(env, 24 * 3600)
+
+        history = env.runtime.canonical_zone_authority(controller)[1]
+        # The persisted bucket is genuinely stale, not rolled over...
+        assert history.daily.date_local == charged_day
+        assert history.daily.runtime_s == pytest.approx(charged_runtime)
+        assert history.daily.date_local != env.runtime.local_today()
+        # ...yet today's reported runtime is zero.
+        assert env.runtime.current_local_day_runtime_s(history) == 0.0
+        assert float(env.hass.states.get(runtime_eid).state) == pytest.approx(0.0)
+
     async def test_next_eligible_unknown_without_history(self, env) -> None:
         next_eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_next_eligible")
         assert env.hass.states.get(next_eid).state == "unknown"
