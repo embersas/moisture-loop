@@ -111,12 +111,10 @@ The public source and documentation repository is
 problems can be reported through its
 [issue tracker](https://github.com/embersas/moisture-loop/issues).
 
-MoistureLoop is not included in the HACS default store. It can be installed as
-a HACS custom repository:
+MoistureLoop is included in the HACS default store:
 
-1. Open HACS → Integrations → ⋮ → Custom repositories.
-2. Add `https://github.com/embersas/moisture-loop` as category Integration.
-3. Install MoistureLoop and restart Home Assistant.
+1. Open HACS and search for MoistureLoop.
+2. Download it and restart Home Assistant.
 
 For manual development installation, copy
 `custom_components/moisture_loop/` into the Home Assistant
