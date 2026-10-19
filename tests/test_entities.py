@@ -199,6 +199,25 @@ class TestSensorEntities:
         assert state.attributes["external_actuator_on"] is False
         assert state.attributes["water_resource_blockers"] == []
 
+    async def test_status_exposes_applied_settings(self, env) -> None:
+        """§28.1: card-facing mirror of the settings the runtime actually applied."""
+        eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
+        applied = env.hass.states.get(eid).attributes["applied_settings"]
+        assert applied == {
+            "name": IDENTITY["name"],
+            "start_threshold": THRESHOLDS["start_threshold"],
+            "target_threshold": THRESHOLDS["target_threshold"],
+            "pulse_duration_s": THRESHOLDS["pulse_duration"],
+            "soak_duration_s": THRESHOLDS["soak_duration"],
+            "max_cycles": LIMITS["max_cycles"],
+            "max_session_runtime_s": LIMITS["max_session_runtime"],
+            "max_daily_runtime_s": LIMITS["max_daily_runtime"],
+            "min_session_interval_s": LIMITS["min_session_interval"],
+            "sensor_max_age_s": LIMITS["sensor_max_age"],
+            "actuator_confirm_timeout_s": LIMITS["actuator_confirm_timeout"],
+            "manual_max_duration_s": LIMITS["manual_max_duration"],
+        }
+
     async def test_status_reflects_watering_session(self, env) -> None:
         await set_moisture(env, "20")
         eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")

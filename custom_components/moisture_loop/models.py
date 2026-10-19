@@ -1563,6 +1563,10 @@ class NormalizedZoneSettings:
             manual_max_duration_s=config.manual_max_duration_s,
         )
 
+    def as_dict(self) -> dict:
+        """Return the §9 settings as a plain serializable mapping."""
+        return {field: getattr(self, field) for field in self.__dataclass_fields__}
+
     def validate(self, sensor_entity_id: str, actuator_entity_id: str) -> None:
         ZoneConfig(
             name=self.name,
@@ -2232,17 +2236,13 @@ def _identity_to_dict(identity: SensorIdentity | AppliedEntityIdentity | Actuato
     return result
 
 
-def _settings_to_dict(settings: NormalizedZoneSettings) -> dict:
-    return {field: getattr(settings, field) for field in settings.__dataclass_fields__}
-
-
 def _shadow_to_dict(shadow: AppliedConfigurationShadow) -> dict:
     return {
         "subentry_id": shadow.subentry_id,
         "config_fingerprint": shadow.config_fingerprint,
         "entry_snapshot_fingerprint": shadow.entry_snapshot_fingerprint,
         "applied_generation": shadow.applied_generation,
-        "normalized_settings": _settings_to_dict(shadow.normalized_settings),
+        "normalized_settings": shadow.normalized_settings.as_dict(),
         "sensor_identity": _identity_to_dict(shadow.sensor_identity),
         "actuator_identity": _identity_to_dict(shadow.actuator_identity),
     }

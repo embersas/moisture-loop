@@ -150,6 +150,11 @@ class ZoneStatusSensor(MoistureLoopZoneEntity, SensorEntity):
                 if record and record.applied_config
                 else None
             ),
+            "applied_settings": (
+                record.applied_config.normalized_settings.as_dict()
+                if record and record.applied_config
+                else None
+            ),
         }
 
 
