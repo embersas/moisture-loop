@@ -2,7 +2,7 @@
 
 Table-driven coverage for every formal transition T1-T59, every guard
 branch, exact threshold/time equality, watchdog token semantics, race
-arbitration, with the Stage-7 I1-I37 matrix maintained in the mechanical
+arbitration, with the Stage-7 I1-I38 matrix maintained in the mechanical
 traceability layer. Pure layer: runs with no homeassistant installed,
 controlled time inputs, no real sleeps.
 """

@@ -111,6 +111,14 @@ class ZoneStatusSensor(MoistureLoopZoneEntity, SensorEntity):
             "moisture_classification": observation.classification.value,
             "moisture_reported_at_utc": _iso(observation.reported_at_utc),
             "external_actuator_on": controller.external_on,
+            # Observational accuracy detectors (§10.5, §19.6, I38).
+            "unresponsive_sessions": controller.unresponsive_sessions,
+            "last_session_peak_rise": controller.last_session_peak_rise,
+            "reading_suspect": controller.plausibility.suspect,
+            "reading_suspect_since": _iso(controller.plausibility.suspect_since_utc),
+            "reading_suspect_reference": (
+                controller.plausibility.reference_value if controller.plausibility.suspect else None
+            ),
             "waiting_for_slot": (
                 slots.owner != controller.zone_id and controller.zone_id in slots.queue
             ),

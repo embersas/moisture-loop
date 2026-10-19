@@ -45,7 +45,13 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
-from .const import MOISTURE_MAX, MOISTURE_MIN, OFF_TOTAL_ATTEMPTS
+from .const import (
+    MOISTURE_MAX,
+    MOISTURE_MIN,
+    OFF_TOTAL_ATTEMPTS,
+    RESPONSE_MIN_RISE,
+    UNRESPONSIVE_STREAK,
+)
 from .models import (
     ActuatorAssessment,
     ActuatorBecameUnavailable,
@@ -85,6 +91,7 @@ from .models import (
     PersistState,
     PossibleFlowOwner,
     PulseDeadlineReached,
+    ReadingPlausibility,
     ReleaseSlot,
     RemoveBlocker,
     RequestSlot,
@@ -106,8 +113,10 @@ from .models import (
     WatchdogFired,
     WatchdogToken,
     ZoneConfig,
+    assess_reading_plausibility,
     config_fingerprint,
     current_day_charge,
+    next_unresponsive_streak,
 )
 from .reconciliation import (
     FinalOnAuthorizationResult,
@@ -536,6 +545,12 @@ class ZoneController:
         )
         self._external_on = False
         self._armed_watchdog: WatchdogToken | None = None
+        # Observational accuracy detectors (§10.5, §19.6): in memory only,
+        # never an input to decide() (I38).
+        self._plausibility = ReadingPlausibility()
+        self._session_peak: tuple[str, float] | None = None
+        self._unresponsive_sessions = 0
+        self._last_session_peak_rise: float | None = None
         self._actuator = ActuatorAdapter(hass, config.actuator)
         self._assessment = ActuatorAssessment(False, False, False)
         self._adapter = MoistureAdapter(
@@ -811,7 +826,7 @@ class ZoneController:
         """
         observation = self._adapter.scan_current()
         async with self._lock:
-            self._observation = observation
+            self._observe_locked(observation)
             if not self.runtime_eligible:
                 return Decision(transition_id=None, new_state=None, no_op=True)
             decision = await self._decide_and_apply_locked(MoistureReport(observation))
@@ -872,6 +887,26 @@ class ZoneController:
     @property
     def last_summary(self) -> SessionSummary | None:
         return self._last_summary
+
+    @property
+    def plausibility(self) -> ReadingPlausibility:
+        return self._plausibility
+
+    @property
+    def session_peak(self) -> float | None:
+        session = self._session
+        peak = self._session_peak
+        if session is None or peak is None or peak[0] != session.session_id:
+            return session.moisture_at_start if session is not None else None
+        return peak[1]
+
+    @property
+    def unresponsive_sessions(self) -> int:
+        return self._unresponsive_sessions
+
+    @property
+    def last_session_peak_rise(self) -> float | None:
+        return self._last_session_peak_rise
 
     @property
     def external_on(self) -> bool:
@@ -1114,10 +1149,46 @@ class ZoneController:
 
     async def _async_moisture(self, observation: MoistureObservation) -> None:
         async with self._lock:
-            self._observation = observation
+            self._observe_locked(observation)
             if self.runtime_eligible:
                 await self._decide_and_apply_locked(MoistureReport(observation))
         self._notify_listeners()
+
+    def _observe_locked(self, observation: MoistureObservation) -> None:
+        """Adopt an observation and fold it into the §10.5/§19.6 detectors.
+
+        Observation-only (I38): the detectors are updated before the decision
+        so a deciding recheck counts towards the session peak, but nothing
+        here is read by the state machine.
+        """
+        self._observation = observation
+        previous = self._plausibility
+        self._plausibility = assess_reading_plausibility(previous, observation)
+        if self._plausibility.suspect and not previous.suspect:
+            _LOGGER.warning(
+                "Zone %s: moisture reading dropped from %s to %s in one report; "
+                "the probe may be dislodged or disturbed",
+                self.zone_id,
+                self._plausibility.reference_value,
+                observation.value,
+            )
+        elif previous.suspect and not self._plausibility.suspect:
+            _LOGGER.info(
+                "Zone %s: moisture reading %s is back in band with %s",
+                self.zone_id,
+                observation.value,
+                previous.reference_value,
+            )
+        session = self._session
+        if (
+            session is not None
+            and session.mode is SessionMode.AUTO
+            and observation.classification is MoistureClassification.VALID
+        ):
+            assert observation.value is not None  # VALID invariant (§10.2)
+            current = self.session_peak
+            peak = observation.value if current is None else max(current, observation.value)
+            self._session_peak = (session.session_id, peak)
 
     @callback
     def _on_sensor_removed(self) -> None:
@@ -1548,6 +1619,38 @@ class ZoneController:
         # §19.4: every created session resets the minimum interval when
         # conservative accounting closes.
         self._last_session_end = ended
+        self._track_session_response(closed, self._last_summary)
+
+    def _track_session_response(self, closed: SessionContext, summary: SessionSummary) -> None:
+        """§19.6 observation-only response tracking for one closed session (I38)."""
+        tracked = self._session_peak
+        self._session_peak = None
+        if closed.mode is not SessionMode.AUTO:
+            return
+        rise: float | None = None
+        if closed.moisture_at_start is not None:
+            readings = [closed.moisture_at_start]
+            if closed.last_recheck_value is not None:
+                readings.append(closed.last_recheck_value)
+            if tracked is not None and tracked[0] == closed.session_id:
+                readings.append(tracked[1])
+            rise = max(readings) - closed.moisture_at_start
+        self._last_session_peak_rise = rise
+        previous = self._unresponsive_sessions
+        streak = next_unresponsive_streak(previous, summary, rise)
+        self._unresponsive_sessions = streak
+        if previous < UNRESPONSIVE_STREAK <= streak:
+            _LOGGER.warning(
+                "Zone %s: %d consecutive automatic sessions ran to a limit without the "
+                "probe rising %.0f points (last session %.0f s); check probe placement "
+                "and water delivery",
+                self.zone_id,
+                streak,
+                RESPONSE_MIN_RISE,
+                summary.runtime_s,
+            )
+        elif previous >= UNRESPONSIVE_STREAK and streak == 0:
+            _LOGGER.info("Zone %s: probe responded to watering again", self.zone_id)
 
     def _session_payload(self, session: SessionContext | None) -> dict:
         return {

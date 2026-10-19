@@ -227,6 +227,24 @@ class TestSensorEntities:
         assert state.attributes["cycle"] == 1
         assert state.attributes["sensor_fresh_until_utc"] is not None
 
+    async def test_sp1_status_exposes_reading_suspicion(self, env) -> None:
+        eid = entity_id(env.hass, "sensor", f"{env.subentry_id}_status")
+        before = env.hass.states.get(eid).attributes
+        assert before["reading_suspect"] is False
+        assert before["reading_suspect_reference"] is None
+        assert before["unresponsive_sessions"] == 0
+        assert before["last_session_peak_rise"] is None
+        # 60 -> 38 in one report: implausible, but above start (no session).
+        await set_moisture(env, "60")
+        await advance(env, 60)
+        dropped_at = dt_util.utcnow()
+        await set_moisture(env, "38")
+        state = env.hass.states.get(eid)
+        assert state.state == "idle"
+        assert state.attributes["reading_suspect"] is True
+        assert state.attributes["reading_suspect_reference"] == 60.0
+        assert state.attributes["reading_suspect_since"] == dropped_at.isoformat()
+
     async def test_runtime_today_and_last_session(self, env) -> None:
         await set_moisture(env, "20")
         await advance(env, 300)  # pulse ends -> SOAKING

@@ -382,6 +382,18 @@ class TestDiagnostics:
         # Measured vs estimated runtime is explicit.
         assert session["runtime_estimated"] is False
 
+    async def test_nr7_diagnostics_expose_live_detector_state(self, env) -> None:
+        await set_moisture(env, "60")
+        await advance(env, 60)
+        await set_moisture(env, "38")  # implausible drop that stays above start
+        diagnostics = await async_get_config_entry_diagnostics(env.hass, env.entry)
+        detectors = diagnostics["zones"][env.subentry_id]["runtime"]["accuracy_detectors"]
+        assert detectors["unresponsive_sessions"] == 0
+        assert detectors["session_peak"] is None
+        assert detectors["reading_suspect"] is True
+        assert detectors["plausibility_reference_value"] == 60.0
+        assert detectors["reading_suspect_since"] == dt_util.utcnow().isoformat()
+
     async def test_diagnostics_retained_tombstone_without_device(self, env) -> None:
         record_id = env.runtime.controllers[env.subentry_id].safety_record_id
         env.hass.config_entries.async_remove_subentry(env.entry, env.subentry_id)

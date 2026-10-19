@@ -6386,3 +6386,104 @@ priority and must not be gated by the pending hacs/default submission.
   the soil is very free-draining) predicts a longer pulse will deep-percolate
   rather than spread laterally, so the moisture response should be watched
   before concluding the longer pulse helps.
+
+## Session Log — 2026-10-19 (spec.9 observational accuracy detectors)
+
+Authorized by the user in this session: "Approve Phase 1 (observation-only
+spec.9) for both detections, with the proposed constants. Start the spec
+revision and implementation." The proposal reviewed was
+`SPEC9_ACCURACY_GUARDS_PROPOSAL.md` (not part of this branch). **Phase 2
+(withholding water on an implausible drop, Store schema 4, a Repair) was NOT
+authorized** and is not implemented.
+
+Work is on branch `feat/spec9-accuracy-observation`, stacked on
+`feat/status-applied-settings` (the presentation-only `applied_settings`
+status attribute), which sits on `fix/runtime-today-local-day-rollover`
+(`57d665a`). Nothing is merged to `main`, tagged, released, or deployed.
+
+### Live evidence that motivated it
+
+- Zones 1 and 3 used about 170 L per session (Zone 3 287 L in one day) with
+  probe changes of 0-1 points. Every session ended on an ordinary constrained
+  reason, so nothing was reported.
+- 2026-10-13 12:11 local: the Zone 1 probe dropped 24 -> 0 in one report and
+  read 0-6 for about two days. At 12:24 the Zone 2 probe dropped 22 -> 11. Both
+  were VALID under §10.1, below start, and would have watered to the daily cap
+  if those zones had been enabled. The cause of both drops is unexplained. They
+  are not the probe calibration, which entity-registry and statistics evidence
+  dates to 2026-09-27 (renames at 10:40 local, pot swings that afternoon), and
+  there was no watering or rain at the time.
+- Real fast drops seen in the same window lost a modest fraction of a high
+  reading (Zone 5 71 -> 59 while saturated soil drained, ratio 0.83).
+
+### Specification — `0.1.0-spec.8` -> `0.1.0-spec.9`
+
+- New §10.5 (reading plausibility) and §19.6 (session response tracking), both
+  strictly observational.
+- New invariant **I38 — Detection neutrality**.
+- §28.1 `status` attributes, §33.1 log rows, §33.2 diagnostics, §42 `0.1.3`
+  bullet, §44 and §45 item 27 updated.
+- §39.2 gains **NR1-NR7** and **SP1-SP5**: inventory **142 -> 154**, I1-I37 ->
+  **I1-I38**. T1-T59, the five states, Store schema 3, the §10.1/§10.2
+  classification and the §4 non-goals are unchanged.
+
+### Implementation
+
+- `const.py`: `IMPLAUSIBLE_MAX_GAP_S` 900, `IMPLAUSIBLE_MIN_DROP` 8,
+  `IMPLAUSIBLE_MAX_RATIO` 0.65, `RESPONSE_MIN_RISE` 2, `UNRESPONSIVE_STREAK` 3.
+- `models.py` (pure): `next_unresponsive_streak`, `ReadingPlausibility`,
+  `assess_reading_plausibility`.
+- `zone_controller.py`: `_observe_locked` (one path for listener and
+  fallback-scan observations) folds each observation into both detectors
+  before the unchanged `decide()` call. `_track_session_response` runs from the
+  single `_finalize_summary` closure path. State is in memory only, and a
+  rebuilt controller starts from scratch.
+- `sensor.py` status attributes `unresponsive_sessions`,
+  `last_session_peak_rise`, `reading_suspect`, `reading_suspect_since`,
+  `reading_suspect_reference`. `diagnostics.py`
+  `runtime.accuracy_detectors`.
+- `manifest.json` 0.1.2 -> 0.1.3. README "Accuracy advisories" section.
+  CLAUDE.md and DEVELOPMENT.md counts updated.
+- `state_machine.py` is untouched.
+
+### Tests actually run
+
+All on 2026-10-19, Windows 11, inside the branch worktree, on the combined
+tip (this commit on top of `feat/status-applied-settings`):
+
+- Pure (`.venv`, Python 3.14.6, no Home Assistant): **476 passed** (451 + 25
+  new); `state_machine.py` 100% branch.
+- HA 2025.9.0 (`.venv-ha`, Python 3.13.12): HA1 contract script passed;
+  **990 passed + 1 documented pure-boundary skip** (953 + 1 `applied_settings`
+  entity test + 36 new collected items); **92.14%** overall branch (90% gate); `state_machine.py` 100% branch;
+  `scripts/check_traceability.py --pure-report pure.xml --ha-report
+  ha-2025.9.xml` -> "Stage-7 execution traceability passed".
+- HA 2026.8.3 (`.venv-ha-current`, Python 3.14.6): HA1 contract script passed;
+  **990 passed + 1 skip**, 91.99% branch, 28 min 11 s.
+- `ruff check .` and `ruff format --check .`: clean (49 files);
+  `git diff --check` clean.
+- Mutation check that the new tests can fail: five deliberate defects were each
+  injected into the real code and caught by their test, then reverted:
+  - peak tracking removed (NR4);
+  - `<` -> `<=` on the rise threshold (NR2);
+  - WARNING on every streak increment (NR5);
+  - exclusive gap boundary (SP2);
+  - a suspect reading suppressing evaluation (SP5).
+
+Not run: hosted CI, hassfest and HACS validation (nothing pushed); the local
+hassfest container (not attempted).
+
+### Deviations from specification
+
+None.
+
+### Remaining work
+
+- `[ ]` Once hosted CI is green, merge the stack into `main` in order
+  (`fix/runtime-today-local-day-rollover`, `feat/status-applied-settings`,
+  this branch) and push `main` to both remotes. The single rebase conflict, in
+  the §28.1 `status` row, is already resolved here, and the row lists both
+  `applied_settings` and the detector attributes.
+- `[ ]` Deploy to the live instance only with explicit authorization, then
+  watch real WARNING lines before tuning the constants.
+- `[ ]` Phase 2 needs its own authorization and spec revision.

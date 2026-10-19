@@ -912,6 +912,96 @@ NORMATIVE_TEST_EVIDENCE: dict[str, tuple[Evidence, ...]] = {
     # Minimum platform.
     "HA1": ha("tests/test_ha_contract.py::test_ha1_exact_minimum_source_contract"),
     "HA2": ha("tests/test_ha_contract.py::test_ha2_exact_minimum_harness_versions"),
+    # Observational accuracy detectors (spec.9 §10.5, §19.6).
+    "NR1": ha(
+        "tests/test_zone_controller.py::TestSessionResponseTracking::test_nr1_unresponsive_max_cycles_session_increments_counter"
+    ),
+    "NR2": both(
+        Evidence(
+            "tests/test_models.py::TestSessionResponseStreak::test_nr2_target_reached_and_a_threshold_rise_reset_the_streak",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_models.py::TestSessionResponseStreak::test_nr2_every_constrained_reason_is_evidence",
+            PURE,
+        ),
+    ),
+    "NR3": both(
+        Evidence(
+            "tests/test_models.py::TestSessionResponseStreak::test_nr3_non_evidence_closures_leave_the_streak_unchanged",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_models.py::TestSessionResponseStreak::test_nr3_unknown_start_reading_is_not_evidence",
+            PURE,
+        ),
+    ),
+    "NR4": ha(
+        "tests/test_zone_controller.py::TestSessionResponseTracking::test_nr4_mid_soak_peak_counts_as_a_response"
+    ),
+    "NR5": ha(
+        "tests/test_zone_controller.py::TestSessionResponseTracking::test_nr5_streak_crossing_logs_once_and_reset_logs_once"
+    ),
+    "NR6": ha(
+        "tests/test_zone_controller.py::TestSessionResponseTracking::test_nr6_streak_never_blocks_an_eligible_start"
+    ),
+    "NR7": both(
+        Evidence(
+            "tests/test_zone_controller.py::TestSessionResponseTracking::test_nr7_detector_state_is_memory_only",
+            HA,
+        ),
+        Evidence(
+            "tests/test_repairs.py::TestDiagnostics::test_nr7_diagnostics_expose_live_detector_state",
+            HA,
+        ),
+    ),
+    "SP1": both(
+        Evidence(
+            "tests/test_zone_controller.py::TestReadingPlausibilityController::test_sp1_one_report_drop_marks_reading_suspect_and_warns_once",
+            HA,
+        ),
+        Evidence(
+            "tests/test_entities.py::TestSensorEntities::test_sp1_status_exposes_reading_suspicion",
+            HA,
+        ),
+    ),
+    "SP2": both(
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp2_drop_and_ratio_boundaries_are_exact",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp2_gap_boundary_is_inclusive",
+            PURE,
+        ),
+    ),
+    "SP3": both(
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp3_rises_never_set_suspicion",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp3_non_valid_observations_neither_set_clear_nor_move",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp3_reports_not_newer_than_the_reference_are_ignored",
+            PURE,
+        ),
+    ),
+    "SP4": both(
+        Evidence(
+            "tests/test_models.py::TestReadingPlausibility::test_sp4_frozen_reference_holds_until_the_reading_is_back_in_band",
+            PURE,
+        ),
+        Evidence(
+            "tests/test_zone_controller.py::TestReadingPlausibilityController::test_sp4_back_in_band_clears_and_logs_once",
+            HA,
+        ),
+    ),
+    "SP5": ha(
+        "tests/test_zone_controller.py::TestReadingPlausibilityController::test_sp5_suspect_reading_never_blocks_an_eligible_start"
+    ),
 }
 
 
@@ -984,6 +1074,10 @@ INVARIANT_TRACEABILITY: dict[str, InvariantTrace] = {
     "I37": InvariantTrace(
         ("tombstone persistence", "exact acknowledgement"),
         ("PI27", "PI28", "TB4", "TB11", "TB12", "TB13", "TB14"),
+    ),
+    "I38": InvariantTrace(
+        ("ZoneController accuracy detectors", "assess_reading_plausibility"),
+        ("NR6", "NR7", "SP5"),
     ),
 }
 

@@ -22,6 +22,9 @@ from .const import (
     ACTUATOR_DOMAIN_SWITCH,
     ACTUATOR_DOMAIN_VALVE,
     DOMAIN,
+    IMPLAUSIBLE_MAX_GAP_S,
+    IMPLAUSIBLE_MAX_RATIO,
+    IMPLAUSIBLE_MIN_DROP,
     LEGACY_STORE_SCHEMA_VERSION,
     MANUAL_MAX_DURATION_MAX_S,
     MANUAL_MAX_DURATION_MIN_S,
@@ -38,6 +41,7 @@ from .const import (
     PRIOR_STORE_SCHEMA_VERSION,
     PULSE_DURATION_MAX_S,
     PULSE_DURATION_MIN_S,
+    RESPONSE_MIN_RISE,
     SENSOR_DOMAIN,
     SENSOR_MAX_AGE_MAX_S,
     SENSOR_MAX_AGE_MIN_S,
@@ -467,6 +471,88 @@ class SessionSummary:
     moisture_after: float | None
     started_at_utc: datetime
     ended_at_utc: datetime
+
+
+# ---------------------------------------------------------------------------
+# Observational accuracy detectors (§10.5, §19.6). In memory only; they never
+# feed a guard, transition, or persisted value (I38).
+# ---------------------------------------------------------------------------
+
+_RESPONSE_EVIDENCE_REASONS = frozenset(
+    {
+        CompletionReason.MAX_CYCLES,
+        CompletionReason.MAX_SESSION_RUNTIME,
+        CompletionReason.DAILY_RUNTIME_LIMIT,
+    }
+)
+
+
+def next_unresponsive_streak(streak: int, summary: SessionSummary, peak_rise: float | None) -> int:
+    """§19.6: update the consecutive unresponsive-session count for one closure.
+
+    Only measured AUTO sessions carry evidence. The three constrained reasons
+    are decided at a qualifying post-soak recheck (T26-T28), so a counted
+    session always delivered and soaked at least one whole pulse.
+    """
+    if summary.mode is not SessionMode.AUTO or summary.runtime_estimated:
+        return streak
+    if summary.reason is CompletionReason.TARGET_REACHED:
+        return 0
+    if summary.reason not in _RESPONSE_EVIDENCE_REASONS or peak_rise is None:
+        return streak
+    return streak + 1 if peak_rise < RESPONSE_MIN_RISE else 0
+
+
+@dataclass(frozen=True, slots=True)
+class ReadingPlausibility:
+    """§10.5 per-zone plausibility state: a reference and an optional suspicion.
+
+    While ``suspect_since_utc`` is set the reference is frozen at the pre-drop
+    value; otherwise it follows the latest VALID observation.
+    """
+
+    reference_value: float | None = None
+    reference_reported_at_utc: datetime | None = None
+    suspect_since_utc: datetime | None = None
+
+    @property
+    def suspect(self) -> bool:
+        return self.suspect_since_utc is not None
+
+
+def _implausible_drop(reference: float, value: float) -> bool:
+    return reference - value >= IMPLAUSIBLE_MIN_DROP and value <= IMPLAUSIBLE_MAX_RATIO * reference
+
+
+def assess_reading_plausibility(
+    state: ReadingPlausibility, observation: MoistureObservation
+) -> ReadingPlausibility:
+    """§10.5: fold one observation into the zone's plausibility state.
+
+    Rises are never implausible, and only VALID observations newer than the
+    reference participate, so replays and sensor outages cannot set, clear,
+    or move the reference.
+    """
+    if observation.classification is not MoistureClassification.VALID:
+        return state
+    value = observation.value
+    reported_at = observation.reported_at_utc
+    assert value is not None and reported_at is not None  # VALID invariant (§10.2)
+    reference = state.reference_value
+    reference_at = state.reference_reported_at_utc
+    if reference is None or reference_at is None:
+        return ReadingPlausibility(value, reported_at)
+    if reported_at <= reference_at:
+        return state
+    if state.suspect:
+        if _implausible_drop(reference, value):
+            return state
+        return ReadingPlausibility(value, reported_at)
+    if reported_at - reference_at <= timedelta(seconds=IMPLAUSIBLE_MAX_GAP_S) and (
+        _implausible_drop(reference, value)
+    ):
+        return ReadingPlausibility(reference, reference_at, suspect_since_utc=reported_at)
+    return ReadingPlausibility(value, reported_at)
 
 
 @dataclass(frozen=True, slots=True)

@@ -95,6 +95,14 @@ SENSOR_DOMAIN = "sensor"
 # OFF retry policy (SPECIFICATION.md §11.3: up to three total attempts).
 OFF_TOTAL_ATTEMPTS = 3
 
+# --- Observational accuracy detectors (SPECIFICATION.md §10.5, §19.6) -------
+# Fixed constants fitted to live probe traces; observation-only (I38).
+IMPLAUSIBLE_MAX_GAP_S = 15 * 60
+IMPLAUSIBLE_MIN_DROP = 8.0
+IMPLAUSIBLE_MAX_RATIO = 0.65
+RESPONSE_MIN_RISE = 2.0
+UNRESPONSIVE_STREAK = 3
+
 # --- Guard identifiers (SPECIFICATION.md §14 guard legend) ------------------
 GUARD_ENABLED = "G-EN"
 GUARD_FRESH = "G-FRESH"

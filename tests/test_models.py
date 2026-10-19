@@ -32,6 +32,7 @@ from custom_components.moisture_loop.models import (
     MoistureClassification,
     MoistureObservation,
     NormalizedZoneSettings,
+    ReadingPlausibility,
     ReasonClass,
     ResourceAssessment,
     RuntimeEstimationReason,
@@ -40,10 +41,13 @@ from custom_components.moisture_loop.models import (
     SensorIdentity,
     SessionContext,
     SessionMode,
+    SessionSummary,
     TransitionInput,
     WatchdogToken,
     ZoneConfig,
     ZoneRuntime,
+    assess_reading_plausibility,
+    next_unresponsive_streak,
 )
 
 NOW = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
@@ -673,3 +677,164 @@ class TestSpec4CanonicalModels:
     def test_safety_record_has_no_logical_zone_authority_fields(self) -> None:
         fields = set(SafetyRecord.__dataclass_fields__)
         assert fields.isdisjoint({"enabled", "state", "sensor_identity", "zone_fault", "session"})
+
+
+# ---------------------------------------------------------------------------
+# Observational accuracy detectors (§10.5, §19.6)
+# ---------------------------------------------------------------------------
+
+
+def _summary(
+    reason: CompletionReason,
+    *,
+    mode: SessionMode = SessionMode.AUTO,
+    estimated: bool = False,
+    before: float | None = 27.0,
+) -> SessionSummary:
+    return SessionSummary(
+        mode=mode,
+        reason=reason,
+        runtime_s=600.0,
+        runtime_estimated=estimated,
+        runtime_estimation_reason=(
+            RuntimeEstimationReason.RESTART_FOUND_ON if estimated else RuntimeEstimationReason.NONE
+        ),
+        requested_duration_s=None,
+        effective_duration_s=None,
+        clamp_reasons=(),
+        cycles=2,
+        moisture_before=before,
+        moisture_after=before,
+        started_at_utc=NOW,
+        ended_at_utc=NOW + timedelta(hours=1),
+    )
+
+
+def _valid(value: float, at: datetime) -> MoistureObservation:
+    return MoistureObservation(value, MoistureClassification.VALID, at, 0.0)
+
+
+class TestSessionResponseStreak:
+    """§19.6 counter rules, exercised through the function the controller calls."""
+
+    def test_nr2_target_reached_and_a_threshold_rise_reset_the_streak(self) -> None:
+        assert next_unresponsive_streak(2, _summary(CompletionReason.TARGET_REACHED), 0.0) == 0
+        exactly = const.RESPONSE_MIN_RISE
+        assert next_unresponsive_streak(2, _summary(CompletionReason.MAX_CYCLES), exactly) == 0
+        below = const.RESPONSE_MIN_RISE - 0.01
+        assert next_unresponsive_streak(2, _summary(CompletionReason.MAX_CYCLES), below) == 3
+
+    @pytest.mark.parametrize(
+        "reason",
+        [CompletionReason.MAX_SESSION_RUNTIME, CompletionReason.DAILY_RUNTIME_LIMIT],
+    )
+    def test_nr2_every_constrained_reason_is_evidence(self, reason: CompletionReason) -> None:
+        assert next_unresponsive_streak(1, _summary(reason), 0.0) == 2
+        assert next_unresponsive_streak(1, _summary(reason), 5.0) == 0
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            _summary(CompletionReason.MANUAL_COMPLETE, mode=SessionMode.MANUAL),
+            _summary(CompletionReason.USER_STOP, mode=SessionMode.MANUAL),
+            _summary(CompletionReason.USER_STOP),
+            _summary(CompletionReason.ZONE_DISABLED),
+            _summary(CompletionReason.EXTERNAL_ACTUATOR_STATE_CHANGE),
+            _summary(CompletionReason.CONFIG_RELOAD),
+            _summary(CompletionReason.CONFIG_CHANGED),
+            _summary(CompletionReason.HOME_ASSISTANT_SHUTDOWN),
+            _summary(CompletionReason.RESTART_RECOVERY),
+            _summary(CompletionReason.SENSOR_FAULT),
+            _summary(CompletionReason.ACTUATOR_FAULT),
+            _summary(CompletionReason.MAX_CYCLES, estimated=True),
+            _summary(CompletionReason.TARGET_REACHED, estimated=True),
+        ],
+        ids=lambda summary: (
+            f"{summary.mode.value}-{summary.reason.value}-{summary.runtime_estimated}"
+        ),
+    )
+    def test_nr3_non_evidence_closures_leave_the_streak_unchanged(
+        self, summary: SessionSummary
+    ) -> None:
+        # Both a flat and a strong rise leave it alone: no evidence either way.
+        assert next_unresponsive_streak(2, summary, 0.0) == 2
+        assert next_unresponsive_streak(2, summary, 10.0) == 2
+
+    def test_nr3_unknown_start_reading_is_not_evidence(self) -> None:
+        summary = _summary(CompletionReason.MAX_CYCLES, before=None)
+        assert next_unresponsive_streak(2, summary, None) == 2
+
+
+class TestReadingPlausibility:
+    """§10.5 drop rule, exercised through the function the controller calls."""
+
+    def _after(self, reference: float, value: float, gap_s: float) -> ReadingPlausibility:
+        state = assess_reading_plausibility(ReadingPlausibility(), _valid(reference, NOW))
+        return assess_reading_plausibility(state, _valid(value, NOW + timedelta(seconds=gap_s)))
+
+    def test_sp2_drop_and_ratio_boundaries_are_exact(self) -> None:
+        # 20 -> 12: drop exactly 8 at ratio 0.6.
+        assert self._after(20.0, 12.0, 60).suspect
+        # 40 -> 26: ratio exactly 0.65 with a 14-point drop.
+        assert self._after(40.0, 26.0, 60).suspect
+        # 40 -> 26.4: ratio 0.66 is a modest fraction, not implausible.
+        assert not self._after(40.0, 26.4, 60).suspect
+        # 7.9 -> 0: ratio 0 but the drop is below the 8-point floor.
+        assert not self._after(7.9, 0.0, 60).suspect
+        # Live evidence: the unexplained one-report drops 24 -> 0 and 22 -> 11
+        # are flagged; draining saturated soil 71 -> 59 is not.
+        assert self._after(24.0, 0.0, 60).suspect
+        assert self._after(22.0, 11.0, 60).suspect
+        assert not self._after(71.0, 59.0, 120).suspect
+
+    def test_sp2_gap_boundary_is_inclusive(self) -> None:
+        gap = const.IMPLAUSIBLE_MAX_GAP_S
+        assert self._after(24.0, 0.0, gap).suspect
+        assert not self._after(24.0, 0.0, gap + 1).suspect
+        # Beyond the gap the drop simply becomes the new reference.
+        assert self._after(24.0, 0.0, gap + 1).reference_value == 0.0
+
+    def test_sp3_rises_never_set_suspicion(self) -> None:
+        state = self._after(26.0, 77.0, 60)
+        assert not state.suspect
+        assert state.reference_value == 77.0
+
+    @pytest.mark.parametrize(
+        "observation",
+        [
+            MoistureObservation(0.0, MoistureClassification.STALE, NOW + timedelta(minutes=1), 1.0),
+            MoistureObservation(
+                None, MoistureClassification.INVALID, NOW + timedelta(minutes=1), 1.0
+            ),
+            MoistureObservation(None, MoistureClassification.UNAVAILABLE, None, None),
+        ],
+        ids=["stale", "invalid", "unavailable"],
+    )
+    def test_sp3_non_valid_observations_neither_set_clear_nor_move(
+        self, observation: MoistureObservation
+    ) -> None:
+        clean = assess_reading_plausibility(ReadingPlausibility(), _valid(24.0, NOW))
+        assert assess_reading_plausibility(clean, observation) == clean
+        suspect = assess_reading_plausibility(clean, _valid(0.0, NOW + timedelta(seconds=30)))
+        assert suspect.suspect
+        assert assess_reading_plausibility(suspect, observation) == suspect
+
+    def test_sp3_reports_not_newer_than_the_reference_are_ignored(self) -> None:
+        state = assess_reading_plausibility(ReadingPlausibility(), _valid(24.0, NOW))
+        # A replayed or out-of-order report at or before the reference time.
+        assert assess_reading_plausibility(state, _valid(0.0, NOW)) == state
+        assert assess_reading_plausibility(state, _valid(0.0, NOW - timedelta(seconds=1))) == state
+
+    def test_sp4_frozen_reference_holds_until_the_reading_is_back_in_band(self) -> None:
+        suspect = self._after(24.0, 0.0, 60)
+        assert suspect.reference_value == 24.0
+        assert suspect.suspect_since_utc == NOW + timedelta(seconds=60)
+        # 15 is still implausible against 24 (drop 9, ratio 0.625); the
+        # reference does not follow it, and the gap limit does not apply.
+        later = NOW + timedelta(hours=6)
+        still = assess_reading_plausibility(suspect, _valid(15.0, later))
+        assert still == suspect
+        # 16 > 0.65 * 24 = 15.6: back in band, and it becomes the reference.
+        cleared = assess_reading_plausibility(still, _valid(16.0, later + timedelta(minutes=1)))
+        assert not cleared.suspect
+        assert cleared.reference_value == 16.0

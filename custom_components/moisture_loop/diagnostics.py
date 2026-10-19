@@ -146,6 +146,7 @@ def _controller(controller: ZoneController | None) -> dict[str, Any] | None:
         return None
     observation = controller.observation
     operation = controller.off_operation
+    plausibility = controller.plausibility
     return {
         "controller_state": controller.state.value,
         "enabled": controller.enabled,
@@ -166,6 +167,23 @@ def _controller(controller: ZoneController | None) -> dict[str, Any] | None:
         },
         "external_actuator_on": controller.external_on,
         "may_be_flowing": controller.may_be_flowing,
+        "accuracy_detectors": {
+            "unresponsive_sessions": controller.unresponsive_sessions,
+            "session_peak": controller.session_peak,
+            "last_session_peak_rise": controller.last_session_peak_rise,
+            "plausibility_reference_value": plausibility.reference_value,
+            "plausibility_reference_reported_at_utc": (
+                plausibility.reference_reported_at_utc.isoformat()
+                if plausibility.reference_reported_at_utc
+                else None
+            ),
+            "reading_suspect": plausibility.suspect,
+            "reading_suspect_since": (
+                plausibility.suspect_since_utc.isoformat()
+                if plausibility.suspect_since_utc
+                else None
+            ),
+        },
         "off_operation": (
             {
                 "done": operation.done(),

@@ -308,6 +308,31 @@ the outlet, and loss of power or connectivity to the device. Because a genuine
 takeover is indistinguishable from a lost command, MoistureLoop treats the
 actuator as unproven until terminal OFF is observed for that exact identity.
 
+### Accuracy advisories
+
+MoistureLoop flags two situations where the moisture reading may not reflect
+the soil the zone waters. Both only inform you: neither stops, delays, or
+changes any watering.
+
+- **Unresponsive sessions.** The zone status attribute `unresponsive_sessions`
+  counts consecutive automatic sessions that ran to a cycle, session, or daily
+  limit without the reading ever rising 2 points above where it started. At
+  three, a warning is logged. The usual causes are a probe placed out of reach
+  of the emitters, water not reaching the soil (dry mulch, blocked emitters, a
+  leak), or no water flowing at all. A probe away from the emitters can stay
+  flat while plants beside them are watered adequately, so check the bed before
+  adding water.
+- **Implausible reading drop.** `reading_suspect` turns on, and a warning is
+  logged, when one report falls at least 8 points and by at least 35 % (for
+  example 24 to 0) within 15 minutes of the previous report. Soil does not
+  dry that fast; a probe pulled out of the soil or pushed into a different spot
+  does. `reading_suspect_reference` shows the reading before the drop. The flag
+  clears by itself once the reading returns near that value. Reseat the probe;
+  while the flag is on, MoistureLoop still waters on the reading it reports.
+
+Both are kept in memory only and start again after a restart, reload, or
+reconfiguration.
+
 The integration also emits `moisture_loop_session_started`,
 `moisture_loop_session_finished`, `moisture_loop_fault_set`, and
 `moisture_loop_fault_cleared` events.

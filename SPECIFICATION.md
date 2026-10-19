@@ -5,13 +5,20 @@
 | | |
 |---|---|
 | Status | Draft for review - implementation source of truth |
-| Spec version | `0.1.0-spec.8` |
-| Date | 2026-09-03 |
+| Spec version | `0.1.0-spec.9` |
+| Date | 2026-10-19 |
 | Integration name | MoistureLoop |
 | Domain | `moisture_loop` |
 | Target platform | Home Assistant >= 2025.9.0 |
 | Distribution | HACS custom integration |
 
+> **Revision note (spec.9, observational accuracy detectors, 2026-10-19):** spec.9 adds two strictly observational detectors, requested after a season of live operation. Neither changes what the controller does.
+>
+> 1. **Session response tracking (§19.6).** Zones whose probe never moved used their whole session and daily budget, sometimes for weeks. One zone took about 170 L per session and 287 L in one day with a 0-1 point change. Every such session ended on an ordinary constrained reason, so nothing reported a problem. Each zone now counts consecutive automatic sessions that ran to a limit without the session's peak reading rising `RESPONSE_MIN_RISE` (2 points) above `moisture_before`. Reaching three logs one WARNING.
+> 2. **Reading plausibility (§10.5).** On 2026-10-13 one probe dropped 24 -> 0 in a single report and then read 0-6 for two days, and a second probe dropped 22 -> 11 in a single report thirteen minutes later. The cause of both drops is unexplained: there was no watering and no rain, and they came sixteen days after the probes' 2026-09-27 calibration. Under §10.1 both readings were VALID and below the start threshold, so an enabled zone would have watered to its daily cap. Real fast drops lose a modest fraction of a high reading (71 -> 59 while saturated soil drained during heavy rain). Implausible ones lose a large fraction within one report. A VALID report at least 8 points and at least 35 % below the previous VALID report, received within 15 minutes of it, now marks the reading suspect, logs one WARNING, and exposes the suspicion until the reading returns into band.
+>
+> Both detectors live in memory only. They log, expose `status` attributes, and fill diagnostics. They change no guard, transition, fault, Repair, event, actuator command, slot request, or persisted value. New invariant **I38** states that neutrality, and every test that proves it would fail on accidental blocking. The five controller states, T1-T59 (IDs, topology, guards, actions, destinations, reasons), I1-I37, Store schema 3, the §10.1/§10.2 classification, the §4 non-goals (including "stuck-sensor auto-blocking"), and the Home Assistant 2025.9.0 minimum are unchanged. The normative inventory gains twelve IDs: NR1-NR7 for response tracking and SP1-SP5 for reading plausibility. §39.2 therefore holds **154** IDs, and the invariants become I1-I38. Acting on either detector (withholding water, or raising a Repair) remains deferred and would need its own specification revision.
+>
 > **Revision note (behavioural, 2026-08-27):** spec.6 is a normative behavioural correction to the initial operational state of a newly configured zone. First live first-user setup showed that a fresh zone started `enabled=true` in IDLE, so completing the Add zone flow while the real sensor already read below the start threshold — with a healthy actuator and every safety gate passing — began AUTO irrigation immediately. That was consistent with the controller but is not an acceptable default for a first release that commands physical water. A newly configured zone therefore now begins `zone_runtime.enabled = false` in state DISABLED, and no AUTO or MANUAL admission is possible for it until the user explicitly enables it through a supported control path (§8, §9, §24.4 **Add**, I20, LC14). This applies to fresh zone creation only: every existing zone keeps its persisted `enabled` value across restart, reload, reconfiguration, same-actuator delete/re-add, schema migration, and A -> B replacement, so the new default is never a migration that disables existing users. The five controller states, T1-T59 (IDs, topology, guards, actions, destinations, reasons), I1-I37, Store schema 2, the strict §23.4 verification contract, the actuator-hazard model, accounting, and the Home Assistant 2025.9.0 minimum are all unchanged; creation derives DISABLED through the existing §24.4 `enabled`-first derivation rather than any new transition row. The normative behavioural inventory gains exactly one new ID, LC14, for the previously unowned fresh-zone default, so §39.2 becomes **135** IDs (LC1-LC14) instead of 134. All settled spec.5 behaviour remains normative except where this correction explicitly strengthens it.
 >
 > **Revision note (nomenclature only, 2026-08-27):** before the first 0.1.0 release the SoilSync product identity was abandoned because a materially overlapping agricultural/software business already uses that name. The canonical identity returned to **MoistureLoop**, domain `moisture_loop`, integration directory `custom_components/moisture_loop/`, public repository `embersas/moisture-loop`. Current identifiers in this document (actions `moisture_loop.*`, events `moisture_loop_*`, Store key prefix `moisture_loop.<entry_id>`, Repairs/translation domain, brand path) follow that identity. Controller behaviour, the five states, T1-T59, I1-I37, the 134 normative behavioural IDs, Store schema 2, the spec.5 Stage-1 shutdown lifecycle rules, `SHUTDOWN_OFF_BUDGET_S`, and the B1/B2 physical evidence recorded under the then-current SoilSync name are unchanged; the spec version stays `0.1.0-spec.5`, following the precedent that nomenclature-only edits do not increment it.
@@ -329,6 +336,28 @@ The configured moisture entity IDs are passed directly to `async_track_state_rep
 - entity registry removal: `CONFIGURATION_INVALID` and an ERROR Repair until reconfigured.
 
 Entity rename tracking is a prototype validation (§46). Actuator rename recovery uses durable Entity Registry identity first as defined in §§23 and 25; a textual entity ID change is never allowed to reset runtime budgets. Sensor rename handling follows the same registry-first applied-shadow discipline, but sensor identity has no authority to merge actuator safety histories.
+
+
+### 10.5 Reading plausibility (observational)
+
+A probe pulled out of the soil, or pushed into a different spot, can report a large in-range drop in a single report. §10.1 still classifies that reading VALID. In spec.9 MoistureLoop **detects and reports** such a drop. It does not act on it (I38).
+
+For each configured zone the controller keeps, in memory only, a plausibility reference: the value and `reported_at_utc` of the most recent VALID observation. It also keeps a suspect flag. With the fixed constants `IMPLAUSIBLE_MAX_GAP` = 15 minutes, `IMPLAUSIBLE_MIN_DROP` = 8 percentage points and `IMPLAUSIBLE_MAX_RATIO` = 0.65, a drop from reference `ref` to value `v` is **implausible** when:
+
+```text
+ref - v >= IMPLAUSIBLE_MIN_DROP  and  v <= IMPLAUSIBLE_MAX_RATIO * ref
+```
+
+Every VALID observation the controller processes is assessed, whether it comes from a changed state, an unchanged `state_reported` report, or the fallback scan:
+
+- An observation whose `reported_at_utc` is not later than the reference's is ignored. A replayed or repeated report can neither set nor clear suspicion.
+- Not suspect: if a reference exists, `reported_at_utc - reference reported_at_utc <= IMPLAUSIBLE_MAX_GAP`, and the drop is implausible, the reading becomes **suspect**. The reference is frozen at its pre-drop value, `reading_suspect_since` is set to the observation's `reported_at_utc`, and exactly one WARNING is logged. Otherwise the observation becomes the new reference.
+- Suspect: the first observation whose drop from the frozen reference is no longer implausible clears the suspicion, becomes the new reference, and logs exactly one INFO. The gap limit does not apply to clearing. Any other observation leaves the frozen reference and the suspicion unchanged.
+- STALE, INVALID and UNAVAILABLE observations neither set nor clear suspicion and never become the reference.
+
+Rises are never implausible: a wetting event can raise a reading by tens of points within a minute. Both conditions are needed. The point floor ignores small changes near the dry end. The ratio separates a large fraction lost at once from real drainage of saturated soil, which loses a modest fraction of a high reading.
+
+The reference and the suspect flag are not persisted. A reload, restart, or any reconfiguration that rebuilds the zone's controller discards them, and the next VALID observation becomes the new reference. A drop that happens entirely inside a sensor outage longer than `IMPLAUSIBLE_MAX_GAP`, or across a restart, is therefore not detected. Suspicion changes no classification, guard, transition, fault, Repair, event, actuator command, slot request, or persisted value (I38). It is exposed through the `status` sensor (§28.1), diagnostics (§33.2) and the log (§33.1).
 
 ---
 
@@ -869,6 +898,28 @@ Every accounted interval has a stable `accounting_contribution_id` and its attri
 7. never copy or merge A's possible-flow ownership, blockers, actuator fault, or acknowledgement requirement into B; those remain exclusively on A's safety record.
 
 This merge is persisted and read-back verified before B can become `ACTIVE` or pass an ON gate. Daily runtime is not capped during a merge; an over-limit conservative total remains visible and blocks subsequent water. B's existing contribution IDs are deduplicated, so reconciliation retries or A -> B -> A cycles cannot charge the same known session twice. Uncertain provenance may overcount but must never undercount. A distinct `zone_history_id` is required because `safety_record_id` cannot simultaneously represent actuator-specific hazard ownership and logical-zone budget continuity across a different-actuator replacement.
+
+
+### 19.6 Session response tracking (observational)
+
+A zone whose probe does not respond to its own watering still completes every session normally: it runs to `MAX_CYCLES`, `MAX_SESSION_RUNTIME` or `DAILY_RUNTIME_LIMIT`, then starts again after the minimum interval. In spec.9 MoistureLoop **counts and reports** such sessions. It does not act on them (I38).
+
+For each automatic session the controller tracks, in memory only, the **session peak**: the highest value among `moisture_at_start` and every VALID observation processed while that session exists. That includes reports during the pulse, pre-deadline SOAKING reports (T22) and the deciding recheck. The **peak rise** is `session peak - moisture_at_start`. The peak is used instead of the closing `moisture_before`/`moisture_after` pair because a responsive probe can peak during or just after a pulse and decay before the post-soak recheck. For a SOAKING session adopted through T50, only observations processed by the current run, plus the deciding recheck, contribute.
+
+Each zone keeps an `unresponsive_sessions` counter, in memory only. With the fixed constants `RESPONSE_MIN_RISE` = 2 percentage points and `UNRESPONSIVE_STREAK` = 3, each closed session updates it exactly once:
+
+| Closed session | Effect on `unresponsive_sessions` |
+|---|---|
+| AUTO, measured runtime (`runtime_estimated` false), reason `TARGET_REACHED` | reset to 0 |
+| AUTO, measured runtime, reason `MAX_CYCLES`, `MAX_SESSION_RUNTIME` or `DAILY_RUNTIME_LIMIT`, `moisture_at_start` known, peak rise `< RESPONSE_MIN_RISE` | increment by 1 |
+| the same, with peak rise `>= RESPONSE_MIN_RISE` | reset to 0 |
+| every other session: MANUAL, any cancellation, fault or restart-recovery reason, or any session with estimated runtime | unchanged |
+
+The three constrained reasons are decided only at a qualifying post-soak recheck (T26-T28), so a counted session always delivered and soaked at least one whole pulse. Cancellations, faults and estimated sessions carry no reliable evidence either way, so they neither count nor reset.
+
+When the counter rises to exactly `UNRESPONSIVE_STREAK`, exactly one WARNING is logged, naming the zone, the streak, `RESPONSE_MIN_RISE`, and the runtime of the session that reached it. Further increments log nothing. A reset from at or above `UNRESPONSIVE_STREAK` logs exactly one INFO. After that, a new crossing logs a new WARNING.
+
+The counter and the most recent closed AUTO session's peak rise (`null` when it had no `moisture_at_start`) are exposed through the `status` sensor (§28.1) and diagnostics (§33.2). Both are discarded by a reload, a restart, and any reconfiguration that rebuilds the zone's controller. Response tracking changes no guard, transition, fault, Repair, event, actuator command, slot request, or persisted value (I38). The counter measures whether the probe responds, not whether plants receive water. A probe placed away from the emitters can stay flat while plants beside them are watered adequately.
 
 ---
 
@@ -1708,6 +1759,7 @@ Each invariant is formal and testable.
 - **I35 — Durable identity, re-add, and replacement:** exact durable Entity Registry identity after delete/re-add reuses the same canonical mutable `safety_record_id`/`safety_lineage_id`; textual entity-ID equality alone cannot merge or clear ambiguous state. A -> B retains A independently, resolves B independently, and preserves the zone's conservative runtime/minimum interval without transferring A's blockers, faults, or accounting. Operational/presentation state follows the logical zone's `zone_runtime` authority throughout: reactivation reuses actuator safety identity only, never the record's historical operational state, and same-actuator re-add preserves the retained zone lineage's `zone_runtime` while re-evaluating sensor/configuration validity against the newly applied subentry.
 - **I36 — Latest-snapshot authorization:** stale/superseded listener or worker work can never publish an outdated applied snapshot, clear the configuration barrier, detach unresolved evidence, or authorize ON.
 - **I37 — Tombstone durability:** schema migration and lifecycle changes fail closed, v0.1 never automatically purges a RETIRED tombstone, and exact-identity reactivation mutates that same retained canonical record rather than creating a source/owner pair; acknowledgement and blocker release target exactly one durable safety record/lineage.
+- **I38 — Detection neutrality:** the §10.5 reading-plausibility detector and §19.6 session response tracking are observational. They never change an observation's classification, a guard result, transition, fault, Repair, event, actuator command, slot request, or persisted Store value. Their only effects are log lines, `status` attributes and diagnostics fields.
 
 ---
 
@@ -1719,7 +1771,7 @@ All entities for an `ACTIVE` configured zone use stable `{subentry_id}_{key}` un
 
 | Key | Content |
 |---|---|
-| `status` | enum controller state; attributes runtime lifecycle, applied/observed reconciliation generation, dirty state, mode, cycle, runtime, estimated flag/reason, waiting, `sensor_fresh_until_utc`, active/retained fault, moisture/class/report time, external actuator ON, sorted water-resource blockers by safety record/reason, and `applied_settings`, the normalized §9 settings of the applied configuration shadow (`null` when the record has no applied shadow) |
+| `status` | enum controller state; attributes runtime lifecycle, applied/observed reconciliation generation, dirty state, mode, cycle, runtime, estimated flag/reason, waiting, `sensor_fresh_until_utc`, active/retained fault, moisture/class/report time, external actuator ON, sorted water-resource blockers by safety record/reason, `applied_settings`, the normalized §9 settings of the applied configuration shadow (`null` when the record has no applied shadow), and the observational detector state: `unresponsive_sessions` and `last_session_peak_rise` (§19.6), and `reading_suspect`, `reading_suspect_since` and `reading_suspect_reference` (§10.5) |
 | `watering_runtime_today` | conservative current local-day runtime from the configured zone's `zone_history_id`, including verified A -> B merge contributions |
 | `last_session` | end timestamp; reason, mode, runtime, estimate metadata, cycles, moisture before/after, requested/effective manual duration and clamp reasons |
 | `next_eligible` | derived min-interval timestamp from the logical zone history when otherwise meaningful |
@@ -1811,8 +1863,8 @@ Pulse-level and routine reconciliation bus events remain omitted to avoid noise.
 | Level | Events |
 |---|---|
 | DEBUG | individual moisture observations/reports, evaluation guards, pulse start/stop, soak start/end, recheck details, queue changes, unchanged reconciliation comparisons |
-| INFO | session start/success, significant explicit manual action, duration clamping, fault auto-clear, external-flow blocker add/remove, clean tombstone retirement/same-record reactivation, verified A -> B zone-history merge |
-| WARNING | constrained completion, external interference, sensor-fault termination, crash reconciliation with OFF proven, estimated runtime, native deletion requiring active closure |
+| INFO | session start/success, significant explicit manual action, duration clamping, fault auto-clear, external-flow blocker add/remove, clean tombstone retirement/same-record reactivation, verified A -> B zone-history merge, unresponsive-session streak reset (§19.6), implausible-drop suspicion cleared (§10.5) |
+| WARNING | constrained completion, external interference, sensor-fault termination, crash reconciliation with OFF proven, estimated runtime, native deletion requiring active closure, unresponsive-session streak reached (§19.6), implausible reading drop (§10.5) |
 | ERROR | actuator availability/ON timeout, config invalid, identity conflict/missing tombstone actuator, Store/migration integrity loss, listener/reconciliation/reload failure |
 | CRITICAL-level Repair + ERROR log | actuator OFF not proven after retries |
 
@@ -1828,6 +1880,7 @@ Diagnostics include:
 - every ACTIVE/DELETE_PENDING/RETIRED safety record, its stable safety lineage, current/previous subentry IDs, current/historical `zone_history_id` references, immutable applied shadow, stored actuator registry identity/last entity ID/status, identity conflicts, actuator fault/acknowledgement, open accounting, normalized observation, active AUTO freshness deadline, actuator classification, slot owner, and the full sorted blocker set;
 - each zone history's current/previous subentry IDs, `zone_runtime` (enabled, controller state, zone fault, sensor identity, session ownership), daily aggregate and contribution IDs, source safety-record attribution, conservative-unattributed amount/merge provenance, latest session end, and any in-progress A -> B merge;
 - current session anchors, termination request state, OFF-operation state;
+- per configured zone, the observational detector state: `unresponsive_sessions`, the current session peak, `last_session_peak_rise`, the plausibility reference value and report time, and the suspect flag, its time, and its frozen reference;
 - runtime totals plus estimate flag/reason and current-day split charge;
 - last 50 transitions in an in-memory ring buffer;
 - raw versioned store after standard redaction.
@@ -2422,6 +2475,21 @@ Minimum-platform tests:
 - **HA1:** a release-source contract test/checklist verifies every API/lifecycle claim in §5.1 and §5.5 against both the exact declared minimum tag and the explicitly supported current release, including `ConfigEntry.add_update_listener`, post-mutation/unawaited removal notification, `ConfigSubentryFlow.async_update_and_abort`, the prohibition on listener plus `async_update_reload_and_abort`, public `entry.subentries`, `Store.atomic_writes`, `HomeAssistant.async_add_shutdown_job` and its returned removal callback, Stage-1 shutdown-job ordering and timeout, background-task cancellation ordering, `CoreState.stopping`, `EVENT_HOMEASSISTANT_STOP`, `EVENT_HOMEASSISTANT_FINAL_WRITE`, and `Store.async_save` immediate-versus-deferred write behaviour.
 - **HA2:** CI runs the HA harness against 2025.9.0 and the explicitly supported current HA version when dependency/Python constraints permit one matrix. If they cannot share a clean matrix, 2025.9.0 remains a mandatory dedicated release job and the current version runs separately; the release checklist records exact Core-tag source verification and no untested version compatibility is claimed.
 
+Observational accuracy-detector tests:
+
+- **NR1:** a real automatic session that closes `MAX_CYCLES` with a session peak rise below `RESPONSE_MIN_RISE` increments the zone's `unresponsive_sessions` from 0 to 1 and records that peak rise as `last_session_peak_rise`.
+- **NR2:** `TARGET_REACHED` resets a non-zero counter to 0. A constrained AUTO session whose peak rise is exactly `RESPONSE_MIN_RISE` also resets it, while a peak rise just below it increments.
+- **NR3:** MANUAL sessions, every cancellation reason, `SENSOR_FAULT`, `ACTUATOR_FAULT`, `RESTART_RECOVERY`, any session with estimated runtime, and a constrained session with unknown `moisture_at_start` all leave the counter unchanged.
+- **NR4:** a pre-deadline SOAKING report above `moisture_at_start + RESPONSE_MIN_RISE`, followed by a qualifying recheck back near the start value and a `MAX_CYCLES` closure, counts as a response (reset), not as an unresponsive session.
+- **NR5:** the counter rising to exactly `UNRESPONSIVE_STREAK` logs exactly one WARNING. Further increments log nothing more, a reset from the streak logs exactly one INFO, and a later new crossing logs a new WARNING.
+- **NR6:** a zone whose counter is at or above `UNRESPONSIVE_STREAK`, reading dry, fresh and otherwise eligible, still takes T1 and commands ON (I38).
+- **NR7:** detector state is held in memory only. It writes nothing to the Store, a controller rebuilt from the same Store (as reload, restart and reconfiguration do) starts with `unresponsive_sessions` 0 and no suspicion, and diagnostics expose the live detector state.
+- **SP1:** a VALID 24 followed 60 seconds later by a VALID 0 for the same zone sets `reading_suspect` with frozen reference 24 and since-time equal to the drop report, shows them on the `status` sensor, and logs exactly one WARNING, however many further implausible reports follow.
+- **SP2:** the implausible-drop boundaries are exact: a drop of exactly `IMPLAUSIBLE_MIN_DROP` at a ratio of exactly `IMPLAUSIBLE_MAX_RATIO` is implausible; one point less of drop, or a ratio above `IMPLAUSIBLE_MAX_RATIO`, is not; a report exactly `IMPLAUSIBLE_MAX_GAP` after the reference is compared, and one later report is not.
+- **SP3:** rises of any size never set suspicion. STALE, INVALID and UNAVAILABLE observations, and observations not newer than the reference, neither set nor clear it and never replace the reference.
+- **SP4:** while suspect, a reading still implausible against the frozen reference keeps the suspicion and the frozen reference. The first reading that is no longer implausible clears it, becomes the new reference, and logs exactly one INFO.
+- **SP5:** a suspect zone reading 0, below its start threshold, fresh and otherwise eligible, still takes T1 and commands ON (I38).
+
 ### 39.3 Invariant mapping
 
 | Invariants | Test groups |
@@ -2444,8 +2512,9 @@ Minimum-platform tests:
 | I35 | PI24-PI26, TB8-TB10, TB12, AR1-AR17 |
 | I36 | ND14-ND15, RC7-RC12 |
 | I37 | PI21-PI28, TB1, TB4, TB11-TB14, AR1-AR5, RC9-RC12 |
+| I38 | NR6, NR7, SP5 |
 
-All **37 invariants** map to at least one named test group. The pure five-state `state_machine.py` target remains 100% branch coverage; overall target remains at least 90%. All automated time is deterministic and no normative test uses real sleeps.
+All **38 invariants** map to at least one named test group. The pure five-state `state_machine.py` target remains 100% branch coverage; overall target remains at least 90%. All automated time is deterministic and no normative test uses real sleeps.
 
 ---
 
@@ -2512,6 +2581,7 @@ HACS packaging is orthogonal to state-machine safety.
 - Setup performs the exact verified schema-1 -> schema-2 migration in §23.2.1 before grants. Migration is atomic, increments revision, and uses fresh-Store full-payload read-back; malformed/unverifiable migration fails closed.
 - Unknown future Store version, generation mismatch, and unreconstructable identity follow the integrity/reconciliation policy, never a zero-budget or identity-guessed default. The independent config-entry generation/initialized model remains unchanged.
 - Domain/name are finalized as MoistureLoop / `moisture_loop` before the first release.
+- `0.1.3` carries specification `0.1.0-spec.9`. It adds the observational detectors of §10.5 and §19.6 and no persisted key, so runtime Store schema 3 is unchanged and no migration exists. Its normative inventory is 154 behavioural IDs, I1-I38, and T1-T59.
 
 ---
 
@@ -2540,7 +2610,7 @@ Shipping documentation must cover:
 
 ## 44. Future Extension Points
 
-Deferred features remain weather/ET modifiers, watering windows, flow/leak sensing, tank/pump resources, multi-sensor zones, profiles, notifications, stuck-sensor advisories, adaptive suggestions, and explicit tombstone compaction/purge. Each must enter through new pure guards/observations or explicit resource models; none may weaken v0.1 invariants by default.
+Deferred features remain weather/ET modifiers, watering windows, flow/leak sensing, tank/pump resources, multi-sensor zones, profiles, notifications, stuck-sensor advisories, adaptive suggestions, and explicit tombstone compaction/purge. Each must enter through new pure guards/observations or explicit resource models; none may weaken v0.1 invariants by default. Spec.9 adds the first observation-only advisories, §10.5 reading plausibility and §19.6 session response tracking. Letting either withhold water or raise a Repair remains deferred, and would amend I38 in its own revision.
 
 v0.1 never automatically deletes a RETIRED tombstone and defines no retention timeout. A future explicit purge design may consider a record eligible only when exact-identity OFF is proven, no blocker or possible-flow evidence remains, no open accounting exists, all acknowledgement requirements are satisfied, runtime/minimum-interval/history dependencies have expired or remain safely represented in the authoritative zone history, no same-record reactivation ambiguity remains, and an auditable administrator operation confirms the exact record. Eligibility is not authorization: the future mechanism must itself be separately specified and tested.
 
@@ -2576,7 +2646,7 @@ Functional and safety release gates:
 24. Manifest is `hub`/`calculated`/single-entry and passes hassfest; HACS metadata declares Home Assistant 2025.9.0 and packaging passes current validation.
 25. Repairs use supported `IssueSeverity` constants.
 26. All 59 transition rows are represented in the state diagram, and table/diagram parity is mechanically reviewed before release.
-27. Every I1-I37 invariant maps to passing tests using mocked time and no real sleeps, including LC13 and AR1-AR17.
+27. Every I1-I38 invariant maps to passing tests using mocked time and no real sleeps, including LC13 and AR1-AR17.
 28. Integration contains no cloud/outbound dependency and Recorder is not required for safety.
 29. Actual native HA 2025.9 subentry deletion is safe in IDLE/OFF, AUTO WATERING, MANUAL WATERING, SOAKING, and sensor-fault MANUAL cases without a pre-hook, manual reload, or automatic Core reload.
 30. No integration-owned ON begins after deletion/mismatch is visible; before-intent, after-intent, immediate-pre-dispatch, in-flight, post-return/pre-persist, changed-fingerprint, dirty-barrier, and stale-generation interleavings pass.

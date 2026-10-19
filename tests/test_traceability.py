@@ -31,6 +31,8 @@ EXPECTED_GROUPS = {
     "AR": 17,
     "RC": 12,
     "HA": 2,
+    "NR": 7,
+    "SP": 5,
 }
 
 
@@ -98,11 +100,11 @@ def node_exists(node: str) -> bool:
 
 
 class TestNormativeInventory:
-    def test_spec_has_exactly_142_unique_well_formed_ids(self) -> None:
+    def test_spec_has_exactly_154_unique_well_formed_ids(self) -> None:
         items = normative_spec_items()
         ids = [item[0] for item in items]
-        assert len(ids) == 142
-        assert len(set(ids)) == 142
+        assert len(ids) == 154
+        assert len(set(ids)) == 154
         expected = {
             f"{prefix}{number}"
             for prefix, end in EXPECTED_GROUPS.items()
@@ -126,13 +128,13 @@ class TestNormativeInventory:
 
 
 class TestInvariantMatrix:
-    def test_spec_and_matrix_have_exactly_i1_to_i37_without_duplicates(self) -> None:
+    def test_spec_and_matrix_have_exactly_i1_to_i38_without_duplicates(self) -> None:
         spec_ids = invariant_spec_ids()
-        expected = {f"I{number}" for number in range(1, 38)}
-        assert len(spec_ids) == len(set(spec_ids)) == 37
+        expected = {f"I{number}" for number in range(1, 39)}
+        assert len(spec_ids) == len(set(spec_ids)) == 38
         assert set(spec_ids) == expected
         literal_keys = literal_dict_keys("INVARIANT_TRACEABILITY")
-        assert len(literal_keys) == len(set(literal_keys)) == 37
+        assert len(literal_keys) == len(set(literal_keys)) == 38
         assert set(literal_keys) == expected
         assert set(INVARIANT_TRACEABILITY) == expected
 

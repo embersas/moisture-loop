@@ -7,6 +7,8 @@ sequencing. No real sleeps. Skips cleanly in the pure environment.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from datetime import UTC, timedelta
 from types import SimpleNamespace
 
@@ -17,6 +19,7 @@ pytest.importorskip("homeassistant")
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
+from custom_components.moisture_loop.const import UNRESPONSIVE_STREAK
 from custom_components.moisture_loop.models import (
     ActuatorIdentity,
     AppliedConfigurationShadow,
@@ -1248,3 +1251,172 @@ class TestControllerEdges:
         await set_moisture(env, "27")
         # No commanded anchor could be persisted; nothing crashes.
         assert env.actuator.on_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Observational accuracy detectors (§10.5, §19.6, I38)
+# ---------------------------------------------------------------------------
+
+# One pulse per session, so every recheck below target closes MAX_CYCLES.
+ACCURACY_CONFIG = replace(CONFIG, max_cycles=1)
+DETECTOR_LOGGER = "custom_components.moisture_loop.zone_controller"
+
+
+@pytest.fixture
+async def aenv(hass, hass_storage, freezer):
+    e = await build_env(hass, freezer, config=ACCURACY_CONFIG)
+    yield e
+    await e.ctrl.async_detach()
+
+
+async def run_constrained_session(
+    e, *, start: str = "27", mid_soak: str | None = None, recheck: str = "28"
+) -> None:
+    """One real AUTO session: pulse, soak, qualifying recheck below target."""
+    await set_moisture(e, start)
+    assert e.ctrl.state is ControllerState.WATERING
+    await advance(e, ACCURACY_CONFIG.pulse_duration_s)
+    assert e.ctrl.state is ControllerState.SOAKING
+    if mid_soak is not None:
+        await set_moisture(e, mid_soak)  # T22: observation only
+    await advance(e, ACCURACY_CONFIG.soak_duration_s)
+    await set_moisture(e, recheck)
+    assert e.ctrl.state is ControllerState.IDLE
+    summary = e.ctrl.last_summary
+    assert summary is not None and summary.reason is CompletionReason.MAX_CYCLES
+    await advance(e, ACCURACY_CONFIG.min_session_interval_s)
+
+
+def detector_logs(caplog, text: str, level: int) -> int:
+    return sum(
+        1
+        for record in caplog.records
+        if record.name == DETECTOR_LOGGER and record.levelno == level and text in record.message
+    )
+
+
+class TestSessionResponseTracking:
+    async def test_nr1_unresponsive_max_cycles_session_increments_counter(self, aenv) -> None:
+        assert aenv.ctrl.unresponsive_sessions == 0
+        await run_constrained_session(aenv, start="27", recheck="28")
+        assert aenv.ctrl.unresponsive_sessions == 1
+        assert aenv.ctrl.last_session_peak_rise == pytest.approx(1.0)
+
+    async def test_nr4_mid_soak_peak_counts_as_a_response(self, aenv) -> None:
+        await run_constrained_session(aenv, start="27", recheck="27")
+        assert aenv.ctrl.unresponsive_sessions == 1
+        # The probe peaks during the soak and decays before the recheck: the
+        # closing before/after pair shows no rise, the session peak does.
+        await run_constrained_session(aenv, start="27", mid_soak="31", recheck="27")
+        summary = aenv.ctrl.last_summary
+        assert summary is not None
+        assert summary.moisture_before == summary.moisture_after == 27.0
+        assert aenv.ctrl.last_session_peak_rise == pytest.approx(4.0)
+        assert aenv.ctrl.unresponsive_sessions == 0
+
+    async def test_nr5_streak_crossing_logs_once_and_reset_logs_once(self, aenv, caplog) -> None:
+        caplog.set_level(logging.INFO, logger=DETECTOR_LOGGER)
+        warning = "consecutive automatic sessions"
+        for _ in range(UNRESPONSIVE_STREAK):
+            await run_constrained_session(aenv)
+        assert aenv.ctrl.unresponsive_sessions == UNRESPONSIVE_STREAK
+        assert detector_logs(caplog, warning, logging.WARNING) == 1
+        await run_constrained_session(aenv)
+        assert detector_logs(caplog, warning, logging.WARNING) == 1
+        # A responsive session resets the streak and logs exactly one INFO.
+        await run_constrained_session(aenv, start="27", recheck="31")
+        assert aenv.ctrl.unresponsive_sessions == 0
+        assert detector_logs(caplog, "responded to watering again", logging.INFO) == 1
+        for _ in range(UNRESPONSIVE_STREAK):
+            await run_constrained_session(aenv)
+        assert detector_logs(caplog, warning, logging.WARNING) == 2
+        assert detector_logs(caplog, "responded to watering again", logging.INFO) == 1
+
+    async def test_nr6_streak_never_blocks_an_eligible_start(self, aenv) -> None:
+        for _ in range(UNRESPONSIVE_STREAK):
+            await run_constrained_session(aenv)
+        assert aenv.ctrl.unresponsive_sessions >= UNRESPONSIVE_STREAK
+        on_calls = aenv.actuator.on_calls
+        await set_moisture(aenv, "26")
+        assert aenv.ctrl.state is ControllerState.WATERING
+        assert aenv.actuator.on_calls == on_calls + 1
+
+    async def test_nr7_detector_state_is_memory_only(self, aenv, hass_storage) -> None:
+        await run_constrained_session(aenv)
+        # 60 -> 38 is implausible but stays above start, so no session runs.
+        await set_moisture(aenv, "60")
+        await advance(aenv, 60)
+        await set_moisture(aenv, "38")
+        assert aenv.ctrl.state is ControllerState.IDLE
+        assert aenv.ctrl.unresponsive_sessions == 1
+        assert aenv.ctrl.plausibility.suspect
+        persisted = repr(hass_storage)
+        for key in ("unresponsive", "peak_rise", "plausibility", "suspect"):
+            assert key not in persisted
+        # A controller rebuilt from the same Store (reload, restart,
+        # reconfiguration) starts the detectors from scratch.
+        await aenv.ctrl.async_detach()
+        aenv.ctrl = ZoneController(
+            aenv.hass,
+            ZONE,
+            ACCURACY_CONFIG,
+            aenv.store,
+            aenv.slots,
+            run_id="run-2",
+            local_tz=UTC,
+            authorization=aenv.authorization,
+            safety_record_id=ZONE,
+        )
+        aenv.ctrl.async_attach()
+        await settle(aenv)
+        assert aenv.ctrl.unresponsive_sessions == 0
+        assert aenv.ctrl.last_session_peak_rise is None
+        assert not aenv.ctrl.plausibility.suspect
+
+
+class TestReadingPlausibilityController:
+    async def test_sp1_one_report_drop_marks_reading_suspect_and_warns_once(
+        self, aenv, caplog
+    ) -> None:
+        caplog.set_level(logging.INFO, logger=DETECTOR_LOGGER)
+        await aenv.ctrl.async_set_enabled(False)
+        await set_moisture(aenv, "24")
+        await advance(aenv, 60)
+        dropped_at = dt_util.utcnow()
+        await set_moisture(aenv, "0")
+        plausibility = aenv.ctrl.plausibility
+        assert plausibility.suspect
+        assert plausibility.reference_value == 24.0
+        assert plausibility.suspect_since_utc == dropped_at
+        # Further implausible reports, changed or identical, do not re-warn.
+        await advance(aenv, 60)
+        await set_moisture(aenv, "0")
+        await advance(aenv, 60)
+        await set_moisture(aenv, "3")
+        assert aenv.ctrl.plausibility.suspect
+        assert detector_logs(caplog, "dropped from", logging.WARNING) == 1
+
+    async def test_sp4_back_in_band_clears_and_logs_once(self, aenv, caplog) -> None:
+        caplog.set_level(logging.INFO, logger=DETECTOR_LOGGER)
+        await aenv.ctrl.async_set_enabled(False)
+        await set_moisture(aenv, "24")
+        await advance(aenv, 60)
+        await set_moisture(aenv, "0")
+        await advance(aenv, 3600)
+        await set_moisture(aenv, "15")
+        assert aenv.ctrl.plausibility.suspect
+        assert aenv.ctrl.plausibility.reference_value == 24.0
+        await advance(aenv, 60)
+        await set_moisture(aenv, "16")
+        assert not aenv.ctrl.plausibility.suspect
+        assert aenv.ctrl.plausibility.reference_value == 16.0
+        assert detector_logs(caplog, "back in band", logging.INFO) == 1
+
+    async def test_sp5_suspect_reading_never_blocks_an_eligible_start(self, aenv) -> None:
+        await set_moisture(aenv, "40")  # above start: no session
+        assert aenv.ctrl.state is ControllerState.IDLE
+        await advance(aenv, 60)
+        await set_moisture(aenv, "0")
+        assert aenv.ctrl.plausibility.suspect
+        assert aenv.ctrl.state is ControllerState.WATERING
+        assert aenv.actuator.on_calls == 1
