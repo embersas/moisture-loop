@@ -6479,11 +6479,46 @@ None.
 
 ### Remaining work
 
-- `[ ]` Once hosted CI is green, merge the stack into `main` in order
+- `[x]` Once hosted CI is green, merge the stack into `main` in order
   (`fix/runtime-today-local-day-rollover`, `feat/status-applied-settings`,
   this branch) and push `main` to both remotes. The single rebase conflict, in
   the §28.1 `status` row, is already resolved here, and the row lists both
   `applied_settings` and the detector attributes.
-- `[ ]` Deploy to the live instance only with explicit authorization, then
-  watch real WARNING lines before tuning the constants.
+- `[x]` Deploy to the live instance only with explicit authorization. Done;
+  see the closeout below. Watching real WARNING lines before tuning the
+  constants is still open.
 - `[ ]` Phase 2 needs its own authorization and spec revision.
+
+### Merge, CI, and deployment closeout — COMPLETE, NO WATER
+
+All steps were explicitly authorized by the user on 2026-10-19.
+
+- `[x]` Hosted CI: **all six jobs green** on each branch tip before merging.
+  Runs: `39229355601` (`fix/runtime-today-local-day-rollover`), `39229355357`
+  (`feat/status-applied-settings`), `39229355211` (this branch at `0fcc44a`).
+- `[x]` `main` fast-forwarded `377d994` -> `0fcc44a` and pushed to both
+  remotes. Hosted CI on `main` (run `39230369670`): all six jobs green,
+  including hassfest and HACS validation.
+- `[x]` No tag and no GitHub Release. The published HACS `available_version`
+  stays `0.1.1`.
+- `[x]` Deployed live by HACS exact-SHA download of `0fcc44a`, then a Home
+  Assistant restart (HA 2026.10.0). Pre-check: all six zones DISABLED with no
+  faults or blockers, every valve closed, slot idle. Post-check:
+  - the entry loaded about 30 s after the restart;
+  - zones unchanged (still DISABLED, start/target 29/30, pulse 1800 s);
+  - Store schema 3, 2 retained tombstones, reconciliation 2/2 clean;
+  - every valve closed, and no MoistureLoop log errors;
+  - `applied_settings` and the detector attributes are present on every
+    `status` sensor;
+  - within about a minute the plausibility detector took live references for
+    all six probes, with none suspect. **NO WATER at any point.**
+- `[!]` HACS now shows installed `0fcc44a` against available `0.1.1` with
+  status `pending-upgrade`. Accepting that "upgrade" would replace this commit
+  with the older 0.1.1 release. Just before this deployment, HACS also
+  reported `installed_version` 0.1.1 rather than the 2026-09-03 0.1.2 SHA.
+- `[x]` The user's hand-built Irrigation dashboard cards now read
+  `applied_settings` instead of hard-coded thresholds, cycles, pulse/soak and
+  runtime caps. The 3-day charts' fixed start-30/target-40 annotations, stale
+  since the 2026-09-13 change to 29/30, were replaced by threshold series that
+  read the same attribute. The user checks rendering. A pre-change backup is
+  kept in the git-ignored `evidence/private/`.
